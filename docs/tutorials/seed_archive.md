@@ -57,11 +57,20 @@ Where a capability is not yet implemented, see
 
 ## Before you start
 
-Launch the containerized stack from the repository root:
+Launch the containerized stack from the repository root. It needs a database
+password (there is no default one), and this tutorial creates a new solution
+without an account to sign in with, so allow public database creation for it:
 
 ```bash
+echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)" >> .env
+echo "ALLOW_PUBLIC_DATABASE_CREATION=true" >> .env
 docker compose up -d
 ```
+
+Once Lesson 2 has created the solution, remove the
+`ALLOW_PUBLIC_DATABASE_CREATION` line from `.env` and run `docker compose up -d`
+again: from then on only a signed-in owner can create databases (README,
+*First solution*).
 
 This starts three containers: `file4base-postgres`, `file4base-api`, and
 `file4base-web`. Confirm that the API server is healthy:
@@ -74,8 +83,9 @@ The endpoint responds with `"status":"pass"` and the active database engine.
 
 Open **http://localhost:3000** in a browser to launch **File4Base Web Client**,
 or start the native desktop application (macOS, Linux, or Windows). Both clients
-connect to the same API (`http://127.0.0.1:8080` by default) over an
-AES-256-GCM encrypted payload channel and behave identically.
+connect to the same API over an AES-256-GCM encrypted payload channel and
+behave identically: the desktop app to `http://127.0.0.1:8080` by default, the
+Web Client to the address it was opened from.
 
 To run against MariaDB instead of PostgreSQL, start the stack with
 `docker compose -f docker-compose.mariadb.yml up -d`.
@@ -115,7 +125,8 @@ shown disabled (greyed out).
 ## Lesson 2 — Create the solution and database
 
 1. Open the **File4Base Connect & Login** dialog.
-   - Verify that **API Server URL** points to `http://127.0.0.1:8080` (or click
+   - Verify that **API Server URL** points to the server: `http://127.0.0.1:8080`
+     in the desktop app, `http://localhost:3000` in the Web Client (or click
      **Connect** after entering a custom host).
 2. Click the **+** button next to the **Database / Solution** selector to open
    the **New Database Solution** dialog.

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:file4base_client/core/api/default_server_url.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
@@ -38,10 +39,18 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
   @override
   void initState() {
     super.initState();
-    final uri = Uri.tryParse(widget.currentUrl) ?? Uri.parse('http://127.0.0.1:8080');
-    _protocol = uri.scheme.isNotEmpty ? uri.scheme : 'http';
-    _hostController = TextEditingController(text: uri.host.isNotEmpty ? uri.host : '127.0.0.1');
-    _portController = TextEditingController(text: uri.hasPort ? uri.port.toString() : '8080');
+    _hostController = TextEditingController();
+    _portController = TextEditingController();
+    _show(Uri.tryParse(widget.currentUrl) ?? Uri.parse(defaultServerUrl()));
+  }
+
+  /// Fills the fields from [uri]. A URL without a port (the Web Client on
+  /// https://host) leaves the port empty, so the default port of its scheme
+  /// is kept instead of 8080.
+  void _show(Uri uri) {
+    _protocol = uri.scheme == 'https' ? 'https' : 'http';
+    _hostController.text = uri.host.isNotEmpty ? uri.host : '127.0.0.1';
+    _portController.text = uri.hasPort ? uri.port.toString() : (uri.host.isNotEmpty ? '' : '8080');
   }
 
   @override
@@ -114,7 +123,8 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Configure the File4Base Server connection. By default, clients connect to 127.0.0.1:8080.',
+              'Configure the File4Base Server connection. By default, the desktop app connects to '
+              '127.0.0.1:8080 and the Web Client to the address it was opened from.',
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
             const SizedBox(height: 16),
@@ -176,9 +186,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
                   child: const Text('Reset to Default', style: TextStyle(fontSize: 12)),
                   onPressed: () {
                     setState(() {
-                      _protocol = 'http';
-                      _hostController.text = '127.0.0.1';
-                      _portController.text = '8080';
+                      _show(Uri.parse(defaultServerUrl()));
                       _testResult = null;
                     });
                   },

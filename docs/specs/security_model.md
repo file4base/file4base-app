@@ -152,8 +152,10 @@ privilege never crosses from one solution to another.
 Server-wide administration is an *account* privilege, not a database role. An
 account with `sys_users.super_owner` set reaches every Server Tool of every
 database (see [server_tools_and_mfa.md](server_tools_and_mfa.md)); a database
-role alone never does, since by default anyone may create a database and become
-its owner.
+role alone never does, since while `ALLOW_PUBLIC_DATABASE_CREATION` is on anyone
+may create a database and become its owner. It is off by default (#202): only a
+signed-in owner creates databases, and the operator turns it on only to create
+the first solution of a new server.
 
 - **Bootstrap.** `FILE4BASE_SUPER_OWNER=database:username` (comma-separated for
   several) marks accounts as super-owners at sign-in even before any flag is
@@ -167,7 +169,8 @@ its owner.
   accident).
 - **Compatibility.** An owner of `FILE4BASE_ADMIN_DATABASE` remains a server
   administrator even without the flag, so existing admin-database setups keep
-  working. That legacy path grants the server-wide *tools* but not the right to
+  working. The setting is deprecated (the server logs it at startup): server
+  accounts (#185) will replace it. That legacy path grants the server-wide *tools* but not the right to
   manage the super-owner flag.
 - The super-owner flag is part of the account stamp, so granting or revoking it
   ends the target's existing sessions at once (see above).

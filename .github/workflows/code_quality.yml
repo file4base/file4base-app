@@ -56,6 +56,18 @@ jobs:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
           QODANA_ENDPOINT: 'https://qodana.cloud'
 
+  # The compose stacks refuse to start without passwords and publish no
+  # database port (#202). Renders the files only; nothing is started.
+  compose-defaults:
+    name: Compose secure defaults
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check docker compose defaults
+        run: ./scripts/tests/compose_defaults_test.sh
+
   flutter-analyze:
     name: Flutter Static Analysis (very_good_analysis)
     runs-on: ubuntu-latest

@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -37,7 +39,9 @@ func init() {
 // origins. Sessions travel in the Authorization header (never in cookies), so
 // a browser cannot attach a user's credentials to a cross-site request on its
 // own; the allow-list still limits which web origins may call the API at all.
-// allowed == ["*"] accepts any origin.
+// An empty list (the default) sends no CORS header, so only same-origin pages
+// (the bundled Web Client, which reaches the API through its own Nginx) can
+// read responses; allowed == ["*"] accepts any origin.
 func corsMiddleware(allowed []string) func(http.Handler) http.Handler {
 	allowAny := false
 	origins := make(map[string]struct{}, len(allowed))
@@ -79,6 +83,51 @@ func corsMiddleware(allowed []string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// publicDatabaseCreation reads ALLOW_PUBLIC_DATABASE_CREATION. It is off
+// unless set: anyone who can reach the server would otherwise be able to
+// create a database and become its owner (#202).
+func publicDatabaseCreation() bool {
+	return envBool("ALLOW_PUBLIC_DATABASE_CREATION", false)
+}
+
+// publicCreationNotice is the startup line that says who can create
+// databases, and how a new server gets its first solution.
+func publicCreationNotice(allow bool) string {
+	if allow {
+		return "Warning: ALLOW_PUBLIC_DATABASE_CREATION=true: anyone who can reach this server can create a database and become its owner. Use it only to create the first solution of a new server, then remove the setting and restart the API."
+	}
+	return "Database creation requires an owner session (ALLOW_PUBLIC_DATABASE_CREATION is off). A new server gets its first solution with ALLOW_PUBLIC_DATABASE_CREATION=true for one start; see README, \"First solution\"."
+}
+
+// corsNotices describes the CORS configuration at startup and flags entries
+// a browser would never send as an Origin (a path, no scheme, ...).
+func corsNotices(origins []string) []string {
+	if len(origins) == 0 {
+		return []string{"CORS: no cross-origin browser access (CORS_ALLOWED_ORIGINS is empty). The bundled Web Client calls the API on its own origin and needs none."}
+	}
+	var lines []string
+	for _, o := range origins {
+		if o == "*" {
+			lines = append(lines, "Warning: CORS_ALLOWED_ORIGINS contains *: every web site may call this API from a browser. List the origins that need it instead (scheme://host:port).")
+			continue
+		}
+		if !isWebOrigin(o) {
+			lines = append(lines, fmt.Sprintf("Warning: CORS_ALLOWED_ORIGINS entry %q is not a web origin (scheme://host[:port], no path); no browser request will match it.", o))
+		}
+	}
+	return append(lines, fmt.Sprintf("CORS: cross-origin browser access allowed for %s", strings.Join(origins, ", ")))
+}
+
+// isWebOrigin reports whether s has the form a browser sends in an Origin
+// header: http or https, a host, an optional port, and nothing else.
+func isWebOrigin(s string) bool {
+	u, err := url.Parse(strings.TrimRight(s, "/"))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false
+	}
+	return u.Path == "" && u.RawQuery == "" && u.Fragment == "" && u.User == nil
 }
 
 // envBool reads a boolean environment variable, falling back to def when unset or invalid.
@@ -152,14 +201,13 @@ func main() {
 		log.Fatalf("Invalid DB_ENGINE: %v", err)
 	}
 
-	dsn := os.Getenv("DATABASE_URL")
+	// There is no built-in DSN: it would carry a known password (#202).
+	dsn := strings.TrimSpace(os.Getenv("DATABASE_URL"))
 	if dsn == "" {
-		log.Println("Warning: DATABASE_URL is not set; falling back to the local development DSN with the default password. Set DATABASE_URL for any non-development deployment.")
 		if engineType == dbal.EnginePostgres {
-			dsn = "postgres://file4base:dev_password@localhost:5432/postgres?sslmode=disable"
-		} else {
-			dsn = "file4base:dev_password@tcp(localhost:3306)/mysql?parseTime=true"
+			log.Fatal("DATABASE_URL is not set. Set it to the engine's administrative database, e.g. postgres://file4base:<password>@localhost:5432/postgres?sslmode=disable (docker compose sets it from POSTGRES_PASSWORD in .env).")
 		}
+		log.Fatal("DATABASE_URL is not set. Set it to the engine's administrative database, e.g. file4base:<password>@tcp(localhost:3306)/mysql (docker compose sets it from MARIADB_PASSWORD in .env).")
 	}
 
 	port := os.Getenv("SERVER_PORT")
@@ -198,13 +246,16 @@ func main() {
 	// exactly one database. There is no server-wide "active database".
 	sessions := auth.NewStore(envDuration("SESSION_TTL", auth.DefaultSessionTTL))
 
-	corsOrigins := []string{"*"}
-	if raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS")); raw != "" {
-		corsOrigins = strings.Split(raw, ",")
+	// Secure defaults (#202): no cross-origin browser access unless origins
+	// are listed, and no database creation without an owner session.
+	corsOrigins := splitList(os.Getenv("CORS_ALLOWED_ORIGINS"))
+	for _, line := range corsNotices(corsOrigins) {
+		log.Println(line)
 	}
-	allowPublicCreate := envBool("ALLOW_PUBLIC_DATABASE_CREATION", true)
-	if allowPublicCreate {
-		log.Println("Notice: anyone who can reach this server may create new databases (ALLOW_PUBLIC_DATABASE_CREATION=true). Set it to false on shared or internet-facing servers.")
+	allowPublicCreate := publicDatabaseCreation()
+	log.Println(publicCreationNotice(allowPublicCreate))
+	if adminDB := strings.TrimSpace(os.Getenv("FILE4BASE_ADMIN_DATABASE")); adminDB != "" {
+		log.Printf("Deprecated: FILE4BASE_ADMIN_DATABASE=%s makes the owners of one solution's database the server administrators. It keeps working for now; it will be replaced by server accounts (#185) and removed then.", adminDB)
 	}
 
 	// FileMaker migrations upload a native database copy of up to several

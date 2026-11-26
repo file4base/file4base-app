@@ -35,6 +35,52 @@ unresolved provenance honestly and ask a maintainer to arrange private review
 when needed. Preserve truthful history rather than deleting references to hide
 how a contribution was developed.
 
+## Development environment
+
+### Database access from the host
+
+The compose stacks never publish the database: only the API reaches it, inside
+`file4base-net`. To run a local `go run ./cmd/server` against the compose
+database, publish it on the loopback interface with a
+`docker-compose.override.yml` next to `docker-compose.yml`. Docker Compose
+reads that file automatically, and `.gitignore` keeps it out of commits:
+
+```yaml
+# docker-compose.override.yml (development only, never on a server)
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+```
+
+The MariaDB stack does not read the override automatically: name both files
+(`docker compose -f docker-compose.mariadb.yml -f mariadb.override.yml up -d`),
+with `mariadb:` and `127.0.0.1:3306:3306` in the override.
+
+The server has no built-in `DATABASE_URL`: set it for `go run`. The Go tests
+use their own DSNs (`F4B_TEST_DEV_DSN`, `F4B_TEST_ADMIN_DSN`, `dev_password`
+on `localhost:5432` by default), so a throwaway test database is the simplest
+setup for them:
+
+```bash
+docker run -d --rm --name f4b-test-pg -e POSTGRES_USER=file4base \
+  -e POSTGRES_PASSWORD=dev_password -e POSTGRES_DB=file4base_dev \
+  -p 127.0.0.1:5432:5432 postgres:16-alpine
+cd server && go test -p 1 ./...
+```
+
+### Web Client development
+
+The Web Client calls the API on the origin it is served from. When it runs
+from `flutter run -d chrome` instead of the `file4base-web` image, set the
+server address in the connection dialog and allow the development origin on
+the API, e.g. `CORS_ALLOWED_ORIGINS=http://localhost:5000` with
+`flutter run -d chrome --web-port 5000`.
+
+`scripts/tests/compose_defaults_test.sh` checks that both compose stacks keep
+their secure defaults: no default password, no published database port, no
+CORS and no public database creation unless `.env` sets them.
+
 ## Pull request review
 
 - Explain what changed and validate the relevant behavior or documentation.

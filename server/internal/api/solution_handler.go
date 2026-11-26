@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -217,10 +218,10 @@ type CreateDatabaseRequest struct {
 // with the credentials supplied by the caller. It never touches an existing
 // database: a name that is already taken yields 409 Conflict.
 func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request) {
+	sess, signedIn := auth.FromContext(r.Context())
 	if !h.opts.AllowPublicDatabaseCreation {
-		sess, ok := auth.FromContext(r.Context())
-		if !ok {
-			writeUnauthorized(w, r, "creating databases requires a signed-in owner on this server")
+		if !signedIn {
+			writeUnauthorized(w, r, publicCreationOffDetail)
 			return
 		}
 		if !sess.IsOwner() {
@@ -299,6 +300,10 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
+	if !signedIn {
+		noteAnonymousCreation(dbName)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -308,6 +313,21 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 		"active":        sessionDatabase(r),
 		"owner_user":    ownerUser,
 	})
+}
+
+// publicCreationOffDetail answers a caller without a session that tries to
+// create a database while ALLOW_PUBLIC_DATABASE_CREATION is off (the default,
+// #202). Until server accounts exist (#185) a new server has no account to
+// sign in with, so it says how the operator creates the first solution.
+const publicCreationOffDetail = "Creating a database requires signing in as an owner of a database on this server. " +
+	"On a new server with no database yet, the server operator sets ALLOW_PUBLIC_DATABASE_CREATION=true for the API " +
+	"(in .env next to docker-compose.yml, then docker compose up -d), creates the first solution, " +
+	"then removes the setting and runs docker compose up -d again."
+
+// noteAnonymousCreation logs a database created without a session, so an
+// operator who left ALLOW_PUBLIC_DATABASE_CREATION on is reminded of it.
+func noteAnonymousCreation(dbName string) {
+	log.Printf("Notice: database %q was created without signing in (ALLOW_PUBLIC_DATABASE_CREATION=true). Remove that setting once the first solution exists.", dbName)
 }
 
 // MinOwnerPasswordLength is the shortest password accepted for the first
@@ -1088,7 +1108,7 @@ func (h *SolutionHandler) MigratePreflight(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	} else if !h.opts.AllowPublicDatabaseCreation {
-		writeUnauthorized(w, r, "authentication is required")
+		writeUnauthorized(w, r, publicCreationOffDetail)
 		return
 	}
 
@@ -1129,7 +1149,7 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if !h.opts.AllowPublicDatabaseCreation {
-		writeUnauthorized(w, r, "authentication is required")
+		writeUnauthorized(w, r, publicCreationOffDetail)
 		return
 	}
 
@@ -1205,6 +1225,9 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		createdNewDB = true
+		if !hasSession {
+			noteAnonymousCreation(targetDB)
+		}
 		driver, err := h.dbMgr.DriverFor(r.Context(), targetDB)
 		if err != nil {
 			_ = h.dbMgr.DropDatabase(r.Context(), targetDB)

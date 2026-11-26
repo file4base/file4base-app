@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/api/default_server_url.dart';
 import 'package:file4base_client/core/models/file_options_model.dart';
 import 'package:file4base_client/core/models/page_setup_model.dart';
 import 'package:file4base_client/core/providers/locale_provider.dart';
@@ -72,7 +73,7 @@ enum OperationalMode {
 
 class ServerUrlNotifier extends Notifier<String> {
   @override
-  String build() => 'http://127.0.0.1:8080';
+  String build() => defaultServerUrl();
 
   void setUrl(String url) => state = url;
 }

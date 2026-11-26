@@ -1,6 +1,11 @@
-# Credentials and network exposure are configurable through a `.env` file next
-# to this file (see `.env.example`). The fallback values are for local
-# development only: set POSTGRES_PASSWORD before exposing the stack to a network.
+# Settings come from a `.env` file next to this file (see `.env.example`).
+# There is no default database password: the stack refuses to start until
+# POSTGRES_PASSWORD is set. Create `.env` with a generated one (README,
+# "Installation"):
+#   echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)" >> .env
+# PostgreSQL is reachable only by the API, inside file4base-net; only the API
+# (8080) and the Web Client (3000/3443) are published. Developers who need the
+# database from the host add a docker-compose.override.yml (CONTRIBUTING.md).
 #
 # The file4base-api and file4base-web images are published on Docker Hub as
 # ${FILE4BASE_REGISTRY}/file4base-api and ${FILE4BASE_REGISTRY}/file4base-web,
@@ -19,10 +24,8 @@ services:
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: file4base
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password}
-    ports:
-      # Published on the loopback interface only by default
-      - "${DB_BIND_ADDRESS:-127.0.0.1}:5432:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env next to docker-compose.yml, for example with  echo "POSTGRES_PASSWORD=$$(openssl rand -hex 32)" >> .env  -- an existing install that never set it was created with dev_password, see CHANGELOG.md, Upgrade notes}
+    # No ports: the database is never published outside file4base-net.
     volumes:
       # Persistent named volume `file4base-postgres-data`: survives
       # `docker compose down` (only `down -v` deletes it). Backups:
@@ -51,22 +54,26 @@ services:
       - "8080:8080"
     environment:
       DB_ENGINE: "postgres"
-      # POSTGRES_PASSWORD is embedded in a URL: percent-encode special characters
-      DATABASE_URL: "postgres://file4base:${POSTGRES_PASSWORD:-dev_password}@postgres:5432/postgres?sslmode=disable"
+      # POSTGRES_PASSWORD is embedded in a URL: use letters and digits only
+      DATABASE_URL: "postgres://file4base:${POSTGRES_PASSWORD:?set it in .env (see the postgres service)}@postgres:5432/postgres?sslmode=disable"
       SERVER_PORT: ":8080"
       # Idle lifetime of a signed-in session
       SESSION_TTL: "${SESSION_TTL:-12h}"
-      # Browser origins allowed to call the API directly (comma-separated, or *)
-      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-*}"
-      # Set to "false" so that only a signed-in owner can create databases
-      ALLOW_PUBLIC_DATABASE_CREATION: "${ALLOW_PUBLIC_DATABASE_CREATION:-true}"
+      # Other web origins allowed to call the API from a browser
+      # (comma-separated scheme://host:port). Empty: none; the Web Client
+      # calls the API on its own origin and needs no entry.
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-}"
+      # "true" lets anyone who reaches the API create a database. Set it only
+      # to create the first solution of a new server (README, "First solution").
+      ALLOW_PUBLIC_DATABASE_CREATION: "${ALLOW_PUBLIC_DATABASE_CREATION:-false}"
       # Largest FileMaker migration upload (native .fmp12 copy) a signed-in
       # admin or owner may send, and how long a migration may run. Raise the
       # Web Client's client_max_body_size for /api/v1/solutions/migrate/ too.
       MIGRATION_MAX_UPLOAD_BYTES: "${MIGRATION_MAX_UPLOAD_BYTES:-2GiB}"
       MIGRATION_REQUEST_TIMEOUT: "${MIGRATION_REQUEST_TIMEOUT:-30m}"
-      # Owners of this database administer the whole server (Server Tools);
-      # empty disables the server-wide tools.
+      # Deprecated: owners of this database administer the whole server
+      # (Server Tools); empty disables the server-wide tools. Server accounts
+      # (#185) will replace it.
       FILE4BASE_ADMIN_DATABASE: "${FILE4BASE_ADMIN_DATABASE:-}"
       FILE4BASE_SUPER_OWNER: "${FILE4BASE_SUPER_OWNER:-}"
       # Embedded SQLite control store for project registry, options, and permissions

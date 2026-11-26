@@ -6,6 +6,10 @@
 # wired to MariaDB (engine, DSN and health dependency), so the two stacks never
 # half-mix. They use different volumes and can be run one at a time (both bind
 # the same host ports).
+#
+# There are no default passwords: set MARIADB_PASSWORD and
+# MARIADB_ROOT_PASSWORD in `.env` (README, "Installation"). MariaDB is
+# reachable only by the API, inside file4base-net.
 services:
   mariadb:
     image: mariadb:11-jammy
@@ -14,11 +18,9 @@ services:
     environment:
       MARIADB_DATABASE: file4base_dev
       MARIADB_USER: file4base
-      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-dev_password}
-      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-root_password}
-    ports:
-      # Published on the loopback interface only by default
-      - "${DB_BIND_ADDRESS:-127.0.0.1}:3306:3306"
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:?set it in .env next to docker-compose.mariadb.yml, for example with  echo "MARIADB_PASSWORD=$$(openssl rand -hex 32)" >> .env  -- an existing install that never set it was created with dev_password, see CHANGELOG.md, Upgrade notes}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?set it in .env, for example with  echo "MARIADB_ROOT_PASSWORD=$$(openssl rand -hex 32)" >> .env  -- an existing install that never set it was created with root_password, see CHANGELOG.md, Upgrade notes}
+    # No ports: the database is never published outside file4base-net.
     volumes:
       # Persistent named volume `file4base-mariadb-data`: survives
       # `docker compose down` (only `down -v` deletes it).
@@ -47,18 +49,21 @@ services:
       DB_ENGINE: "mariadb"
       # MariaDB uses the MySQL driver's own DSN grammar, not a URL. `mysql` is
       # the administrative database: solution databases are created beside it.
-      DATABASE_URL: "file4base:${MARIADB_PASSWORD:-dev_password}@tcp(mariadb:3306)/mysql"
+      DATABASE_URL: "file4base:${MARIADB_PASSWORD:?set it in .env (see the mariadb service)}@tcp(mariadb:3306)/mysql"
       SERVER_PORT: ":8080"
       SESSION_TTL: "${SESSION_TTL:-12h}"
-      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-*}"
-      ALLOW_PUBLIC_DATABASE_CREATION: "${ALLOW_PUBLIC_DATABASE_CREATION:-true}"
+      # See docker-compose.yml: no cross-origin access and no public database
+      # creation unless .env sets them.
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-}"
+      ALLOW_PUBLIC_DATABASE_CREATION: "${ALLOW_PUBLIC_DATABASE_CREATION:-false}"
       # Largest FileMaker migration upload (native .fmp12 copy) a signed-in
       # admin or owner may send, and how long a migration may run. Raise the
       # Web Client's client_max_body_size for /api/v1/solutions/migrate/ too.
       MIGRATION_MAX_UPLOAD_BYTES: "${MIGRATION_MAX_UPLOAD_BYTES:-2GiB}"
       MIGRATION_REQUEST_TIMEOUT: "${MIGRATION_REQUEST_TIMEOUT:-30m}"
-      # Owners of this database administer the whole server (Server Tools);
-      # empty disables the server-wide tools.
+      # Deprecated: owners of this database administer the whole server
+      # (Server Tools); empty disables the server-wide tools. Server accounts
+      # (#185) will replace it.
       FILE4BASE_ADMIN_DATABASE: "${FILE4BASE_ADMIN_DATABASE:-}"
       FILE4BASE_SUPER_OWNER: "${FILE4BASE_SUPER_OWNER:-}"
       CONTROL_DB_PATH: "/app/data/file4base_control.db"
