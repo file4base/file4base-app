@@ -52,7 +52,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
   /// The capabilities each role holds (#39). Defaults are what a server
   /// without them reports: every role holds everything.
   List<RolePrivilegesModel> _rolePrivileges = const [
-    RolePrivilegesModel(role: 'owner'),
+    RolePrivilegesModel(role: 'owner', fmRest: true),
     RolePrivilegesModel(role: 'admin'),
     RolePrivilegesModel(role: 'user'),
   ];
@@ -2027,7 +2027,9 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                     'by the privileges below. It does not restrict access by client: the '
                     'desktop client, the Web Client and a direct REST call all speak to the '
                     'same API with the same session token, so the server cannot tell them '
-                    'apart and a setting that claimed to would restrict nothing.',
+                    'apart and a setting that claimed to would restrict nothing. The '
+                    'FileMaker Data API is the exception: it is a separate API with its own '
+                    'sign-in, which the server refuses to roles not granted it.',
                     style: TextStyle(fontSize: 12, color: Colors.blue.shade900),
                   ),
                 ),
@@ -2051,12 +2053,17 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
           ],
           const SizedBox(height: 16),
 
+          // A few cards, built at once rather than lazily as a ListView
+          // would, so every switch exists whether it is scrolled to or not.
           Expanded(
-            child: ListView(
-              children: [
-                for (final capability in Capability.all)
-                  _buildCapabilityCard(capability, isOwner),
-              ],
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final capability in Capability.all)
+                    _buildCapabilityCard(capability, isOwner),
+                ],
+              ),
             ),
           ),
         ],
@@ -2083,9 +2090,11 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(
-                  capability == Capability.bulkExport
-                      ? Icons.file_download_outlined
-                      : Icons.file_upload_outlined,
+                  switch (capability) {
+                    Capability.bulkExport => Icons.file_download_outlined,
+                    Capability.bulkImport => Icons.file_upload_outlined,
+                    _ => Icons.api_outlined,
+                  },
                   size: 28,
                   color: const Color(0xFF1E88E5),
                 ),

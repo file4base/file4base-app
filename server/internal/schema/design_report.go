@@ -227,6 +227,7 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 	for _, privilege := range bundle.Privileges {
 		report.Privileges = append(report.Privileges, designreport.RolePrivilege{
 			Role: privilege.Role, BulkExport: privilege.BulkExport, BulkImport: privilege.BulkImport,
+			FMRest: privilege.FMRest,
 		})
 	}
 

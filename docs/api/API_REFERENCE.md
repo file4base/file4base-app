@@ -136,6 +136,10 @@ Permissions are granted per layout (`read_write`, `read_only`, `none`), while th
 | `FILE4BASE_LOGIN_MAX_ATTEMPTS` | `10` | Failed password checks in a row (per database + username + client) before a lockout. `0` disables the limit. |
 | `FILE4BASE_LOGIN_WINDOW_SECONDS` | `900` | A gap this long with no failure forgets the earlier ones. |
 | `FILE4BASE_LOGIN_LOCKOUT_SECONDS` | `900` | How long a tripped lockout lasts. |
+| `FILE4BASE_DATA_API_DATABASES` | *(empty)* | Databases the FileMaker Data API (§ 20) serves, comma-separated, each `database` or `FileMaker name=database`. Empty turns `/fmi/data` off. |
+| `FILE4BASE_DATA_API_SESSION_TTL` | `15m` | Idle lifetime of a Data API session (Go duration), FileMaker Server's 15 minutes by default. |
+| `FILE4BASE_DATA_API_PRODUCT_NAME` | `File4Base Data API` | The name `productInfo` gives. |
+| `FILE4BASE_DATA_API_PRODUCT_VERSION`, `FILE4BASE_DATA_API_PRODUCT_BUILD_DATE` | *(empty)* | The `version` and `buildDate` `productInfo` gives; left out when empty. |
 | `FILE4BASE_TRANSFER_SCHEDULER` | `true` | Whether this server process runs due transfer schedules (§ 19). Several processes over the same databases may all leave it on: each occurrence is claimed once. Set it to `false` on a process that should only serve requests. |
 
 ---
@@ -1824,18 +1828,18 @@ Replaces the per-layout permissions of a user. Requires the `owner` or `admin` r
 ### `GET /api/v1/security/privileges`
 Returns the extended privileges each account role holds (#39). Requires the `owner` or `admin` role.
 
-An extended privilege is an **action** the server performs and can therefore refuse. File4Base does not restrict access by client: the desktop client, the Web Client and a direct REST call all speak to this API with the same session token, so the server cannot tell them apart, and a setting that claimed to would restrict nothing.
+An extended privilege is an **action** the server performs and can therefore refuse. File4Base does not restrict access by client: the desktop client, the Web Client and a direct REST call all speak to this API with the same session token, so the server cannot tell them apart, and a setting that claimed to would restrict nothing. The FileMaker Data API (§ 20) is the exception: it is a separate API with its own sign-in and sessions, which the server refuses to a role without `fmrest`.
 
-A role with nothing stored holds every privilege, so a database created before this table existed is not restricted by upgrading. An `owner` always holds every privilege and is reported as such whatever is stored.
+A role with nothing stored holds every bulk privilege, so a database created before this table existed is not restricted by upgrading; it does not hold `fmrest`, which is only ever granted. An `owner` always holds every privilege and is reported as such whatever is stored.
 
 #### Response `200 OK`
 ```json
 {
-  "capabilities": ["bulk_export", "bulk_import"],
+  "capabilities": ["bulk_export", "bulk_import", "fmrest"],
   "privileges": [
-    {"role": "owner", "bulk_export": true, "bulk_import": true},
-    {"role": "admin", "bulk_export": true, "bulk_import": false},
-    {"role": "user", "bulk_export": false, "bulk_import": false}
+    {"role": "owner", "bulk_export": true, "bulk_import": true, "fmrest": true},
+    {"role": "admin", "bulk_export": true, "bulk_import": false, "fmrest": false},
+    {"role": "user", "bulk_export": false, "bulk_import": false, "fmrest": true}
   ]
 }
 ```
@@ -1844,6 +1848,7 @@ A role with nothing stored holds every privilege, so a database created before t
 | --- | --- |
 | `bulk_export` | `POST /api/v1/data/{table}/export` and `GET /api/v1/solutions/export-data`. |
 | `bulk_import` | `POST /api/v1/data/{table}/import`, `POST /api/v1/data/{table}/import/preview` and `POST /api/v1/solutions/import-data`. |
+| `fmrest` | Signing in to the FileMaker Data API, `POST /fmi/data/{version}/databases/{database}/sessions` (§ 20). |
 
 Reading or writing one record at a time is not a bulk privilege: that is governed by the account role and by the per-table and per-layout access levels.
 
@@ -1852,14 +1857,14 @@ Reading or writing one record at a time is not a bulk privilege: that is governe
 ### `PUT /api/v1/security/privileges`
 Replaces the extended privileges of the roles in the request. Requires the `owner` role: granting a privilege to one's own role would be no restriction at all.
 
-Roles left out of the body keep what they hold. The `owner` entry is stored fully granted whatever it says, so that an owner cannot lock themselves out of their own database. The change applies to sessions that are already open, on the next request they make.
+Roles left out of the body keep what they hold. A role in the body is stored as given; a bulk privilege it leaves out is withheld, but a missing `fmrest` keeps the stored value (`null` withdraws it, as `false`), so a client written before `fmrest` existed neither grants nor withdraws it. The `owner` entry is stored fully granted whatever it says, so that an owner cannot lock themselves out of their own database. The change applies to sessions that are already open, on the next request they make; the Data API sessions of a role that no longer holds `fmrest` are ended at once.
 
 #### Request Body
 ```json
 {
   "privileges": [
-    {"role": "admin", "bulk_export": true, "bulk_import": false},
-    {"role": "user", "bulk_export": false, "bulk_import": false}
+    {"role": "admin", "bulk_export": true, "bulk_import": false, "fmrest": false},
+    {"role": "user", "bulk_export": false, "bulk_import": false, "fmrest": true}
   ]
 }
 ```
@@ -2955,3 +2960,23 @@ Runs a schedule now, exactly as the scheduler would: as its accounts, re-checked
 
 ### `GET /api/v1/transfer-schedules/{id}/runs`
 The schedule's recorded runs, newest first, in the shape above.
+
+---
+
+## 20. FileMaker Data API (`/fmi/data`, `#208`)
+
+File4Base answers FileMaker clients at FileMaker Server's Data API paths, as FileMaker Server 26 does: same statuses, error codes and messages, key order and number spelling, as recorded by the conformance suite in `server/testdata/dataapi`. `v1`, `v2` and `vLatest` answer alike; any other version answers `400` with `{"response":{}}`, an unknown path Express's `404` page, and a known path with another method `405` (code `1704`). The API is off unless `FILE4BASE_DATA_API_DATABASES` lists the databases it serves, under the names FileMaker clients use.
+
+Access is opt-in twice: the operator serves the database (`FILE4BASE_DATA_API_DATABASES`), and an owner grants the `fmrest` privilege to the account roles that may use it ([`/api/v1/security/privileges`](#get-apiv1securityprivileges)), FileMaker's *Access via FileMaker Data API* extended privilege. Owners always hold it, as `[Full Access]` holds every extended privilege; `admin` and `user` hold it only once granted, including on a database upgraded from a version without it. An account whose role does not hold it is refused at sign-in with `401`, code `9` (`Insufficient privileges`). It is checked again on every call, so once it is withdrawn, the role's Data API tokens answer `401`, code `952`; Manage Security also ends those sessions at once. It is per role rather than per privilege set (`#213`). A migration grants it to a role when any privilege set mapped to that role carries `fmrest` in the Save a Copy as XML file, and reports the privilege sets of that role that did not. When the role already held accounts in the target database, the migration only reports it, since granting it would open the Data API to those accounts too. A solution file (`POST /api/v1/solutions/import`) restores it by the same rule: a file written before `fmrest` leaves it as it is, a file may withdraw it, and it grants it only to a role that held no account in the database before, otherwise it says so in the import's `warnings`. An account with two-step verification cannot sign in to the Data API, which cannot ask for the second factor; turning it on ends the account's Data API sessions at once, and a token whose account has it on is refused on its next call.
+
+Phase P1 serves:
+
+| Endpoint | Notes |
+|---|---|
+| `GET /fmi/data/{version}/productInfo` | No session. Name, then `buildDate` and `version` when configured, then the date and time formats. |
+| `GET /fmi/data/{version}/databases` | No session; Basic credentials are allowed and ignored, any other `Authorization` answers `401` (code `960`). The served databases that exist. |
+| `POST /fmi/data/{version}/databases/{database}/sessions` | Basic credentials of a local account of the database; the body is `{}` or `{"fmDataSource":[…]}`, checked but not used yet. `200` with the token in `response.token` and in `X-FM-Data-Access-Token`. The name matches in any case; the session is bound to the name as written. The sign-in throttle of `/api/v1` applies. |
+| `DELETE /fmi/data/{version}/databases/{database}/sessions/{token}` | Revokes the session at once. |
+| `GET /fmi/data/{version}/validateSession` | `Authorization: Bearer <token>`. Does not extend the session. |
+
+A Data API session is a session kind of its own: it is never accepted by `/api/v1`, and an `/api/v1` session is never accepted here. It expires after `FILE4BASE_DATA_API_SESSION_TTL` without a call (`401`, code `952`), and is revoked as soon as its account is deleted, disabled, demoted or given another password. Every other endpoint checks its request (content type, `Authorization`, the `_find` body and the record read query parameters) and its token as FileMaker Server does, then answers `500` with code `3` until its phase lands. Server accounts and accounts with two-step verification cannot sign in yet (`401`, code `212`). Replies carry no CORS or trace headers, and the request log redacts the token of a sign-out path. The bundled Web Client's Nginx proxies `/fmi/data` to the API over its own TLS and keeps it out of its access log; FileMaker clients should use that HTTPS address rather than the API's plain port.

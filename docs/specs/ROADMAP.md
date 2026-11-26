@@ -79,7 +79,7 @@
 - [x] Encrypted payload channel (`F4BE\x01` AES-256-GCM) between the File4Base Web Client / desktop client and the API server (`internal/crypto`), plus configurable API server connection URL in the login dialog (defaulting to `http://127.0.0.1:8080`).
 - [x] Server-side enforcement of roles (`owner`, `admin`, `user`) and per-layout / per-table permissions.
 - [x] Data API restricted to catalog tables and fields; system tables unreachable.
-- [x] Extended privileges: bulk record export and import granted per account role and enforced on every request ([#39](https://github.com/file4base/file4base-app/issues/39), [security_model.md](security_model.md)). Access is not restricted by client, and nothing claims it is.
+- [x] Extended privileges: bulk record export and import granted per account role and enforced on every request ([#39](https://github.com/file4base/file4base-app/issues/39), [security_model.md](security_model.md)). Access is not restricted by client, and nothing claims it is. Access to the FileMaker Data API (`fmrest`) is granted the same way, owners only by default ([#208](https://github.com/file4base/file4base-app/issues/208)).
 - [x] No default accounts; database creation provisions the first owner explicitly.
 - [x] Multi-Factor Authentication (MFA / 2FA) with Google Authenticator (RFC 6238 TOTP QR code setup, Base32 secret, and 6-digit verification at sign-in; [server_tools_and_mfa.md](server_tools_and_mfa.md)).
 - [x] Go test suite and `go vet` in CI.
@@ -94,6 +94,7 @@
 - [x] Developer utilities: clone without records, rename, lock the design ([#53](https://github.com/file4base/file4base-app/issues/53), [developer_utilities.md](developer_utilities.md)).
 - [x] Copy and paste structure between solutions ([#54](https://github.com/file4base/file4base-app/issues/54), [copy_paste_structure.md](copy_paste_structure.md)).
 - [x] Assisted FileMaker migration path: `.fmp12` detection with clear guidance, plus FileMaker DDR / Save as XML and `FMPXMLRESULT` conversion with dry-run preflight report and trigger quarantine ([#26](https://github.com/file4base/file4base-app/issues/26), [filemaker_migration.md](filemaker_migration.md)).
+- [ ] FileMaker Data API at `/fmi/data`, answering as FileMaker Server does ([#208](https://github.com/file4base/file4base-app/issues/208), conformance suite in `server/testdata/dataapi`). Done: the conformance suite (P0); routing, envelope, error catalogue, sessions, `productInfo` and `databases` (P1). Next: metadata, record reads, finds, writes, scripts, containers.
 - [x] Server Tools administration console (`Server Tools` menu): containers & services health/logs/restart, on-demand & scheduled backups, domain & ACME/custom PEM TLS certificates, live 60-minute API telemetry charts (RPM & latency), connected client sessions, cron tasks, security audit logs, PostgreSQL maintenance (`VACUUM ANALYZE` / `REINDEX`), and SMTP/Webhook alerts ([server_tools_and_mfa.md](server_tools_and_mfa.md)).
 
 ## Phase 6: Real-Time Sync & Multi-User Collaboration

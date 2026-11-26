@@ -382,6 +382,7 @@ void main() {
 
       expect(find.text('Bulk record export'), findsOneWidget);
       expect(find.text('Bulk record import'), findsOneWidget);
+      expect(find.text('Access via FileMaker Data API'), findsOneWidget);
 
       // The access methods the tab used to claim are gone: they were never
       // enforced and could not be (#39).
@@ -389,15 +390,18 @@ void main() {
       expect(find.textContaining('REST API'), findsNothing);
       expect(find.textContaining('does not restrict access by client'), findsOneWidget);
 
-      // Two capabilities by three roles, each switch reflecting what is stored.
+      // Three capabilities by three roles, each switch reflecting what is
+      // stored. A server that reports no fmrest grants it to owners only.
       final switches = tester.widgetList<Switch>(find.byType(Switch)).toList();
-      expect(switches.length, 6);
-      expect(switches.map((s) => s.value).toList(), [true, true, false, true, false, false]);
+      expect(switches.length, 9);
+      expect(switches.map((s) => s.value).toList(), [true, true, false, true, false, false, true, false, false]);
 
       // The owner's switches are locked on.
       expect(switches[0].onChanged, isNull);
       expect(switches[3].onChanged, isNull);
+      expect(switches[6].onChanged, isNull);
       expect(switches[1].onChanged, isNotNull);
+      expect(switches[8].onChanged, isNotNull);
     });
 
     testWidgets('a change is stored at once, not kept in the dialog', (tester) async {
@@ -419,10 +423,36 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(written, [
-        {'role': 'user', 'bulk_export': false, 'bulk_import': true},
+        {'role': 'user', 'bulk_export': false, 'bulk_import': true, 'fmrest': false},
       ]);
       expect(tester.widget<Switch>(find.byType(Switch).at(2)).value, isFalse);
       expect(find.textContaining('withheld from users'), findsOneWidget);
+    });
+
+    testWidgets('Data API access is granted to a role like the other privileges', (tester) async {
+      final written = <Map<String, dynamic>>[];
+      await openTab(
+        tester,
+        privilegeClient(
+          privileges: [
+            {'role': 'owner', 'bulk_export': true, 'bulk_import': true, 'fmrest': true},
+            {'role': 'admin', 'bulk_export': true, 'bulk_import': true, 'fmrest': false},
+            {'role': 'user', 'bulk_export': true, 'bulk_import': true, 'fmrest': false},
+          ],
+          written: written,
+        ),
+      );
+
+      await tester.ensureVisible(find.byType(Switch).at(8));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(Switch).at(8));
+      await tester.pumpAndSettle();
+
+      expect(written, [
+        {'role': 'user', 'bulk_export': true, 'bulk_import': true, 'fmrest': true},
+      ]);
+      expect(tester.widget<Switch>(find.byType(Switch).at(8)).value, isTrue);
+      expect(find.textContaining('granted to users'), findsOneWidget);
     });
 
     testWidgets('an account that is not an owner can only read the grants', (tester) async {

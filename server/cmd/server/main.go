@@ -19,6 +19,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/dbal/mariadb"
 	"github.com/file4base/file4base-app/server/internal/dbal/postgres"
+	"github.com/file4base/file4base-app/server/internal/fmdapi"
 	"github.com/file4base/file4base-app/server/internal/localca"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/file4base/file4base-app/server/internal/transfer"
@@ -53,6 +54,12 @@ func corsMiddleware(allowed []string) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// The FileMaker Data API answers as FileMaker Server does, which
+			// sends no CORS headers and refuses OPTIONS.
+			if fmdapi.IsPath(r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			origin := r.Header.Get("Origin")
 			_, listed := origins[strings.ToLower(strings.TrimRight(origin, "/"))]
 
@@ -78,6 +85,27 @@ func corsMiddleware(allowed []string) func(http.Handler) http.Handler {
 
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+// dataAPIConfig reads the FileMaker Data API settings. The Data API is off
+// unless FILE4BASE_DATA_API_DATABASES lists the databases it serves.
+func dataAPIConfig() *fmdapi.Config {
+	raw := os.Getenv("FILE4BASE_DATA_API_DATABASES")
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	databases, err := fmdapi.ParseDatabaseAliases(raw)
+	if err != nil {
+		log.Printf("Warning: FILE4BASE_DATA_API_DATABASES: %v; the FileMaker Data API is off", err)
+		return nil
+	}
+	log.Printf("FileMaker Data API serving %d database(s) at /fmi/data", len(databases))
+	return &fmdapi.Config{
+		Databases:        databases,
+		ProductName:      strings.TrimSpace(os.Getenv("FILE4BASE_DATA_API_PRODUCT_NAME")),
+		ProductVersion:   strings.TrimSpace(os.Getenv("FILE4BASE_DATA_API_PRODUCT_VERSION")),
+		ProductBuildDate: strings.TrimSpace(os.Getenv("FILE4BASE_DATA_API_PRODUCT_BUILD_DATE")),
 	}
 }
 
@@ -197,6 +225,8 @@ func main() {
 	// Session store: every signed-in client holds a bearer token bound to
 	// exactly one database. There is no server-wide "active database".
 	sessions := auth.NewStore(envDuration("SESSION_TTL", auth.DefaultSessionTTL))
+	sessions.SetDataAPITTL(envDuration("FILE4BASE_DATA_API_SESSION_TTL", auth.DefaultDataAPISessionTTL))
+	dataAPI := dataAPIConfig()
 
 	corsOrigins := []string{"*"}
 	if raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS")); raw != "" {
@@ -249,17 +279,23 @@ func main() {
 		log.Println("Warning: database engine did not become reachable during startup")
 	}()
 
+	// The middlewares every request goes through. They wrap the handler
+	// api.Mount returns rather than being chi middlewares, so that the
+	// requests the Data API answers in front of the router (methods chi does
+	// not know) go through them too.
+	middlewares := chi.Chain(
+		corsMiddleware(corsOrigins),
+		telemetry.Middleware("file4base-api", AppVersion, ipResolver.ClientIP),
+		// Note: chi's middleware.RealIP is deliberately not used. It overwrites
+		// RemoteAddr from client-supplied X-Forwarded-For / X-Real-IP headers
+		// unconditionally; the client address is instead resolved per request
+		// through the trusted-proxy aware resolver (ipResolver / FILE4BASE_TRUSTED_PROXIES).
+		middleware.Recoverer,
+		// Every request is bounded to 60 seconds, except the FileMaker migration
+		// routes, which upload and import a whole database (#126).
+		api.RequestTimeout(60*time.Second, api.MigrationTimeouts(migrationTimeout)),
+	)
 	r := chi.NewRouter()
-	r.Use(corsMiddleware(corsOrigins))
-	r.Use(telemetry.Middleware("file4base-api", AppVersion, ipResolver.ClientIP))
-	// Note: chi's middleware.RealIP is deliberately not used. It overwrites
-	// RemoteAddr from client-supplied X-Forwarded-For / X-Real-IP headers
-	// unconditionally; the client address is instead resolved per request
-	// through the trusted-proxy aware resolver (ipResolver / FILE4BASE_TRUSTED_PROXIES).
-	r.Use(middleware.Recoverer)
-	// Every request is bounded to 60 seconds, except the FileMaker migration
-	// routes, which upload and import a whole database (#126).
-	r.Use(api.RequestTimeout(60*time.Second, api.MigrationTimeouts(migrationTimeout)))
 
 	// Cloud-Native Probes & Diagnostic Health (/healthz, /healthz/liveness, /healthz/readiness, etc.)
 	healthHandler := api.NewHealthHandler(dbMgr, AppVersion, &isReady, &isStarted)
@@ -289,7 +325,7 @@ func main() {
 	// the Web Client's Nginx (which mounts the same volume read-only).
 	tlsStore := localca.New(localca.DefaultDir())
 
-	api.Mount(r, dbMgr, sessions, api.Options{
+	handler := api.Mount(r, dbMgr, sessions, api.Options{
 		AllowPublicDatabaseCreation: allowPublicCreate,
 		ControlStore:                controlStore,
 		ChannelSecret:               channelSecret,
@@ -300,11 +336,12 @@ func main() {
 		TLSDir:                      tlsStore.Dir(),
 		MaxMigrationUploadBytes:     maxMigrationUpload,
 		MigrationUploadDir:          migrationUploadDir,
+		DataAPI:                     dataAPI,
 	})
 
 	srv := &http.Server{
 		Addr:              port,
-		Handler:           r,
+		Handler:           middlewares.Handler(handler),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

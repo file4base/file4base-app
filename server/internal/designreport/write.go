@@ -347,10 +347,10 @@ func WriteHTML(report *Report) ([]byte, error) {
 	b.WriteString(`</tbody></table>` + "\n")
 
 	if len(report.Privileges) > 0 {
-		b.WriteString(`<table><thead><tr><th>Role</th><th>Bulk export</th><th>Bulk import</th></tr></thead><tbody>` + "\n")
+		b.WriteString(`<table><thead><tr><th>Role</th><th>Bulk export</th><th>Bulk import</th><th>Data API</th></tr></thead><tbody>` + "\n")
 		for _, privilege := range report.Privileges {
 			b.WriteString(`<tr><td>` + esc(privilege.Role) + `</td><td>` + yesNo(privilege.BulkExport) +
-				`</td><td>` + yesNo(privilege.BulkImport) + `</td></tr>` + "\n")
+				`</td><td>` + yesNo(privilege.BulkImport) + `</td><td>` + yesNo(privilege.FMRest) + `</td></tr>` + "\n")
 		}
 		b.WriteString(`</tbody></table>` + "\n")
 	}

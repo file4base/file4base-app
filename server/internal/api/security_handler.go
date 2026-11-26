@@ -101,14 +101,11 @@ func envInt(name string, def int) int {
 	return def
 }
 
-// loginThrottleKey identifies who is trying to authenticate: the account
-// (database + username) and where from (client address). Keying on both
-// means one attacker cannot lock a victim out of their own account from
-// elsewhere, while still capping guesses per account and per source.
+// loginThrottleKey is the throttle key of a sign-in attempt; see
+// auth.LoginThrottleKey.
 func loginThrottleKey(database, username string, r *http.Request, resolver *clientip.Resolver) string {
 	ip, _, _ := extractClientSessionMeta(r, resolver)
-	return strings.ToLower(strings.TrimSpace(database)) + "\x00" +
-		strings.ToLower(strings.TrimSpace(username)) + "\x00" + ip
+	return auth.LoginThrottleKey(database, username, ip)
 }
 
 // writeLockedOut refuses an attempt that is currently locked out.
@@ -752,13 +749,28 @@ func (h *SecurityHandler) SetRolePrivileges(w http.ResponseWriter, r *http.Reque
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid Request", "the request body is not valid JSON")
 		return
 	}
-	if err := schemaService(r).SetRolePrivileges(r.Context(), req.Privileges); err != nil {
+	svc := schemaService(r)
+	// A client from before fmrest does not send it, which leaves it as is.
+	if err := svc.SetRolePrivileges(r.Context(), req.Privileges); err != nil {
 		if errors.Is(err, schema.ErrUnknownRole) {
 			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unknown Role", err.Error())
 			return
 		}
 		telemetry.WriteInternalError(w, r, err)
 		return
+	}
+	// A Data API session is checked for fmrest when it signs in only, so
+	// the sessions of a role that no longer holds it are closed now; all of
+	// them when what is stored cannot be read back.
+	stored, err := svc.ListRolePrivileges(r.Context())
+	for _, role := range schema.PrivilegeRoles() {
+		held := false
+		for _, p := range stored {
+			held = held || (err == nil && p.Role == role && p.FMRest)
+		}
+		if !held {
+			h.sessions.RevokeDataAPIRole(currentSession(r).Database, role)
+		}
 	}
 	h.GetRolePrivileges(w, r)
 }
@@ -824,10 +836,13 @@ func (h *SecurityHandler) EnableUserMFA(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	svc := schemaService(r)
-	if err := svc.EnableUserMFA(r.Context(), id, req.Code, req.Secret); err != nil {
+	if err := svc.EnableUserMFA(r.Context(), id, req.Secret, req.Code); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "MFA Verification Failed", err.Error())
 		return
 	}
+	// The Data API cannot ask for the second factor, so the account's Data
+	// API sessions end now, as its sign-in there is refused from now on.
+	h.sessions.RevokeDataAPIUser(currentSession(r).Database, id)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"id":          id,

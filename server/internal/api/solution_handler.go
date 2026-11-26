@@ -1259,6 +1259,17 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		return ""
 	}
 
+	// The roles that already hold accounts here, which a grant the file
+	// makes would open to accounts it knows nothing of.
+	heldRoles := map[string]bool{}
+	if !createdNewDB && len(converted.Grants) > 0 {
+		var err error
+		if heldRoles, err = targetSvc.RolesWithAccounts(r.Context()); err != nil {
+			telemetry.WriteInternalError(w, r, err)
+			return
+		}
+	}
+
 	bundleBytes, err := msgpack.Marshal(converted.Bundle)
 	if err != nil {
 		discardPartialMigration()
@@ -1271,6 +1282,30 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		rollbackNote := discardPartialMigration()
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Schema Import Error", err.Error()+rollbackNote)
 		return
+	}
+	// What the file granted its privilege sets is granted to the roles they
+	// map to (fmrest, #213), unless the role already held accounts here
+	// before the migration: those the file knows nothing of, so the owner
+	// decides. A role that holds it already keeps it, and the report as it
+	// is, which says which sets gain it through the role.
+	for _, g := range converted.Grants {
+		if heldRoles[g.Role] {
+			holds, err := targetSvc.RoleAllows(r.Context(), g.Role, g.Capability)
+			if err != nil {
+				rollbackNote := discardPartialMigration()
+				telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Schema Import Error", err.Error()+rollbackNote)
+				return
+			}
+			if !holds {
+				converted.Report.WithholdGrant(g, "this database already had accounts of that role")
+			}
+			continue
+		}
+		if err := targetSvc.GrantCapability(r.Context(), g.Role, g.Capability); err != nil {
+			rollbackNote := discardPartialMigration()
+			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Schema Import Error", err.Error()+rollbackNote)
+			return
+		}
 	}
 
 	recordsInserted := 0
