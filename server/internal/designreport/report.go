@@ -328,6 +328,7 @@ type RolePrivilege struct {
 	Role       string `json:"role" xml:"role,attr"`
 	BulkExport bool   `json:"bulk_export" xml:"bulk_export,attr"`
 	BulkImport bool   `json:"bulk_import" xml:"bulk_import,attr"`
+	FMRest     bool   `json:"fmrest" xml:"fmrest,attr"`
 }
 
 // Transfer is a named record transfer between two solutions (#96): what it

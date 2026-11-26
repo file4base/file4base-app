@@ -1259,6 +1259,20 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		return ""
 	}
 
+	// The roles that already hold accounts here, which a grant the file
+	// makes would open to accounts it knows nothing of.
+	heldRoles := map[string]bool{}
+	if !createdNewDB && len(converted.Grants) > 0 {
+		users, err := targetSvc.ListUsers(r.Context())
+		if err != nil {
+			telemetry.WriteInternalError(w, r, err)
+			return
+		}
+		for _, u := range users {
+			heldRoles[u.Role] = true
+		}
+	}
+
 	bundleBytes, err := msgpack.Marshal(converted.Bundle)
 	if err != nil {
 		discardPartialMigration()
@@ -1271,6 +1285,25 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		rollbackNote := discardPartialMigration()
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Schema Import Error", err.Error()+rollbackNote)
 		return
+	}
+	// What the file granted its privilege sets is granted to the roles they
+	// map to (fmrest, #213), unless the role already held accounts here
+	// before the migration: those the file knows nothing of, so the owner
+	// decides.
+	for _, g := range converted.Grants {
+		if heldRoles[g.Role] {
+			converted.Report.ManualActionRequired = append(converted.Report.ManualActionRequired, migration.ReportItem{
+				Category: migration.CategoryManualActionRequired, Domain: "privilege", SourceName: g.Role, TargetName: g.Role,
+				Detail: "The file grants " + g.Capability + " to privilege sets mapped to the role \"" + g.Role + "\", which was not granted " +
+					"because this database already had accounts of that role; grant it in Manage Security if they may all use the Data API",
+			})
+			continue
+		}
+		if err := targetSvc.GrantCapability(r.Context(), g.Role, g.Capability); err != nil {
+			rollbackNote := discardPartialMigration()
+			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Schema Import Error", err.Error()+rollbackNote)
+			return
+		}
 	}
 
 	recordsInserted := 0

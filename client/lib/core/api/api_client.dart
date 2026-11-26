@@ -1502,7 +1502,11 @@ class Capability {
   static const String bulkExport = 'bulk_export';
   static const String bulkImport = 'bulk_import';
 
-  static const List<String> all = [bulkExport, bulkImport];
+  /// Access through the FileMaker Data API at /fmi/data: FileMaker's fmrest
+  /// extended privilege. Owners hold it; other roles once an owner grants it.
+  static const String fmRest = 'fmrest';
+
+  static const List<String> all = [bulkExport, bulkImport, fmRest];
 
   /// The name shown in the interface for a capability.
   static String label(String capability) {
@@ -1511,6 +1515,8 @@ class Capability {
         return 'Bulk record export';
       case bulkImport:
         return 'Bulk record import';
+      case fmRest:
+        return 'Access via FileMaker Data API';
       default:
         return capability;
     }
@@ -1525,6 +1531,9 @@ class Capability {
       case bulkImport:
         return 'Bring records in from CSV, tab-separated text, Excel or XML, and '
             'read back a .f4data data file.';
+      case fmRest:
+        return 'Sign in to the FileMaker Data API at /fmi/data, when the server '
+            'serves it for this database. Off until granted.';
       default:
         return '';
     }
@@ -1538,6 +1547,7 @@ class RolePrivilegesModel {
     required this.role,
     this.bulkExport = true,
     this.bulkImport = true,
+    this.fmRest = false,
   });
 
   factory RolePrivilegesModel.fromJson(Map<String, dynamic> json) {
@@ -1545,11 +1555,15 @@ class RolePrivilegesModel {
       role: json['role'] as String? ?? '',
       bulkExport: json['bulk_export'] as bool? ?? true,
       bulkImport: json['bulk_import'] as bool? ?? true,
+      // A server from before fmrest reports nothing: no role but the owner
+      // may use a Data API it does not have.
+      fmRest: json['fmrest'] as bool? ?? json['role'] == 'owner',
     );
   }
   final String role;
   final bool bulkExport;
   final bool bulkImport;
+  final bool fmRest;
 
   bool allows(String capability) {
     switch (capability) {
@@ -1557,6 +1571,8 @@ class RolePrivilegesModel {
         return bulkExport;
       case Capability.bulkImport:
         return bulkImport;
+      case Capability.fmRest:
+        return fmRest;
       default:
         return false;
     }
@@ -1567,6 +1583,7 @@ class RolePrivilegesModel {
       role: role,
       bulkExport: capability == Capability.bulkExport ? allowed : bulkExport,
       bulkImport: capability == Capability.bulkImport ? allowed : bulkImport,
+      fmRest: capability == Capability.fmRest ? allowed : fmRest,
     );
   }
 
@@ -1574,6 +1591,7 @@ class RolePrivilegesModel {
         'role': role,
         'bulk_export': bulkExport,
         'bulk_import': bulkImport,
+        'fmrest': fmRest,
       };
 }
 

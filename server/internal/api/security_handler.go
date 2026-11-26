@@ -749,13 +749,27 @@ func (h *SecurityHandler) SetRolePrivileges(w http.ResponseWriter, r *http.Reque
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid Request", "the request body is not valid JSON")
 		return
 	}
-	if err := schemaService(r).SetRolePrivileges(r.Context(), req.Privileges); err != nil {
+	svc := schemaService(r)
+	if err := svc.SetRolePrivileges(r.Context(), req.Privileges); err != nil {
 		if errors.Is(err, schema.ErrUnknownRole) {
 			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unknown Role", err.Error())
 			return
 		}
 		telemetry.WriteInternalError(w, r, err)
 		return
+	}
+	// A Data API session is checked for fmrest when it signs in only, so
+	// the sessions of a role that no longer holds it are closed now; all of
+	// them when what is stored cannot be read back.
+	stored, err := svc.ListRolePrivileges(r.Context())
+	for _, role := range schema.PrivilegeRoles() {
+		held := false
+		for _, p := range stored {
+			held = held || (err == nil && p.Role == role && p.FMRest)
+		}
+		if !held {
+			h.sessions.RevokeDataAPIRole(currentSession(r).Database, role)
+		}
 	}
 	h.GetRolePrivileges(w, r)
 }

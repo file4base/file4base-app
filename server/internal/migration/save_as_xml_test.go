@@ -2,9 +2,12 @@ package migration
 
 import (
 	"errors"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/file4base/file4base-app/server/internal/schema"
 )
 
 // saveAsXMLFixture is a <FMSaveAsXML> document in the shape an authentic
@@ -250,5 +253,88 @@ func TestAnalyzeAndConvert_SaveAsXMLAccounts(t *testing.T) {
 	}
 	if got.Report.Counts.Accounts != 2 {
 		t.Fatalf("account count = %d, want 2", got.Report.Counts.Accounts)
+	}
+}
+
+// The fmrest extended privilege (Access via FileMaker Data API) is granted to
+// the roles of the privilege sets that carry it, per role (#213): the
+// accounts of the role's other sets gain it too, which the report says.
+func TestAnalyzeAndConvert_SaveAsXMLCarriesFMRestToRoles(t *testing.T) {
+	doc := `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
+ <BaseTableCatalog><BaseTable id="129" name="Notes"/></BaseTableCatalog>
+ <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Notes"/><ObjectList><Field id="1" name="Body" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog></FieldsForTables>
+ <ExtendedPrivilegesCatalog membercount="2"><ObjectList membercount="2">
+  <ExtendedPrivilege id="3" name="fmapp"><Description>Access via FileMaker Network</Description><ObjectList membercount="1"><PrivilegeSetReference id="6" name="Desk"/></ObjectList></ExtendedPrivilege>
+  <ExtendedPrivilege id="9" name="fmrest"><Description>Access via FileMaker Data API</Description><ObjectList membercount="2"><PrivilegeSetReference id="1" name="[Full Access]"/><PrivilegeSetReference id="4" name="Clerks"/></ObjectList></ExtendedPrivilege>
+ </ObjectList></ExtendedPrivilegesCatalog>
+ <AccountsCatalog membercount="5"><ObjectList membercount="5">
+  <Account id="2" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>curator</AccountName></Authentication><PrivilegeSetReference id="1" name="[Full Access]"/></Account>
+  <Account id="6" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>chief</AccountName></Authentication><PrivilegeSetReference id="8" name="Owner"/></Account>
+  <Account id="3" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>clerk</AccountName></Authentication><PrivilegeSetReference id="4" name="Clerks"/></Account>
+  <Account id="4" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>desk</AccountName></Authentication><PrivilegeSetReference id="6" name="Desk"/></Account>
+  <Account id="5" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>boss</AccountName></Authentication><PrivilegeSetReference id="7" name="Administrator"/></Account>
+ </ObjectList></AccountsCatalog>
+ </AddAction></Structure></FMSaveAsXML>`
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []CapabilityGrant{{Role: "user", Capability: schema.CapabilityFMRest}}
+	if !reflect.DeepEqual(got.Grants, want) {
+		t.Fatalf("grants = %v, want %v", got.Grants, want)
+	}
+	privilegeItems := func(items []ReportItem) []ReportItem {
+		var out []ReportItem
+		for _, it := range items {
+			if it.Domain == "privilege" {
+				out = append(out, it)
+			}
+		}
+		return out
+	}
+	translated := privilegeItems(got.Report.Translated)
+	if len(translated) != 1 || translated[0].SourceName != "Clerks" || translated[0].TargetName != "user" {
+		t.Fatalf("translated privilege items = %+v, want Clerks granted to user", translated)
+	}
+	// A set the owner role maps from gains fmrest without carrying it, and
+	// so does one of a role granted it.
+	manual := privilegeItems(got.Report.ManualActionRequired)
+	gained := map[string]string{}
+	for _, it := range manual {
+		if !strings.Contains(it.Detail, "#213") {
+			t.Errorf("privilege item without #213: %+v", it)
+		}
+		gained[it.SourceName] = it.TargetName
+	}
+	if !reflect.DeepEqual(gained, map[string]string{"Desk": "user", "Owner": "owner"}) {
+		t.Fatalf("manual privilege items = %+v, want Desk gaining fmrest through user and Owner through owner", manual)
+	}
+}
+
+// A document without an ExtendedPrivilegesCatalog grants nothing and says so.
+func TestAnalyzeAndConvert_FMRestUnknownGrantsNothing(t *testing.T) {
+	doc := `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
+ <BaseTableCatalog><BaseTable id="129" name="Notes"/></BaseTableCatalog>
+ <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Notes"/><ObjectList><Field id="1" name="Body" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog></FieldsForTables>
+ <AccountsCatalog membercount="2"><ObjectList membercount="2">
+  <Account id="2" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>curator</AccountName></Authentication><PrivilegeSetReference id="1" name="[Full Access]"/></Account>
+  <Account id="3" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>clerk</AccountName></Authentication><PrivilegeSetReference id="4" name="Clerks"/></Account>
+ </ObjectList></AccountsCatalog>
+ </AddAction></Structure></FMSaveAsXML>`
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Grants) != 0 {
+		t.Fatalf("grants = %v, want none", got.Grants)
+	}
+	found := false
+	for _, it := range got.Report.ManualActionRequired {
+		if it.Domain == "privilege" && it.TargetName == "user" && strings.Contains(it.Detail, "fmrest") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no manual action item says fmrest was not carried over: %+v", got.Report.ManualActionRequired)
 	}
 }

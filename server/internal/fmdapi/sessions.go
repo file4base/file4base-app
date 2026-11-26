@@ -111,16 +111,18 @@ func (h *Handler) login(w http.ResponseWriter, req *request) {
 		writeError(w, engineError("212"))
 		return
 	}
-	if h.deps.Authorize != nil {
-		allowed, err := h.deps.Authorize(ctx, database, user)
-		if err != nil {
-			writeError(w, engineError("-1"))
-			return
-		}
-		if !allowed {
-			writeError(w, engineError("9"))
-			return
-		}
+	// FileMaker's fmrest extended privilege is the fmrest capability of the
+	// account's role (#39): held by owners, and by other roles only once an
+	// owner grants it. It is per role, not per privilege set as in FileMaker
+	// (#211, #213).
+	allowed, err := svc.RoleAllows(ctx, user.Role, schema.CapabilityFMRest)
+	if err != nil {
+		writeError(w, engineError("-1"))
+		return
+	}
+	if !allowed {
+		writeError(w, engineError("9"))
+		return
 	}
 
 	token, _, err := h.deps.Sessions.CreateDataAPI(user.ID, user.Username, user.Role, database, name, user.Stamp)
@@ -223,11 +225,23 @@ func (h *Handler) session(req *request, token string, renew bool) (auth.Session,
 	if err != nil {
 		return auth.Session{}, engineError("-1")
 	}
-	stamp, err := schema.NewService(driver).CurrentAccountStamp(ctx, sess.UserID)
+	svc := schema.NewService(driver)
+	stamp, err := svc.CurrentAccountStamp(ctx, sess.UserID)
 	if err != nil && !errors.Is(err, schema.ErrAccountNotFound) {
 		return auth.Session{}, engineError("-1")
 	}
 	if err != nil || stamp != sess.Stamp {
+		h.deps.Sessions.Revoke(token)
+		return auth.Session{}, invalid
+	}
+	// So must its role's fmrest privilege, however it was withdrawn (in
+	// Manage Security, which also ends these sessions, or by a solution
+	// import), and whenever: also during the sign-in that read it.
+	allowed, err := svc.RoleAllows(ctx, sess.Role, schema.CapabilityFMRest)
+	if err != nil {
+		return auth.Session{}, engineError("-1")
+	}
+	if !allowed {
 		h.deps.Sessions.Revoke(token)
 		return auth.Session{}, invalid
 	}

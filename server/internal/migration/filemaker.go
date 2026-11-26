@@ -168,6 +168,16 @@ type ConvertedSolution struct {
 	Bundle    *schema.SolutionBundle
 	TableRows map[string][]map[string]interface{}
 	Report    *ConversionReport
+	// Grants are the capabilities the file gave the privilege sets its
+	// accounts map to, to grant to those roles once the design is in. They
+	// only ever add to what the target database holds.
+	Grants []CapabilityGrant
+}
+
+// CapabilityGrant is one capability to grant to one account role.
+type CapabilityGrant struct {
+	Role       string
+	Capability string
 }
 
 // IsFMP12Binary returns true when filename has a .fmp12/.fp7 extension or data
@@ -934,6 +944,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 
 	// 7. Extract Accounts & Privilege Sets (always disabled until password reset)
 	accNodes := catalogDefinitions(root, []string{"AccountCatalog", "AccountsCatalog", "accounts"}, "Account", "account")
+	setsByRole := map[string][]string{}
 	for _, an := range accNodes {
 		acc, items := convertAccountNode(an)
 		for _, it := range items {
@@ -941,9 +952,14 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		}
 		if acc != nil {
 			bundle.Users = append(bundle.Users, *acc)
+			setsByRole[acc.Role] = appendUnique(setsByRole[acc.Role], accountPrivilegeSet(an))
 		}
 	}
 	report.Counts.Accounts = len(bundle.Users)
+	grants, grantItems := fmrestGrants(root, setsByRole)
+	for _, it := range grantItems {
+		addReportItem(report, it)
+	}
 
 	// 8. Parse optional FMPXMLRESULT / XML data files and any attached .fmp12
 	// binary. Both routes go through the same reader, so an attachment sent
@@ -963,6 +979,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		Bundle:    bundle,
 		TableRows: tableRows,
 		Report:    report,
+		Grants:    grants,
 	}, nil
 }
 
@@ -3063,21 +3080,8 @@ func convertAccountNode(an *xmlNode) (*schema.BundleAccount, []ReportItem) {
 		}
 	}
 
-	privSet := strings.TrimSpace(firstAttr(an, "privilegeSet", "role", "PrivilegeSet"))
-	if privSet == "" {
-		if ref := findFirstChild(an, "PrivilegeSetReference"); ref != nil {
-			privSet = firstAttr(ref, "name")
-		}
-	}
-	role := "user"
-	switch strings.ToLower(privSet) {
-	case "[full access]", "full access", "owner":
-		role = "owner"
-	case "admin", "administrator", "[data entry only]":
-		if strings.Contains(strings.ToLower(privSet), "admin") {
-			role = "admin"
-		}
-	}
+	privSet := accountPrivilegeSet(an)
+	role := roleForPrivilegeSet(privSet)
 
 	items := []ReportItem{
 		{
@@ -3102,6 +3106,136 @@ func convertAccountNode(an *xmlNode) (*schema.BundleAccount, []ReportItem) {
 		Role:     role,
 		IsActive: false,
 	}, items
+}
+
+// accountPrivilegeSet is the name of the privilege set an account uses.
+func accountPrivilegeSet(an *xmlNode) string {
+	privSet := strings.TrimSpace(firstAttr(an, "privilegeSet", "role", "PrivilegeSet"))
+	if privSet == "" {
+		if ref := findFirstChild(an, "PrivilegeSetReference"); ref != nil {
+			privSet = strings.TrimSpace(firstAttr(ref, "name"))
+		}
+	}
+	return privSet
+}
+
+// roleForPrivilegeSet is the account role a FileMaker privilege set maps to.
+func roleForPrivilegeSet(privSet string) string {
+	switch strings.ToLower(privSet) {
+	case "[full access]", "full access", "owner":
+		return "owner"
+	case "admin", "administrator":
+		return "admin"
+	}
+	return "user"
+}
+
+// fmrestGrants carries FileMaker's fmrest extended privilege (Access via
+// FileMaker Data API) over to the roles the file's accounts map to. Save a
+// Copy as XML lists, in its ExtendedPrivilegesCatalog, the privilege sets
+// each extended privilege is enabled for; setsByRole holds the privilege sets
+// the migrated accounts use, by the role each maps to.
+//
+// File4Base grants it per role, which is coarser than FileMaker's per
+// privilege set (#213): a role is granted fmrest when any of its privilege
+// sets carries it, and the accounts of its other sets gain the Data API too,
+// which the report says. Owners hold it whatever the file says.
+func fmrestGrants(root *xmlNode, setsByRole map[string][]string) ([]CapabilityGrant, []ReportItem) {
+	extended := catalogDefinitions(root, []string{"ExtendedPrivilegesCatalog"}, "ExtendedPrivilege")
+	if len(extended) == 0 {
+		return nil, fmrestUnknownItems(setsByRole)
+	}
+	withFMRest := map[string]bool{}
+	for _, ep := range extended {
+		if !strings.EqualFold(strings.TrimSpace(firstAttr(ep, "name")), schema.CapabilityFMRest) {
+			continue
+		}
+		visitNodes(ep, func(n *xmlNode) {
+			if nodeNamed(n, "PrivilegeSetReference") {
+				withFMRest[strings.ToLower(strings.TrimSpace(firstAttr(n, "name")))] = true
+			}
+		})
+	}
+
+	var grants []CapabilityGrant
+	var items []ReportItem
+	for _, role := range []string{"owner", "admin", "user"} {
+		var granting, without []string
+		for _, set := range setsByRole[role] {
+			if withFMRest[strings.ToLower(set)] {
+				granting = append(granting, set)
+			} else {
+				without = append(without, set)
+			}
+		}
+		if role == "owner" {
+			// Owners hold every capability, as [Full Access] holds every
+			// extended privilege; a set mapped to the role that does not
+			// carry fmrest gains it all the same, which is reported.
+			granting = nil
+		}
+		if len(granting) > 0 {
+			grants = append(grants, CapabilityGrant{Role: role, Capability: schema.CapabilityFMRest})
+			items = append(items, ReportItem{
+				Category: CategoryTranslated, Domain: "privilege", SourceName: strings.Join(granting, ", "), TargetName: role,
+				Detail: fmt.Sprintf("The fmrest extended privilege (Access via FileMaker Data API) of privilege set(s) %s is granted to the role %q as its fmrest privilege",
+					quoteList(granting), role),
+			})
+		}
+		if len(without) > 0 && (len(granting) > 0 || role == "owner") {
+			review := "Review these accounts, or withhold fmrest from the role in Manage Security"
+			if role == "owner" {
+				review = "Review these accounts: an owner always holds fmrest"
+			}
+			items = append(items, ReportItem{
+				Category: CategoryManualActionRequired, Domain: "privilege", SourceName: strings.Join(without, ", "), TargetName: role,
+				Detail: fmt.Sprintf("Privilege set(s) %s do not carry fmrest in FileMaker, but their accounts hold the role %q, which does: File4Base grants the Data API per role, not per privilege set (#213). %s",
+					quoteList(without), role, review),
+			})
+		}
+	}
+	return grants, items
+}
+
+// fmrestUnknownItems reports, for a document that does not say which
+// privilege sets carry fmrest, that no account role was granted the Data API.
+func fmrestUnknownItems(setsByRole map[string][]string) []ReportItem {
+	var items []ReportItem
+	for _, role := range []string{"admin", "user"} {
+		if len(setsByRole[role]) == 0 {
+			continue
+		}
+		items = append(items, ReportItem{
+			Category: CategoryManualActionRequired, Domain: "privilege", SourceName: strings.Join(setsByRole[role], ", "), TargetName: role,
+			Detail: fmt.Sprintf("The document does not list which privilege sets carry the fmrest extended privilege (Access via FileMaker Data API), so the role %q is not granted it; "+
+				"grant fmrest to the role in Manage Security if accounts of privilege set(s) %s use the Data API", role, quoteList(setsByRole[role])),
+		})
+	}
+	return items
+}
+
+func visitNodes(n *xmlNode, fn func(*xmlNode)) {
+	for _, c := range n.Children {
+		fn(c)
+		visitNodes(c, fn)
+	}
+}
+
+func quoteList(names []string) string {
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = strconv.Quote(n)
+	}
+	return strings.Join(quoted, ", ")
+}
+
+func appendUnique(list []string, s string) []string {
+	for _, x := range list {
+		if strings.EqualFold(x, s) {
+			return list
+		}
+	}
+	return append(list, s)
 }
 
 // ─── Minimal XML Tree Helpers ──────────────────────────────────────────────

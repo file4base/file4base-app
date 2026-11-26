@@ -79,7 +79,7 @@
 - [x] Encrypted payload channel (`F4BE\x01` AES-256-GCM) between the File4Base Web Client / desktop client and the API server (`internal/crypto`), plus configurable API server connection URL in the login dialog (defaulting to `http://127.0.0.1:8080`).
 - [x] Server-side enforcement of roles (`owner`, `admin`, `user`) and per-layout / per-table permissions.
 - [x] Data API restricted to catalog tables and fields; system tables unreachable.
-- [x] Extended privileges: bulk record export and import granted per account role and enforced on every request ([#39](https://github.com/file4base/file4base-app/issues/39), [security_model.md](security_model.md)). Access is not restricted by client, and nothing claims it is.
+- [x] Extended privileges: bulk record export and import granted per account role and enforced on every request ([#39](https://github.com/file4base/file4base-app/issues/39), [security_model.md](security_model.md)). Access is not restricted by client, and nothing claims it is. Access to the FileMaker Data API (`fmrest`) is granted the same way, owners only by default ([#208](https://github.com/file4base/file4base-app/issues/208)).
 - [x] No default accounts; database creation provisions the first owner explicitly.
 - [x] Multi-Factor Authentication (MFA / 2FA) with Google Authenticator (RFC 6238 TOTP QR code setup, Base32 secret, and 6-digit verification at sign-in; [server_tools_and_mfa.md](server_tools_and_mfa.md)).
 - [x] Go test suite and `go vet` in CI.

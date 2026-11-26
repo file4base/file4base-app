@@ -475,14 +475,18 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			report TEXT
 		);`,
 		// Capabilities granted per account role (#39). A role without a
-		// row holds every capability, so a database created before this
-		// table existed keeps working unrestricted.
+		// row holds every bulk capability, so a database created before
+		// this table existed keeps working unrestricted; the Data API
+		// (fmrest) is held only once granted.
 		`CREATE TABLE IF NOT EXISTS sys_privileges (
 			role VARCHAR(32) PRIMARY KEY,
 			bulk_export BOOLEAN NOT NULL DEFAULT TRUE,
 			bulk_import BOOLEAN NOT NULL DEFAULT TRUE,
+			fmrest BOOLEAN NOT NULL DEFAULT FALSE,
 			updated_at ` + ts + `
 		);`,
+		// Data API access (see migrations/009_privilege_fmrest.sql).
+		`ALTER TABLE sys_privileges ADD COLUMN IF NOT EXISTS fmrest BOOLEAN NOT NULL DEFAULT FALSE;`,
 		`CREATE TABLE IF NOT EXISTS sys_scripts (
 			id VARCHAR(36) PRIMARY KEY,
 			name VARCHAR(128) NOT NULL,

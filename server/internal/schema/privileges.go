@@ -23,11 +23,23 @@ const (
 	// CapabilityBulkImport covers bringing many records in at once: record
 	// import from a file, its preview, and the .f4data data file.
 	CapabilityBulkImport = "bulk_import"
+	// CapabilityFMRest is access through the FileMaker Data API at /fmi/data
+	// (#208), FileMaker's fmrest extended privilege. Unlike the others it is
+	// an access method a role holds only when an owner grants it: the Data
+	// API is a second way in, which no account should gain by an upgrade.
+	CapabilityFMRest = "fmrest"
 )
 
 // Capabilities lists every capability, in the order the interface shows them.
 func Capabilities() []string {
-	return []string{CapabilityBulkExport, CapabilityBulkImport}
+	return []string{CapabilityBulkExport, CapabilityBulkImport, CapabilityFMRest}
+}
+
+// capabilityColumns is the sys_privileges column of each capability.
+var capabilityColumns = map[string]string{
+	CapabilityBulkExport: "bulk_export",
+	CapabilityBulkImport: "bulk_import",
+	CapabilityFMRest:     "fmrest",
 }
 
 // PrivilegeRoles lists the roles a capability can be granted to. The owner
@@ -51,6 +63,7 @@ type RolePrivileges struct {
 	Role       string `json:"role" msgpack:"role"`
 	BulkExport bool   `json:"bulk_export" msgpack:"bulk_export"`
 	BulkImport bool   `json:"bulk_import" msgpack:"bulk_import"`
+	FMRest     bool   `json:"fmrest" msgpack:"fmrest"`
 }
 
 // Allows reports whether this set holds a capability.
@@ -60,9 +73,24 @@ func (p RolePrivileges) Allows(capability string) bool {
 		return p.BulkExport
 	case CapabilityBulkImport:
 		return p.BulkImport
+	case CapabilityFMRest:
+		return p.FMRest
 	default:
 		return false
 	}
+}
+
+// With returns this set with one capability granted or withheld.
+func (p RolePrivileges) With(capability string, allowed bool) RolePrivileges {
+	switch capability {
+	case CapabilityBulkExport:
+		p.BulkExport = allowed
+	case CapabilityBulkImport:
+		p.BulkImport = allowed
+	case CapabilityFMRest:
+		p.FMRest = allowed
+	}
+	return p
 }
 
 // ErrUnknownCapability is returned for a capability File4Base does not have.
@@ -72,11 +100,21 @@ var ErrUnknownCapability = errors.New("unknown capability")
 var ErrUnknownRole = errors.New("unknown role")
 
 // defaultRolePrivileges is what a role holds when nothing is stored for it:
-// everything. A database upgraded from a version without this table keeps
-// working exactly as before, and no restriction ever appears without an owner
-// having asked for it.
+// every action, so that a database upgraded from a version without this table
+// keeps working exactly as before and no restriction ever appears without an
+// owner having asked for it, but not the Data API, which is opt-in.
 func defaultRolePrivileges(role string) RolePrivileges {
 	return RolePrivileges{Role: role, BulkExport: true, BulkImport: true}
+}
+
+// ownerPrivileges is what an owner holds, whatever is stored: everything, as
+// FileMaker's [Full Access] holds every extended privilege.
+func ownerPrivileges() RolePrivileges {
+	p := RolePrivileges{Role: roleOwner}
+	for _, capability := range Capabilities() {
+		p = p.With(capability, true)
+	}
+	return p
 }
 
 // RoleAllows reports whether an account role may use a capability. Owners
@@ -88,11 +126,7 @@ func (s *Service) RoleAllows(ctx context.Context, role, capability string) (bool
 	if role == roleOwner {
 		return true, nil
 	}
-	p, err := s.rolePrivileges(ctx, role)
-	if err != nil {
-		return false, err
-	}
-	return p.Allows(capability), nil
+	return s.roleHolds(ctx, role, capability)
 }
 
 func isCapability(capability string) bool {
@@ -104,36 +138,58 @@ func isCapability(capability string) bool {
 	return false
 }
 
-// rolePrivileges reads one role's stored grants, falling back to the default
-// when the role has no row yet.
-func (s *Service) rolePrivileges(ctx context.Context, role string) (RolePrivileges, error) {
-	q := `SELECT bulk_export, bulk_import FROM sys_privileges WHERE role = $1`
+// roleHolds reads one stored grant of a role, falling back to the default
+// when the role has no row yet. It reads that capability's column only, so a
+// check of one capability does not depend on the columns added for others.
+func (s *Service) roleHolds(ctx context.Context, role, capability string) (bool, error) {
+	q := `SELECT ` + capabilityColumns[capability] + ` FROM sys_privileges WHERE role = $1`
 	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
-		q = `SELECT bulk_export, bulk_import FROM sys_privileges WHERE role = ?`
+		q = `SELECT ` + capabilityColumns[capability] + ` FROM sys_privileges WHERE role = ?`
 	}
-	p := defaultRolePrivileges(role)
-	err := s.driver.DB().QueryRowContext(ctx, q, role).Scan(&p.BulkExport, &p.BulkImport)
+	var allowed bool
+	err := s.driver.DB().QueryRowContext(ctx, q, role).Scan(&allowed)
 	if errors.Is(err, sql.ErrNoRows) {
-		return defaultRolePrivileges(role), nil
+		return defaultRolePrivileges(role).Allows(capability), nil
 	}
 	if err != nil {
-		return defaultRolePrivileges(role), fmt.Errorf("failed reading privileges of role %s: %w", role, err)
+		return false, fmt.Errorf("failed reading privileges of role %s: %w", role, err)
 	}
-	return p, nil
+	return allowed, nil
+}
+
+// GrantCapability grants one capability to a role, leaving what else it holds
+// as it is. A migration uses it to carry over what the FileMaker file granted.
+func (s *Service) GrantCapability(ctx context.Context, role, capability string) error {
+	if !isCapability(capability) {
+		return fmt.Errorf("%w: %s", ErrUnknownCapability, capability)
+	}
+	if !isPrivilegeRole(role) {
+		return fmt.Errorf("%w: %s", ErrUnknownRole, role)
+	}
+	listed, err := s.ListRolePrivileges(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range listed {
+		if p.Role == role {
+			return s.SetRolePrivileges(ctx, []RolePrivileges{p.With(capability, true)})
+		}
+	}
+	return nil
 }
 
 // ListRolePrivileges returns one entry per role, in PrivilegeRoles order,
 // with the owner's entry always fully granted.
 func (s *Service) ListRolePrivileges(ctx context.Context) ([]RolePrivileges, error) {
 	stored := map[string]RolePrivileges{}
-	rows, err := s.driver.DB().QueryContext(ctx, `SELECT role, bulk_export, bulk_import FROM sys_privileges`)
+	rows, err := s.driver.DB().QueryContext(ctx, `SELECT role, bulk_export, bulk_import, fmrest FROM sys_privileges`)
 	if err != nil {
 		return nil, fmt.Errorf("failed listing privileges: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var p RolePrivileges
-		if err := rows.Scan(&p.Role, &p.BulkExport, &p.BulkImport); err != nil {
+		if err := rows.Scan(&p.Role, &p.BulkExport, &p.BulkImport, &p.FMRest); err != nil {
 			return nil, err
 		}
 		stored[p.Role] = p
@@ -150,7 +206,7 @@ func (s *Service) ListRolePrivileges(ctx context.Context) ([]RolePrivileges, err
 		}
 		p.Role = role
 		if role == roleOwner {
-			p = defaultRolePrivileges(role)
+			p = ownerPrivileges()
 		}
 		out = append(out, p)
 	}
@@ -167,7 +223,7 @@ func (s *Service) SetRolePrivileges(ctx context.Context, privileges []RolePrivil
 			return fmt.Errorf("%w: %s", ErrUnknownRole, p.Role)
 		}
 		if p.Role == roleOwner {
-			p = defaultRolePrivileges(roleOwner)
+			p = ownerPrivileges()
 		}
 		seen[p.Role] = p
 	}
@@ -189,10 +245,10 @@ func (s *Service) SetRolePrivileges(ctx context.Context, privileges []RolePrivil
 
 	postgres := s.driver.Dialect().Engine() == dbal.EnginePostgres
 	qDel := `DELETE FROM sys_privileges WHERE role = $1`
-	qIns := `INSERT INTO sys_privileges (role, bulk_export, bulk_import, updated_at) VALUES ($1, $2, $3, $4)`
+	qIns := `INSERT INTO sys_privileges (role, bulk_export, bulk_import, fmrest, updated_at) VALUES ($1, $2, $3, $4, $5)`
 	if !postgres {
 		qDel = `DELETE FROM sys_privileges WHERE role = ?`
-		qIns = `INSERT INTO sys_privileges (role, bulk_export, bulk_import, updated_at) VALUES (?, ?, ?, ?)`
+		qIns = `INSERT INTO sys_privileges (role, bulk_export, bulk_import, fmrest, updated_at) VALUES (?, ?, ?, ?, ?)`
 	}
 
 	now := time.Now().UTC()
@@ -201,7 +257,7 @@ func (s *Service) SetRolePrivileges(ctx context.Context, privileges []RolePrivil
 		if _, err := tx.ExecContext(ctx, qDel, role); err != nil {
 			return fmt.Errorf("failed clearing privileges of role %s: %w", role, err)
 		}
-		if _, err := tx.ExecContext(ctx, qIns, role, p.BulkExport, p.BulkImport, now); err != nil {
+		if _, err := tx.ExecContext(ctx, qIns, role, p.BulkExport, p.BulkImport, p.FMRest, now); err != nil {
 			return fmt.Errorf("failed storing privileges of role %s: %w", role, err)
 		}
 	}

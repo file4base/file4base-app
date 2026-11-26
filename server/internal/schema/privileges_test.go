@@ -36,13 +36,15 @@ func TestRolePrivileges(t *testing.T) {
 	_, err = driver.DB().ExecContext(ctx, `DELETE FROM sys_privileges`)
 	require.NoError(t, err)
 
-	// A database that stored nothing grants everything, so nothing becomes
-	// restricted by upgrading to a version that has this table.
+	// A database that stored nothing grants every bulk capability, so
+	// nothing becomes restricted by upgrading to a version that has this
+	// table; the Data API is held by owners only until it is granted.
 	for _, role := range schema.PrivilegeRoles() {
 		for _, capability := range schema.Capabilities() {
 			allowed, err := svc.RoleAllows(ctx, role, capability)
 			require.NoError(t, err)
-			assert.True(t, allowed, "%s should hold %s by default", role, capability)
+			want := capability != schema.CapabilityFMRest || role == "owner"
+			assert.Equal(t, want, allowed, "%s holding %s by default", role, capability)
 		}
 	}
 
@@ -56,6 +58,11 @@ func TestRolePrivileges(t *testing.T) {
 	allowed, err = svc.RoleAllows(ctx, "user", schema.CapabilityBulkImport)
 	require.NoError(t, err)
 	assert.True(t, allowed)
+
+	// A row stored without naming fmrest withholds it.
+	allowed, err = svc.RoleAllows(ctx, "user", schema.CapabilityFMRest)
+	require.NoError(t, err)
+	assert.False(t, allowed)
 
 	// Roles left out of the call keep what they hold.
 	allowed, err = svc.RoleAllows(ctx, "admin", schema.CapabilityBulkExport)
@@ -107,4 +114,16 @@ func TestRolePrivileges(t *testing.T) {
 	caps, err := svc.CapabilitiesOf(ctx, "admin")
 	require.NoError(t, err)
 	assert.Equal(t, []string{schema.CapabilityBulkExport}, caps)
+
+	// GrantCapability adds one capability and leaves the others as stored.
+	require.NoError(t, svc.GrantCapability(ctx, "admin", schema.CapabilityFMRest))
+	caps, err = svc.CapabilitiesOf(ctx, "admin")
+	require.NoError(t, err)
+	assert.Equal(t, []string{schema.CapabilityBulkExport, schema.CapabilityFMRest}, caps)
+	require.NoError(t, svc.GrantCapability(ctx, "user", schema.CapabilityFMRest))
+	caps, err = svc.CapabilitiesOf(ctx, "user")
+	require.NoError(t, err)
+	assert.Equal(t, []string{schema.CapabilityBulkExport, schema.CapabilityFMRest}, caps)
+	assert.ErrorIs(t, svc.GrantCapability(ctx, "superuser", schema.CapabilityFMRest), schema.ErrUnknownRole)
+	assert.ErrorIs(t, svc.GrantCapability(ctx, "user", "fmxdbc"), schema.ErrUnknownCapability)
 }

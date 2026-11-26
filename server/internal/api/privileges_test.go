@@ -3,9 +3,12 @@ package api_test
 import (
 	"encoding/base64"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/file4base/file4base-app/server/internal/api"
+	"github.com/file4base/file4base-app/server/internal/fmdapi"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,18 +55,20 @@ func TestAPI_BulkPrivileges(t *testing.T) {
 	}
 
 	// Nothing is restricted until an owner says so: a database that never
-	// stored a privilege grants every capability.
+	// stored a privilege grants every bulk capability. The Data API is the
+	// exception: only owners hold it until it is granted.
 	var listed struct {
 		Capabilities []string                `json:"capabilities"`
 		Privileges   []schema.RolePrivileges `json:"privileges"`
 	}
 	rec = h.do(http.MethodGet, "/api/v1/security/privileges", owner, nil, &listed)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Equal(t, []string{schema.CapabilityBulkExport, schema.CapabilityBulkImport}, listed.Capabilities)
+	assert.Equal(t, []string{schema.CapabilityBulkExport, schema.CapabilityBulkImport, schema.CapabilityFMRest}, listed.Capabilities)
 	require.Len(t, listed.Privileges, 3)
 	for _, p := range listed.Privileges {
 		assert.True(t, p.BulkExport, "%s export", p.Role)
 		assert.True(t, p.BulkImport, "%s import", p.Role)
+		assert.Equal(t, p.Role == "owner", p.FMRest, "%s fmrest", p.Role)
 	}
 
 	assert.Equal(t, http.StatusOK, h.do(http.MethodPost, "/api/v1/data/members/export", admin, exportBody, nil).Code)
@@ -148,4 +153,106 @@ func TestAPI_BulkPrivileges(t *testing.T) {
 	rec = h.do(http.MethodGet, "/api/v1/auth/session", admin, nil, &session)
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, []string{schema.CapabilityBulkExport}, session.Capabilities)
+}
+
+// TestAPI_DataAPIAccessIsTheFMRestPrivilege covers the fmrest capability: an
+// account signs in to the Data API only when its role holds it, which owners
+// always do and other roles do once an owner grants it, and the Data API
+// sessions of a role it is withdrawn from end at once.
+func TestAPI_DataAPIAccessIsTheFMRestPrivilege(t *testing.T) {
+	db := uniqueDB("f4b_fmrest")
+	h := newAPIHarness(t, api.Options{
+		AllowPublicDatabaseCreation: true,
+		DataAPI:                     &fmdapi.Config{Databases: []fmdapi.DatabaseAlias{{Name: db, Database: db}}},
+	})
+	h.createDatabase(db, "alice", "alice-secret")
+	owner := h.login(db, "alice", "alice-secret")
+	for _, u := range []struct{ name, role string }{{"bob", "admin"}, {"carol", "user"}} {
+		rec := h.do(http.MethodPost, "/api/v1/security/users", owner,
+			map[string]interface{}{"username": u.name, "password": u.name + "-secret-pw", "role": u.role}, nil)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	signIn := func(user, password string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/fmi/data/vLatest/databases/"+db+"/sessions", strings.NewReader(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(user+":"+password)))
+		rec := httptest.NewRecorder()
+		h.router.ServeHTTP(rec, req)
+		return rec
+	}
+	validate := func(token string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/fmi/data/vLatest/validateSession", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		h.router.ServeHTTP(rec, req)
+		return rec
+	}
+	const refused = `{"messages":[{"code":"9","message":"Insufficient privileges"}],"response":{}}`
+
+	// Only the owner holds fmrest until it is granted.
+	assert.Equal(t, http.StatusOK, signIn("alice", "alice-secret").Code)
+	for _, user := range []string{"bob", "carol"} {
+		rec := signIn(user, user+"-secret-pw")
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, user)
+		assert.Equal(t, refused, rec.Body.String(), user)
+		assert.Empty(t, rec.Header().Get("X-FM-Data-Access-Token"), user)
+	}
+
+	// Granted to users, it lets them in, and not admins.
+	rec := h.do(http.MethodPut, "/api/v1/security/privileges", owner, map[string]interface{}{"privileges": []map[string]interface{}{
+		{"role": "user", "bulk_export": true, "bulk_import": true, "fmrest": true},
+	}}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = signIn("carol", "carol-secret-pw")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	token := rec.Header().Get("X-FM-Data-Access-Token")
+	require.NotEmpty(t, token)
+	assert.Equal(t, http.StatusOK, validate(token).Code)
+	assert.Equal(t, refused, signIn("bob", "bob-secret-pw").Body.String())
+
+	// Changing another capability of the role keeps the session.
+	rec = h.do(http.MethodPut, "/api/v1/security/privileges", owner, map[string]interface{}{"privileges": []map[string]interface{}{
+		{"role": "user", "bulk_export": false, "bulk_import": true, "fmrest": true},
+	}}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, http.StatusOK, validate(token).Code)
+
+	// Withdrawn, it ends the role's open Data API sessions, not the owner's.
+	ownerToken := signIn("alice", "alice-secret").Header().Get("X-FM-Data-Access-Token")
+	rec = h.do(http.MethodPut, "/api/v1/security/privileges", owner, map[string]interface{}{"privileges": []map[string]interface{}{
+		{"role": "user", "bulk_export": true, "bulk_import": true, "fmrest": false},
+	}}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = validate(token)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"code":"952"`)
+	assert.Equal(t, http.StatusOK, validate(ownerToken).Code)
+	assert.Equal(t, refused, signIn("carol", "carol-secret-pw").Body.String())
+
+	// It is checked on every call, too, however it was withdrawn: here
+	// straight in the catalog, as a solution import would.
+	rec = h.do(http.MethodPut, "/api/v1/security/privileges", owner, map[string]interface{}{"privileges": []map[string]interface{}{
+		{"role": "user", "bulk_export": true, "bulk_import": true, "fmrest": true},
+	}}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = signIn("carol", "carol-secret-pw")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	token = rec.Header().Get("X-FM-Data-Access-Token")
+	assert.Equal(t, http.StatusOK, validate(token).Code)
+	driver, err := h.mgr.DriverFor(t.Context(), db)
+	require.NoError(t, err)
+	_, err = driver.DB().ExecContext(t.Context(), `UPDATE sys_privileges SET fmrest = FALSE WHERE role = 'user'`)
+	require.NoError(t, err)
+	rec = validate(token)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"code":"952"`)
+
+	// The owner's fmrest cannot be withheld.
+	rec = h.do(http.MethodPut, "/api/v1/security/privileges", owner, map[string]interface{}{"privileges": []map[string]interface{}{
+		{"role": "owner", "bulk_export": true, "bulk_import": true, "fmrest": false},
+	}}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, http.StatusOK, validate(ownerToken).Code)
+	assert.Equal(t, http.StatusOK, signIn("alice", "alice-secret").Code)
 }

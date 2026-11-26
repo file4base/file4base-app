@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/file4base/file4base-app/server/internal/api"
 	"github.com/file4base/file4base-app/server/internal/migration"
+	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -190,4 +192,60 @@ func TestAPI_FileMakerMigrationRollsBackIntoAnExistingDatabase(t *testing.T) {
 
 	assert.Equal(t, before, tableNames(),
 		"a failed migration leaves the design exactly as it was")
+}
+
+// A migration grants fmrest to the role of the privilege sets that carry it
+// (#213) only when that role held no account before: otherwise it would open
+// the Data API to accounts the file knows nothing of, so it reports instead.
+func TestAPI_MigrationGrantsFMRestOnlyToRolesItFills(t *testing.T) {
+	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
+	design := `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
+ <BaseTableCatalog><BaseTable id="129" name="Notes"/></BaseTableCatalog>
+ <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Notes"/><ObjectList><Field id="1" name="Body" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog></FieldsForTables>
+ <ExtendedPrivilegesCatalog membercount="1"><ObjectList membercount="1">
+  <ExtendedPrivilege id="9" name="fmrest"><ObjectList membercount="1"><PrivilegeSetReference id="4" name="Clerks"/></ObjectList></ExtendedPrivilege>
+ </ObjectList></ExtendedPrivilegesCatalog>
+ <AccountsCatalog membercount="1"><ObjectList membercount="1">
+  <Account id="3" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>clerk</AccountName></Authentication><PrivilegeSetReference id="4" name="Clerks"/></Account>
+ </ObjectList></AccountsCatalog>
+ </AddAction></Structure></FMSaveAsXML>`
+
+	migrate := func(withUser bool) (bool, *migration.ConversionReport) {
+		db := uniqueDB("f4b_migrest")
+		h.createDatabase(db, "alice", "alice-secret")
+		owner := h.login(db, "alice", "alice-secret")
+		if withUser {
+			rec := h.do(http.MethodPost, "/api/v1/security/users", owner,
+				map[string]interface{}{"username": "dave", "password": "dave-secret-pw", "role": "user"}, nil)
+			require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		}
+		var res struct {
+			Report *migration.ConversionReport `json:"report"`
+		}
+		rec := h.do(http.MethodPost, "/api/v1/solutions/migrate/apply", owner, map[string]interface{}{"design_xml": design}, &res)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		var listed struct {
+			Privileges []schema.RolePrivileges `json:"privileges"`
+		}
+		rec = h.do(http.MethodGet, "/api/v1/security/privileges", owner, nil, &listed)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		for _, p := range listed.Privileges {
+			if p.Role == "user" {
+				return p.FMRest, res.Report
+			}
+		}
+		t.Fatal("no user role listed")
+		return false, nil
+	}
+
+	granted, _ := migrate(false)
+	assert.True(t, granted, "the role only migrated accounts hold is granted fmrest")
+
+	granted, report := migrate(true)
+	assert.False(t, granted, "a role that already held an account is not granted fmrest")
+	found := false
+	for _, it := range report.ManualActionRequired {
+		found = found || (it.Domain == "privilege" && it.TargetName == "user" && strings.Contains(it.Detail, "already had accounts"))
+	}
+	assert.True(t, found, "the report says fmrest was not granted: %+v", report.ManualActionRequired)
 }

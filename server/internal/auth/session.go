@@ -508,6 +508,18 @@ func (s *Store) RevokeUser(database, userID, exceptToken string) {
 	}
 }
 
+// RevokeDataAPIRole invalidates every Data API session of a role in a
+// database, for when the role loses access to the Data API.
+func (s *Store) RevokeDataAPIRole(database, role string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, sess := range s.sessions {
+		if sess.Kind == KindDataAPI && sess.Database == database && sess.Role == role {
+			s.deleteLocked(key)
+		}
+	}
+}
+
 // RevokeDatabase invalidates every session bound to a database.
 func (s *Store) RevokeDatabase(database string) {
 	s.mu.Lock()

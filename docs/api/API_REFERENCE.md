@@ -1828,18 +1828,18 @@ Replaces the per-layout permissions of a user. Requires the `owner` or `admin` r
 ### `GET /api/v1/security/privileges`
 Returns the extended privileges each account role holds (#39). Requires the `owner` or `admin` role.
 
-An extended privilege is an **action** the server performs and can therefore refuse. File4Base does not restrict access by client: the desktop client, the Web Client and a direct REST call all speak to this API with the same session token, so the server cannot tell them apart, and a setting that claimed to would restrict nothing.
+An extended privilege is an **action** the server performs and can therefore refuse. File4Base does not restrict access by client: the desktop client, the Web Client and a direct REST call all speak to this API with the same session token, so the server cannot tell them apart, and a setting that claimed to would restrict nothing. The FileMaker Data API (§ 20) is the exception: it is a separate API with its own sign-in and sessions, which the server refuses to a role without `fmrest`.
 
-A role with nothing stored holds every privilege, so a database created before this table existed is not restricted by upgrading. An `owner` always holds every privilege and is reported as such whatever is stored.
+A role with nothing stored holds every bulk privilege, so a database created before this table existed is not restricted by upgrading; it does not hold `fmrest`, which is only ever granted. An `owner` always holds every privilege and is reported as such whatever is stored.
 
 #### Response `200 OK`
 ```json
 {
-  "capabilities": ["bulk_export", "bulk_import"],
+  "capabilities": ["bulk_export", "bulk_import", "fmrest"],
   "privileges": [
-    {"role": "owner", "bulk_export": true, "bulk_import": true},
-    {"role": "admin", "bulk_export": true, "bulk_import": false},
-    {"role": "user", "bulk_export": false, "bulk_import": false}
+    {"role": "owner", "bulk_export": true, "bulk_import": true, "fmrest": true},
+    {"role": "admin", "bulk_export": true, "bulk_import": false, "fmrest": false},
+    {"role": "user", "bulk_export": false, "bulk_import": false, "fmrest": true}
   ]
 }
 ```
@@ -1848,6 +1848,7 @@ A role with nothing stored holds every privilege, so a database created before t
 | --- | --- |
 | `bulk_export` | `POST /api/v1/data/{table}/export` and `GET /api/v1/solutions/export-data`. |
 | `bulk_import` | `POST /api/v1/data/{table}/import`, `POST /api/v1/data/{table}/import/preview` and `POST /api/v1/solutions/import-data`. |
+| `fmrest` | Signing in to the FileMaker Data API, `POST /fmi/data/{version}/databases/{database}/sessions` (§ 20). |
 
 Reading or writing one record at a time is not a bulk privilege: that is governed by the account role and by the per-table and per-layout access levels.
 
@@ -1856,14 +1857,14 @@ Reading or writing one record at a time is not a bulk privilege: that is governe
 ### `PUT /api/v1/security/privileges`
 Replaces the extended privileges of the roles in the request. Requires the `owner` role: granting a privilege to one's own role would be no restriction at all.
 
-Roles left out of the body keep what they hold. The `owner` entry is stored fully granted whatever it says, so that an owner cannot lock themselves out of their own database. The change applies to sessions that are already open, on the next request they make.
+Roles left out of the body keep what they hold; a role in the body is stored as given, and a privilege it leaves out is withheld. The `owner` entry is stored fully granted whatever it says, so that an owner cannot lock themselves out of their own database. The change applies to sessions that are already open, on the next request they make; the Data API sessions of a role that no longer holds `fmrest` are ended at once.
 
 #### Request Body
 ```json
 {
   "privileges": [
-    {"role": "admin", "bulk_export": true, "bulk_import": false},
-    {"role": "user", "bulk_export": false, "bulk_import": false}
+    {"role": "admin", "bulk_export": true, "bulk_import": false, "fmrest": false},
+    {"role": "user", "bulk_export": false, "bulk_import": false, "fmrest": true}
   ]
 }
 ```
@@ -2965,6 +2966,8 @@ The schedule's recorded runs, newest first, in the shape above.
 ## 20. FileMaker Data API (`/fmi/data`, `#208`)
 
 File4Base answers FileMaker clients at FileMaker Server's Data API paths, as FileMaker Server 26 does: same statuses, error codes and messages, key order and number spelling, as recorded by the conformance suite in `server/testdata/dataapi`. `v1`, `v2` and `vLatest` answer alike; any other version answers `400` with `{"response":{}}`, an unknown path Express's `404` page, and a known path with another method `405` (code `1704`). The API is off unless `FILE4BASE_DATA_API_DATABASES` lists the databases it serves, under the names FileMaker clients use.
+
+Access is opt-in twice: the operator serves the database (`FILE4BASE_DATA_API_DATABASES`), and an owner grants the `fmrest` privilege to the account roles that may use it ([`/api/v1/security/privileges`](#get-apiv1securityprivileges)), FileMaker's *Access via FileMaker Data API* extended privilege. Owners always hold it, as `[Full Access]` holds every extended privilege; `admin` and `user` hold it only once granted, including on a database upgraded from a version without it. An account whose role does not hold it is refused at sign-in with `401`, code `9` (`Insufficient privileges`). It is checked again on every call, so once it is withdrawn, the role's Data API tokens answer `401`, code `952`; Manage Security also ends those sessions at once. It is per role rather than per privilege set (`#213`). A migration grants it to a role when any privilege set mapped to that role carries `fmrest` in the Save a Copy as XML file, and reports the privilege sets of that role that did not. When the role already held accounts in the target database, the migration only reports it, since granting it would open the Data API to those accounts too.
 
 Phase P1 serves:
 

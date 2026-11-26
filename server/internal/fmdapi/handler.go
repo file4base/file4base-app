@@ -8,7 +8,6 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/dbal"
-	"github.com/file4base/file4base-app/server/internal/schema"
 )
 
 // Databases is what the Data API needs of the database manager.
@@ -16,11 +15,6 @@ type Databases interface {
 	LookupDatabase(ctx context.Context, name string) (string, bool, error)
 	DriverFor(ctx context.Context, name string) (dbal.DatabaseDriver, error)
 }
-
-// Authorizer decides whether an account that signed in may use the Data
-// API. It stands for FileMaker's fmrest extended privilege, which File4Base
-// does not model yet (#211); an account it refuses gets FileMaker's code 9.
-type Authorizer func(ctx context.Context, database string, user *schema.AuthUser) (bool, error)
 
 // Deps are the services the Data API shares with the rest of the server.
 type Deps struct {
@@ -32,9 +26,6 @@ type Deps struct {
 	// ClientIP resolves the caller's address, trusting forwarding headers
 	// only from trusted proxies.
 	ClientIP func(*http.Request) string
-	// Authorize, when set, decides who may use the Data API. Unset, every
-	// account of a served database may.
-	Authorize Authorizer
 }
 
 // Handler serves /fmi/data.

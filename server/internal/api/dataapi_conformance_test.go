@@ -614,6 +614,21 @@ func migrateDataAPIReference(t *testing.T, h *apiHarness, created *bool) error {
 		}, nil)
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	}
+
+	// Data API access is the fmrest privilege of the account's role. The
+	// migration grants it to the role the file's fmrest privilege sets map
+	// to (#213), so the harness grants nothing itself; it checks the grant
+	// is there, since every sign-in of the fixtures depends on it. noapi
+	// maps to that role too, so login_variants stops at
+	// account-without-fmrest until access is per privilege set.
+	var privileges struct {
+		Privileges []schema.RolePrivileges `json:"privileges"`
+	}
+	rec = daJSON(h, http.MethodGet, "/api/v1/security/privileges", login.Token, nil, &privileges)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	for _, p := range privileges.Privileges {
+		require.Equal(t, p.Role != "admin", p.FMRest, "fmrest of the role %s after migrating the reference file", p.Role)
+	}
 	return nil
 }
 
