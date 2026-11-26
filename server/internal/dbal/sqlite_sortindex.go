@@ -27,13 +27,17 @@ const (
 	SQLiteSortIndexMinRecords = 10_000
 
 	sqliteSortIndexBuildTimeout = 30 * time.Minute
+	// sqliteSortIndexRetry is how long a sort index whose build failed (a
+	// full disk) is not tried again.
+	sqliteSortIndexRetry = 10 * time.Minute
 )
 
 // sqliteSortIndexMinRecords is SQLiteSortIndexMinRecords, which tests lower.
 var sqliteSortIndexMinRecords int64 = SQLiteSortIndexMinRecords
 
 // sqliteSortIndexes holds the sort indexes being built, so a field is
-// indexed once however many sorts ask for it meanwhile.
+// indexed once however many sorts ask for it meanwhile, and the time a
+// build failed, until it is tried again.
 var sqliteSortIndexes sync.Map
 
 // SQLiteSortKeySQL is the sort key of a quoted column, as an index on it
@@ -51,19 +55,20 @@ func SQLiteSortKeySQL(quotedColumn string) string {
 // collation meanwhile, in the same order.
 func SQLiteSortIndex(ctx context.Context, db *sql.DB, table, column string) string {
 	key := SQLiteSortKeySQL(quoteSQLite(column))
-	var name string
-	err := db.QueryRowContext(ctx,
-		`SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = $1 AND instr(sql, $2) > 0 LIMIT 1`,
-		table, key).Scan(&name)
+	name, err := sqliteSortIndexOf(ctx, db, table, key)
 	if err != sql.ErrNoRows {
 		return name
 	}
 	building := fmt.Sprintf("%p\x00%s\x00%s", db, table, column)
-	if _, busy := sqliteSortIndexes.Load(building); busy {
-		return ""
+	if v, busy := sqliteSortIndexes.Load(building); busy {
+		if failed, ok := v.(time.Time); !ok || time.Since(failed) < sqliteSortIndexRetry {
+			return ""
+		}
+		sqliteSortIndexes.CompareAndDelete(building, v)
 	}
-	var last sql.NullInt64
-	if err := db.QueryRowContext(ctx, `SELECT max(rowid) FROM `+quoteSQLite(table)).Scan(&last); err != nil || last.Int64 < sqliteSortIndexMinRecords {
+	var large int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM `+quoteSQLite(table)+` LIMIT 1 OFFSET $1)`,
+		sqliteSortIndexMinRecords-1).Scan(&large); err != nil || large == 0 {
 		return ""
 	}
 	if _, busy := sqliteSortIndexes.LoadOrStore(building, struct{}{}); busy {
@@ -73,28 +78,70 @@ func SQLiteSortIndex(ctx context.Context, db *sql.DB, table, column string) stri
 	// table renamed keeps its indexes under their names, so a name of the
 	// table and column alone could be taken.
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d", table, column, time.Now().UnixNano())))
-	create := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s)",
-		quoteSQLite("f4b_sort_"+hex.EncodeToString(sum[:6])), quoteSQLite(table), key)
+	create := fmt.Sprintf("CREATE INDEX %s ON %s (%s)",
+		quoteSQLite(sqliteSortIndexPrefix+hex.EncodeToString(sum[:6])), quoteSQLite(table), key)
 	go func() {
-		defer sqliteSortIndexes.Delete(building)
 		ctx, cancel := context.WithTimeout(context.Background(), sqliteSortIndexBuildTimeout)
 		defer cancel()
 		start := time.Now()
-		if _, err := db.ExecContext(ctx, create); err != nil {
+		if err := buildSQLiteSortIndex(ctx, db, table, column, key, create); err != nil {
 			log.Printf("sqlite: indexing %s.%s for sorts failed: %v", table, column, err)
+			sqliteSortIndexes.Store(building, time.Now())
 			return
 		}
+		sqliteSortIndexes.Delete(building)
 		log.Printf("sqlite: indexed %s.%s for sorts in %s", table, column, time.Since(start).Round(time.Millisecond))
 	}()
 	return ""
+}
+
+// sqliteSortIndexPrefix starts the name of every sort index: an index
+// someone else made on the same key is not one.
+const sqliteSortIndexPrefix = "f4b_sort_"
+
+// sqliteSortIndexOf is the name of the sort index on key of table, or
+// sql.ErrNoRows. A partial index cannot serve a list of the whole table.
+func sqliteSortIndexOf(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, table, key string) (string, error) {
+	var name string
+	err := q.QueryRowContext(ctx,
+		`SELECT m.name FROM sqlite_schema AS m, temp.pragma_index_list(m.tbl_name) AS l `+
+			`WHERE m.type = 'index' AND m.tbl_name = $1 COLLATE NOCASE AND l.name = m.name AND NOT l.partial `+
+			`AND m.name LIKE '`+sqliteSortIndexPrefix+`%' AND instr(lower(m.sql), lower($2)) > 0 LIMIT 1`,
+		table, key).Scan(&name)
+	return name, err
+}
+
+// buildSQLiteSortIndex makes a sort index in a write transaction, after
+// checking there that the column is still there and has none: a column
+// dropped meanwhile would be read as a text constant ("col"), and two
+// builds of the same field in two processes would make two indexes.
+func buildSQLiteSortIndex(ctx context.Context, db *sql.DB, table, column, key, create string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM temp.pragma_table_info($1) WHERE name = $2 COLLATE NOCASE`,
+		table, column).Scan(&exists); err != nil || exists == 0 {
+		return err
+	}
+	if _, err := sqliteSortIndexOf(ctx, tx, table, key); err != sql.ErrNoRows {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, create); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func quoteSQLite(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-// isSQLiteSortIndex tells a sort index (SQLiteSortIndex) by the statement
-// that made it.
-func isSQLiteSortIndex(create string) bool {
-	return strings.Contains(create, SQLiteSortKey+"(")
+// isSQLiteSortIndex tells a sort index (SQLiteSortIndex) by its name.
+func isSQLiteSortIndex(name string) bool {
+	return strings.HasPrefix(name, sqliteSortIndexPrefix)
 }

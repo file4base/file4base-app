@@ -55,14 +55,14 @@ func TestSortIndex_ListsTheSameRecordsInTheSameOrder(t *testing.T) {
 	for _, order := range orders {
 		before = append(before, list(order))
 	}
-	_, err := a.driver.DB().ExecContext(ctx, `CREATE INDEX words_label_key ON "words" (`+dbal.SQLiteSortKeySQL(`"label"`)+`)`)
+	_, err := a.driver.DB().ExecContext(ctx, `CREATE INDEX f4b_sort_words_label ON "words" (`+dbal.SQLiteSortKeySQL(`"label"`)+`)`)
 	require.NoError(t, err)
 	require.NotEmpty(t, dbal.SQLiteSortIndex(ctx, a.driver.DB(), "words", "label"))
 	for i, order := range orders {
 		assert.Equal(t, before[i], list(order), "order %v through the index", order)
 	}
 
-	_, err = a.driver.DB().ExecContext(ctx, `DROP INDEX words_label_key`)
+	_, err = a.driver.DB().ExecContext(ctx, `DROP INDEX f4b_sort_words_label`)
 	require.NoError(t, err)
 	assert.Equal(t, before[0], list(orders[0]), "without the index again")
 }

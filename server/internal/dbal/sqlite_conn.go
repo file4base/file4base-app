@@ -170,6 +170,16 @@ func openSQLite(ctx context.Context, path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite database %s: %w", path, err)
 	}
+	// Texts are read and keyed as UTF-8 (SQLiteSortKey); a file made by
+	// another tool in UTF-16 is refused.
+	var encoding string
+	if err := db.QueryRowContext(ctx, "PRAGMA encoding").Scan(&encoding); err != nil || encoding != "UTF-8" {
+		_ = db.Close()
+		if err == nil {
+			err = fmt.Errorf("its text encoding is %s, not UTF-8", encoding)
+		}
+		return nil, fmt.Errorf("sqlite database %s: %w", path, err)
+	}
 	return db, nil
 }
 
@@ -205,16 +215,16 @@ type sqliteConnector struct {
 	// file is the database file the pool was opened on. A connection that
 	// finds another file under the path (the database was dropped and one
 	// of the same name created while it was being opened) is refused.
-	// held keeps the file open while the pool is: a file system reuses the
-	// inode of a removed file once nothing holds it, and the new file would
-	// then pass for the old one.
+	// held keeps the file open while the pool is (pinSQLiteFile): a file
+	// system reuses the inode of a removed file once nothing holds it, and
+	// the new file would then pass for the old one.
 	file os.FileInfo
 	held *os.File
 }
 
 func newSQLiteConnector(path string) *sqliteConnector {
 	c := &sqliteConnector{dsn: sqliteDSN(path), writer: writerQueue(path), path: path}
-	if held, err := os.Open(path); err == nil {
+	if held, err := pinSQLiteFile(path); err == nil {
 		if file, err := held.Stat(); err == nil {
 			c.file, c.held = file, held
 		} else {
@@ -701,7 +711,7 @@ func (c *sqliteConn) alterSQLiteColumnType(ctx context.Context, table, column, n
 func (c *sqliteConn) dropColumnIndexes(ctx context.Context, table, column string) ([]string, error) {
 	rows, err := c.inner.(driver.QueryerContext).QueryContext(ctx,
 		`SELECT DISTINCT m.name, m.sql FROM sqlite_schema AS m, temp.pragma_index_xinfo(m.name) AS x `+
-			`WHERE m.type = 'index' AND m.tbl_name = $1 AND m.sql IS NOT NULL AND (x.name = $2 OR instr(m.sql, $3) > 0)`,
+			`WHERE m.type = 'index' AND m.tbl_name = $1 AND m.sql IS NOT NULL AND (x.name = $2 OR instr(lower(m.sql), lower($3)) > 0)`,
 		[]driver.NamedValue{{Ordinal: 1, Value: unquoteSQLite(table)}, {Ordinal: 2, Value: unquoteSQLite(column)},
 			{Ordinal: 3, Value: SQLiteSortKeySQL(quoteSQLite(unquoteSQLite(column)))}})
 	if err != nil {
@@ -717,9 +727,10 @@ func (c *sqliteConn) dropColumnIndexes(ctx context.Context, table, column string
 			rows.Close()
 			return nil, err
 		}
-		names = append(names, textOf(dest[0]))
-		if create := textOf(dest[1]); !isSQLiteSortIndex(create) {
-			creates = append(creates, create)
+		name := textOf(dest[0])
+		names = append(names, name)
+		if !isSQLiteSortIndex(name) {
+			creates = append(creates, textOf(dest[1]))
 		}
 	}
 	rows.Close()

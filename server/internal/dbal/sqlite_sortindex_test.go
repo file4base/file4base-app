@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math/rand"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -178,4 +179,67 @@ func TestSQLite_NewDatabasesHaveLargePages(t *testing.T) {
 	var mode string
 	require.NoError(t, db.QueryRow(`PRAGMA journal_mode`).Scan(&mode))
 	assert.Equal(t, "wal", mode, fmt.Sprint("page size ", size))
+}
+
+// A build finds the column gone, or the index made meanwhile, and makes
+// nothing: SQLite would read a missing "col" as the text 'col'.
+func TestSQLite_SortIndexBuildChecksTheColumnFirst(t *testing.T) {
+	db, _ := newSQLiteDB(t)
+	ctx := context.Background()
+	_, err := db.ExecContext(ctx, `CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`)
+	require.NoError(t, err)
+	key := SQLiteSortKeySQL(`"gone"`)
+	require.NoError(t, buildSQLiteSortIndex(ctx, db, "t", "gone", key, `CREATE INDEX f4b_sort_x ON t (`+key+`)`))
+	assert.Empty(t, sortIndexes(t, db, "t"))
+
+	key = SQLiteSortKeySQL(`"v"`)
+	require.NoError(t, buildSQLiteSortIndex(ctx, db, "t", "v", key, `CREATE INDEX f4b_sort_a ON t (`+key+`)`))
+	require.NoError(t, buildSQLiteSortIndex(ctx, db, "t", "v", key, `CREATE INDEX f4b_sort_b ON t (`+key+`)`))
+	assert.Len(t, sortIndexes(t, db, "t"), 1)
+}
+
+// An index someone else made on the same key, or a partial one, is not a
+// sort index: a list is not forced through it, and a column change keeps
+// it; a column named in another case still takes its sort index along.
+func TestSQLite_OnlyFileBasesSortIndexesAreUsed(t *testing.T) {
+	db, _ := newSQLiteDB(t)
+	ctx := context.Background()
+	lowerSortIndexThreshold(t, 1)
+	key := SQLiteSortKeySQL(`"v"`)
+	_, err := db.ExecContext(ctx, `CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT, w TEXT);
+		INSERT INTO t (v, w) VALUES ('a', 'x'), ('b', 'y');
+		CREATE UNIQUE INDEX mine ON t (`+key+`);
+		CREATE INDEX f4b_sort_partial ON t (`+key+`) WHERE v IS NOT NULL`)
+	require.NoError(t, err)
+	_, err = sqliteSortIndexOf(ctx, db, "t", key)
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+
+	_, err = db.ExecContext(ctx, `ALTER TABLE "t" ALTER COLUMN "v" TYPE NUMERIC`)
+	assert.Error(t, err, "'a' is not a number")
+	_, err = db.ExecContext(ctx, `UPDATE t SET v = NULL`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `ALTER TABLE "t" ALTER COLUMN "v" TYPE NUMERIC`)
+	require.NoError(t, err)
+	var mine int
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE name = 'mine'`).Scan(&mine))
+	assert.Equal(t, 1, mine, "a unique index of the user's is made again")
+
+	SQLiteSortIndex(ctx, db, "t", "w")
+	waitSortIndex(t, db, "t", "w")
+	_, err = db.ExecContext(ctx, `ALTER TABLE "t" DROP COLUMN "W"`)
+	require.NoError(t, err)
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE type = 'index' AND name LIKE 'f4b_sort_%' AND sql LIKE '%"w"%'`).Scan(&mine))
+	assert.Zero(t, mine)
+}
+
+// A database file in UTF-16, which File4Base never makes, is refused.
+func TestSQLite_AUTF16FileIsRefused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "utf16"+SQLiteFileExtension)
+	raw, err := sql.Open("sqlite", "file:"+path)
+	require.NoError(t, err)
+	_, err = raw.Exec(`PRAGMA encoding = 'UTF-16le'; CREATE TABLE t (v TEXT)`)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+	_, err = openSQLite(context.Background(), path)
+	assert.ErrorContains(t, err, "UTF-16")
 }

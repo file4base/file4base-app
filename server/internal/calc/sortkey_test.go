@@ -10,7 +10,7 @@ import (
 // Two sort keys compare as CompareText compares their texts.
 func TestSortKeyComparesAsCompareText(t *testing.T) {
 	alphabet := []string{"a", "A", "b", "B", "e", "E", "s", "S", "z", "Z", " ", "-", "0", "9", "\x00", "\x01",
-		"é", "É", "è", "ß", "ẞ", "ı", "İ", "i", "I", "æ", "Æ", "œ", "ø", "ü", "́", "￿", "日"}
+		"é", "É", "è", "ß", "ẞ", "ı", "İ", "i", "I", "æ", "Æ", "œ", "ø", "ü", "́", "￿", "日", "\xff", "\xc3", "\xe2\x82"}
 	r := rand.New(rand.NewSource(7))
 	random := func(ascii bool) string {
 		var b strings.Builder
