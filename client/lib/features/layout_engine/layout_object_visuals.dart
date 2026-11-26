@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
@@ -772,4 +773,103 @@ String? normalizeDateInput(String input, {required String order}) {
   return '${year.toString().padLeft(4, '0')}-'
       '${month.toString().padLeft(2, '0')}-'
       '${day.toString().padLeft(2, '0')}';
+}
+
+/// A tab or slide control in Browse, Find and Preview modes: the frame of
+/// its panels and, for a tab control, its row of tabs, the one in front
+/// ([selected]) joined to the panel. Tapping a tab, or a slide control's
+/// dot, calls [onSelect]; without it the control only shows.
+class LayoutPanelControlView extends StatelessWidget {
+  const LayoutPanelControlView({required this.obj, required this.selected, this.onSelect, super.key});
+
+  final LayoutObjectModel obj;
+  final int selected;
+  final ValueChanged<int>? onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = obj.style;
+    final fill = parseLayoutColor(style.fillColor);
+    final borderColor = parseLayoutColor(style.borderColor) ?? const Color(0xFFBDBDBD);
+    final borderWidth = style.borderWidth > 0 ? style.borderWidth : 1.0;
+    final side = BorderSide(color: borderColor, width: borderWidth);
+    final count = obj.tabs.length;
+    if (obj.type == 'slide_control') {
+      return DecoratedBox(
+        decoration: BoxDecoration(color: fill, border: style.borderWidth > 0 ? Border.fromBorderSide(side) : null),
+        child: count < 2
+            ? const SizedBox.expand()
+            : Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (var i = 0; i < count; i++)
+                        GestureDetector(
+                          key: ValueKey('panel-tab-${obj.id}-$i'),
+                          onTap: onSelect == null ? null : () => onSelect!(i),
+                          child: Container(
+                            width: 8,
+                            height: 8,
+                            margin: const EdgeInsets.symmetric(horizontal: 3),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: i == selected ? Colors.black54 : Colors.black12,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+      );
+    }
+    final tabHeight = math.min(obj.tabHeight ?? 24.0, obj.height);
+    final text = layoutTextStyle(style, fallbackColor: Colors.black87);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: tabHeight,
+          child: ClipRect(
+            child: OverflowBox(
+              alignment: Alignment.centerLeft,
+              maxWidth: double.infinity,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final (i, label) in obj.tabs.indexed)
+                    InkWell(
+                      key: ValueKey('panel-tab-${obj.id}-$i'),
+                      onTap: onSelect == null ? null : () => onSelect!(i),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: i == selected ? fill : Colors.black.withValues(alpha: 0.06),
+                          border: Border(top: side, left: side, right: side, bottom: i == selected ? BorderSide.none : side),
+                        ),
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          style: i == selected ? text.copyWith(fontWeight: FontWeight.bold) : text,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: DecoratedBox(
+            decoration: BoxDecoration(color: fill, border: Border(left: side, right: side, bottom: side)),
+          ),
+        ),
+      ],
+    );
+  }
 }

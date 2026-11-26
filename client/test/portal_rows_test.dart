@@ -30,6 +30,17 @@ const _relationship = RelationshipModel(
   rightColumnId: 's1',
 );
 
+/// Steps reached from steps: a portal of it on a Projects layout is two
+/// relationships away.
+const _nextSteps = RelationshipModel(
+  id: 'rel-2',
+  name: 'steps_next',
+  leftOccurrenceId: 'occ-steps',
+  leftColumnId: 's2',
+  rightOccurrenceId: 'occ-next',
+  rightColumnId: 's1',
+);
+
 class _Api extends ApiClient {
   _Api(this.scripts) : super(baseUrl: 'http://localhost:1');
   final Map<String, ScriptModel> scripts;
@@ -49,12 +60,13 @@ class _Api extends ApiClient {
   ];
 
   @override
-  Future<List<RelationshipModel>> listRelationships() async => const [_relationship];
+  Future<List<RelationshipModel>> listRelationships() async => const [_relationship, _nextSteps];
 
   @override
   Future<List<TableOccurrenceModel>> listOccurrences() async => const [
         TableOccurrenceModel(id: 'occ-projects', baseTableId: 't-projects', name: 'Projects', xPos: 0, yPos: 0),
         TableOccurrenceModel(id: 'occ-steps', baseTableId: 't-steps', name: 'Steps', xPos: 0, yPos: 0),
+        TableOccurrenceModel(id: 'occ-next', baseTableId: 't-steps', name: 'Next Steps', xPos: 0, yPos: 0),
       ];
 
   @override
@@ -81,6 +93,14 @@ class _Api extends ApiClient {
           int offset = 0}) async =>
       [for (final r in id == 'p-2' ? others : children) Map<String, dynamic>.of(r)];
 
+  /// Whether a portal along a path was given only its first records.
+  bool alongMore = false;
+
+  @override
+  Future<({List<Map<String, dynamic>> records, bool more})> listRelatedAlong(String table, String id,
+          {required List<String> path, String? context, List<String>? sort}) async =>
+      (records: [for (final r in children) Map<String, dynamic>.of(r)], more: alongMore);
+
   @override
   Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> values,
       {bool script = false, bool overrideValidation = false}) async {
@@ -104,7 +124,8 @@ class _Api extends ApiClient {
   }
 }
 
-LayoutDefinitionModel _layout({List<Map<String, dynamic>> triggers = const []}) => LayoutDefinitionModel.fromJson({
+LayoutDefinitionModel _layout({List<Map<String, dynamic>> triggers = const [], PortalConfigModel? portal}) =>
+    LayoutDefinitionModel.fromJson({
       'id': 'l-projects',
       'name': 'Projects',
       'table_occurrence': 'Projects',
@@ -118,7 +139,8 @@ LayoutDefinitionModel _layout({List<Map<String, dynamic>> triggers = const []}) 
           'y': 80,
           'width': 400,
           'height': 150,
-          'portal_config': const PortalConfigModel(relationshipId: 'rel-1', occurrence: 'Steps', allowDeletion: true).toJson(),
+          'portal_config': (portal ?? const PortalConfigModel(relationshipId: 'rel-1', occurrence: 'Steps', allowDeletion: true))
+              .toJson(),
         },
         {'id': 'f-label', 'type': 'field', 'x': 50, 'y': 85, 'width': 200, 'height': 24, 'field_binding': {'field_name': 'label'}},
       ],
@@ -155,6 +177,41 @@ Future<T> _settled<T>(WidgetTester tester, Future<T> work) async {
 }
 
 void main() {
+  testWidgets('Go to Portal Row never takes the last row read for the last record of a portal with more',
+      (tester) async {
+    const along = PortalConfigModel(occurrence: 'Next Steps', occurrencePath: ['Steps', 'Next Steps'], allowDeletion: true);
+    final api = _Api(const {})..alongMore = true;
+    final state = await _pump(tester, api, layout: _layout(portal: along));
+    expect(_cell('r3'), findsOneWidget);
+
+    expect((await _settled(tester, state.actionGoToPortalRow('2'))).errorCode, 0);
+    final last = await _settled(tester, state.actionGoToPortalRow('last'));
+    expect((last.moved, last.errorCode), (false, 3), reason: 'row 3 is not the last related record');
+    expect(await _settled(tester, state.actionDeletePortalRow(confirm: false)), 101,
+        reason: 'no row is left active for a step after it');
+    expect(api.deletes, isEmpty);
+
+    expect((await _settled(tester, state.actionGoToPortalRow('3'))).errorCode, 0, reason: 'a row it has');
+    final next = await _settled(tester, state.actionGoToPortalRow('next'));
+    expect((next.moved, next.atBoundary, next.errorCode), (false, true, 3), reason: 'Next past the rows read ends a loop');
+    expect((await _settled(tester, state.actionGoToPortalRow('7'))).errorCode, 3);
+
+    // A sorted portal of more records than were read: the server pages them
+    // before the portal's sort, so no row read is known to be the first.
+    final sorted = await _pump(tester, api, layout: _layout(portal: along.copyWith(sort: 'label')));
+    final first = await _settled(tester, sorted.actionGoToPortalRow('first'));
+    expect((first.moved, first.errorCode), (false, 3), reason: 'the first row read may not be the first by the sort');
+    expect((await _settled(tester, sorted.actionGoToPortalRow('1'))).errorCode, 3);
+    expect(await _settled(tester, sorted.actionDeletePortalRow(confirm: false)), 101);
+    expect(api.deletes, isEmpty);
+
+    // All the related records: the last row is the last one.
+    api.alongMore = false;
+    final whole = await _pump(tester, api, layout: _layout(portal: along.copyWith(sort: 'label')));
+    final ok = await _settled(tester, whole.actionGoToPortalRow('last'));
+    expect((ok.moved, ok.errorCode), (true, 0));
+  });
+
   testWidgets('Go to Portal Row moves through the first portal, and stops at either end with error 101',
       (tester) async {
     final api = _Api(const {});

@@ -552,6 +552,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// its count changes.
   final Map<String, int> _portalRefreshes = {};
 
+  /// The panel brought in front of each tab or slide control, by control
+  /// id; a control not in it shows its default panel.
+  final Map<String, int> _selectedPanels = {};
+
   /// The objects hidden by their "Hide object when" calculation, by layout,
   /// record, the record's values and how fresh the answer is; and the last
   /// answer for each layout and record, shown while it is evaluated again.
@@ -585,10 +589,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// as a calculation field would; until it does, the record's last answer
   /// holds, and on a record seen for the first time every object with a
   /// condition is hidden, so nothing hidden is ever shown or typed into.
+  ///
+  /// The answer also holds `<object id>#<index>` for each conditional format
+  /// of a field whose calculation is true on [record] (see [_conditions]);
+  /// until it is known, none applies.
   Set<String> _hiddenOn(LayoutDefinitionModel layout, Map<String, dynamic> record) {
     final conditional = [for (final o in layout.objects) if ((o.hideWhen ?? '').trim().isNotEmpty) o.id];
     final recordId = record['id']?.toString() ?? '';
-    if (conditional.isEmpty || recordId.isEmpty || record[_draftKey] == true) return const {};
+    if ((conditional.isEmpty && _conditions(layout).isEmpty) ||
+        recordId.isEmpty ||
+        record[_draftKey] == true) {
+      return const {};
+    }
     final base = '${layout.id}|$recordId';
     final values = Object.hashAllUnordered(record.entries.map((e) => Object.hash(e.key, e.value?.toString())));
     final key = '$base|$_hiddenGeneration|${_hiddenRecordGeneration[recordId] ?? 0}|$values';
@@ -602,9 +614,37 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   }
 
   /// [objects] of [layout] less those hidden on [record].
+  /// Objects on a panel not in front are left out too, and so is what sits
+  /// on the panels of a control that is hidden.
   List<LayoutObjectModel> _shownOn(LayoutDefinitionModel layout, Map<String, dynamic> record, List<LayoutObjectModel> objects) {
     final hidden = _hiddenOn(layout, record);
-    return hidden.isEmpty ? objects : [for (final o in objects) if (!hidden.contains(o.id)) o];
+    final off = objectsOffPanel(layout.objects, selected: _selectedPanels, hidden: hidden);
+    return hidden.isEmpty && off.isEmpty
+        ? objects
+        : [for (final o in objects) if (!hidden.contains(o.id) && !off.contains(o.id)) o];
+  }
+
+  /// The calculations [layout] evaluates against each record, by the key
+  /// its answer is kept under: each object's hide condition, by the object's
+  /// id, and each formula of a field's conditional formats, by
+  /// `<object id>#<index of the rule>`.
+  List<(String, String)> _conditions(LayoutDefinitionModel layout) => [
+        for (final o in layout.objects) ...[
+          if ((o.hideWhen ?? '').trim().isNotEmpty) (o.id, o.hideWhen!),
+          if (o.type == 'field')
+            for (final (i, rule) in o.style.conditionalRules.indexed)
+              if (rule.isFormula && rule.value.trim().isNotEmpty) ('${o.id}#$i', rule.value),
+        ],
+      ];
+
+  /// [obj]'s style on [record], with the conditional formats that apply.
+  LayoutObjectStyle _styleOn(LayoutObjectModel obj, Map<String, dynamic> record, Object? rawValue) {
+    final layout = widget.layout;
+    if (layout == null || !obj.style.conditionalRules.any((r) => r.isFormula)) {
+      return obj.style.effectiveForValue(rawValue);
+    }
+    final truths = _hiddenOn(layout, record);
+    return obj.style.effectiveForValue(rawValue, formulaTrue: (i) => truths.contains('${obj.id}#$i'));
   }
 
   /// Evaluates what is queued: for each layout, every condition against
@@ -619,7 +659,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final answers = <String, Set<String>>{};
     for (final keys in byLayout.values) {
       final layout = queued[keys.first]!.layout;
-      final objects = [for (final o in layout.objects) if ((o.hideWhen ?? '').trim().isNotEmpty) o];
+      final objects = _conditions(layout);
       final recordOf = {for (final k in keys) k: queued[k]!.recordId};
       final ids = recordOf.values.toSet().toList();
       final hidden = <String, Set<String>>{for (final id in ids) id: {}};
@@ -631,7 +671,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           try {
             final results = await widget.apiClient.evaluateForRecords(
               widget.table.name,
-              expressions: [for (final o in chunk) o.hideWhen!],
+              expressions: [for (final (_, expression) in chunk) expression],
               recordIds: chunkIds,
               occurrence: layout.tableOccurrence,
               resultType: 'Number',
@@ -639,7 +679,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             for (final id in chunkIds) {
               for (final (j, result) in (results[id] ?? const <EvaluationModel>[]).indexed) {
                 if (j < chunk.length && result.error.isEmpty && isLayoutConditionTrue(result.text)) {
-                  hidden[id]!.add(chunk[j].id);
+                  hidden[id]!.add(chunk[j].$1);
                 }
               }
             }
@@ -854,8 +894,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       tablesById: _tablesById,
       formatValue: fieldText,
       fromDatabase: widget.externalDatabase,
+      layoutOccurrence: widget.layout?.tableOccurrence,
+      revision: _recordRevision,
     );
   }
+
+  /// Counts the writes of the record in hand's fields: see
+  /// [RelatedContext.revision].
+  int _recordRevision = 0;
 
   /// Reads the relationship graph once. A layout with no portal and no related
   /// field never needs it, so a database whose graph cannot be read still
@@ -889,7 +935,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   bool get _layoutUsesRelationships {
     final objects = widget.layout?.objects;
     if (objects == null) return false;
-    return objects.any((o) => o.type == 'portal' || (o.fieldBinding?.isRelated ?? false));
+    return objects.any((o) => o.type == 'portal' || (o.fieldBinding?.readsRelated ?? false));
   }
 
   // ─── Value lists (#31) ─────────────────────────────────────────────────────
@@ -1304,7 +1350,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     var most = 1;
     for (final o in widget.layout?.objects ?? const <LayoutObjectModel>[]) {
       final binding = o.fieldBinding;
-      if (o.type != 'field' || binding == null || binding.isRelated) continue;
+      if (o.type != 'field' || binding == null || binding.readsRelated) continue;
       if (binding.fieldName.toLowerCase() != col.name.toLowerCase()) continue;
       most = math.max(most, binding.repetitionNumbers(col.maxRepetitions).last);
     }
@@ -1427,7 +1473,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       final texts = record[sourceTextKey];
       if (texts is Map) texts.remove(colName);
       _invalidateHidden(id);
-      if (mounted) setState(() => _fieldSaving[colName] = null);
+      if (mounted) {
+        setState(() {
+          _fieldSaving[colName] = null;
+          _recordRevision++;
+        });
+      }
       // The field may be a match field of a list of related values.
       if (mounted && identical(record, _records.elementAtOrNull(_currentIndex))) _resolveRelatedValueLists();
       return true;
@@ -1455,7 +1506,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final layout = widget.layout;
     for (final o in layout?.objects ?? const <LayoutObjectModel>[]) {
       final binding = o.fieldBinding;
-      if (o.type != 'field' || binding == null || binding.isRelated) continue;
+      if (o.type != 'field' || binding == null || binding.readsRelated) continue;
       if (binding.fieldName.toLowerCase() != column) continue;
       final order = dateOrderOfFormat(o.style.dateFormat);
       if (order != null) return order;
@@ -2721,6 +2772,19 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     return goToRecord(index.clamp(0, _records.length - 1));
   }
 
+  /// List / Table views: a button of a row acts on that row's record. The
+  /// row is made the current record first, and nothing runs when that is
+  /// refused (a commit trigger, a validation): the button would otherwise
+  /// act on the record left.
+  Future<void> _clickRowButton(int recordIndex, LayoutObjectModel obj, String label) async {
+    final clicked = _records.elementAtOrNull(recordIndex)?['id']?.toString();
+    if (recordIndex != _currentIndex && !await _goToRecordIndex(recordIndex)) return;
+    // The record clicked, not whatever is at its place now (a commit
+    // trigger may have sorted or reloaded the list).
+    if (!mounted || recordIndex != _currentIndex || currentRecord?['id']?.toString() != clicked) return;
+    await _handleLayoutButtonClick(obj, label);
+  }
+
   /// List / Table views: a click on a field of another record makes it the
   /// current record and puts the cursor in that field, ready to type. The
   /// field is focused once the record has changed and its editable field is
@@ -3113,7 +3177,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final portals = layout.objects.where((o) => o.type == 'portal').toList();
     final contents = <String, List<LayoutObjectModel>>{
       for (final portal in portals)
-        portal.id: layout.objects.where((o) => o.type != 'portal' && portal.contains(o)).toList(),
+        portal.id: layout.objects
+            .where((o) =>
+                o.type != 'portal' &&
+                portal.contains(o) &&
+                // An object of another panel only overlaps the portal.
+                o.panelControl == portal.panelControl &&
+                o.panelIndex == portal.panelIndex)
+            .toList(),
     };
     return (contents, {for (final objects in contents.values) for (final o in objects) o.id});
   }
@@ -3133,7 +3204,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     }
     final bodyFill = bodyIndex < 0 ? null : parseLayoutColor(layout.parts[bodyIndex].fillColor);
     final (portalContents, insidePortal) = _portalContents(layout);
-    final shown = layout.objects.where((o) => !insidePortal.contains(o.id));
+    final offPanel = objectsOffPanel(layout.objects, selected: _selectedPanels);
+    final shown = layout.objects.where((o) => !insidePortal.contains(o.id) && !offPanel.contains(o.id));
     final headerObjects = shown.where((o) => o.y < headerHeight).toList();
     final bodyEnd = bodyHeight > 0 ? headerHeight + bodyHeight : double.infinity;
     final bodyObjects = shown.where((o) => o.y >= headerHeight && o.y < bodyEnd).toList();
@@ -3280,7 +3352,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       }
       // A field of a related record, read with those of the other rows in
       // one request.
-      if (obj.fieldBinding?.isRelated ?? false) {
+      if (obj.fieldBinding?.readsRelated ?? false) {
         final related = _relatedContext?.forRecord(rec['id']?.toString(), batched: true);
         if (related == null) {
           return relatedNotice('<${obj.fieldBinding!.qualifiedName}>', isDark: isDark, radius: obj.style.cornerRadius);
@@ -3290,6 +3362,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           object: obj,
           related: related,
           isDark: isDark,
+          editable: widget.mode == OperationalMode.browse,
         );
       }
       final fieldName = obj.fieldBinding?.fieldName ?? obj.text;
@@ -3300,10 +3373,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         final bytes = _tryDecodeBase64Image(rec[col.name]?.toString());
         return InkWell(
           onTap: () async {
-            unawaited(_goToRecordIndex(recordIndex));
             if (obj.action != null) {
-              await _handleLayoutButtonClick(obj, col.displayName);
+              await _clickRowButton(recordIndex, obj, col.displayName);
             } else {
+              unawaited(_goToRecordIndex(recordIndex));
               _openRecordInForm(recordIndex);
             }
           },
@@ -3327,7 +3400,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           ? fieldName
           : ColumnModel.repetitionKey(col.name, obj.fieldBinding?.repetitionNumbers(col.maxRepetitions).first ?? 1);
       final rawVal = rec[key];
-      final effStyle = obj.style.effectiveForValue(rawVal);
+      final effStyle = _styleOn(obj, rec, rawVal);
       // A field FileMaker would not let be entered in Browse mode is shown,
       // never typed into, in the list as in the form.
       final enterable = col != null &&
@@ -3424,12 +3497,19 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       );
     }
     if (obj.type == 'button') {
-      final btnText = _resolveTextForRecord(obj.text.isEmpty ? 'Button' : obj.text, rec);
+      final btnText = _resolveTextForRecord(obj.text.isEmpty && obj.action == null ? 'Button' : obj.text, rec);
+      if (obj.style.fillColor == '#00000000' && obj.style.borderWidth <= 0) {
+        // A button without a fill (a grouped button, an icon) is a place
+        // to click over what is drawn under it.
+        return InkWell(
+          onTap: () => _clickRowButton(recordIndex, obj, btnText),
+          child: btnText.isEmpty
+              ? const SizedBox.expand()
+              : Center(child: Text(btnText, overflow: TextOverflow.ellipsis, style: layoutTextStyle(obj.style))),
+        );
+      }
       return ElevatedButton(
-        onPressed: () async {
-          unawaited(_goToRecordIndex(recordIndex));
-          await _handleLayoutButtonClick(obj, btnText);
-        },
+        onPressed: () => _clickRowButton(recordIndex, obj, btnText),
         child: Text(btnText, overflow: TextOverflow.ellipsis),
       );
     }
@@ -3697,7 +3777,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
     final (portalContents, insidePortal) = _portalContents(layout);
     final hidden = isFindMode ? const <String>{} : _hiddenOn(layout, record);
-    final topLevel = layout.objects.where((o) => !insidePortal.contains(o.id) && !hidden.contains(o.id)).toList();
+    final off = objectsOffPanel(layout.objects, selected: _selectedPanels, hidden: hidden);
+    final topLevel = layout.objects
+        .where((o) => !insidePortal.contains(o.id) && !hidden.contains(o.id) && !off.contains(o.id))
+        .toList();
 
     return LayoutEntryTransition(
       key: ValueKey('layout-entry-${layout.id}'),
@@ -3966,7 +4049,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         // A field of a related record: `Companies::company_address` on a
         // Customers layout (#36). It is read through the relationship, not
         // from the record in hand, so none of what follows applies.
-        if (obj.fieldBinding?.isRelated ?? false) {
+        if (obj.fieldBinding?.readsRelated ?? false) {
+          if (isFindMode && obj.fieldBinding!.isAlongPath) {
+            // A find follows one relationship; a field several away is not
+            // a criterion yet.
+            return relatedNotice('${obj.fieldBinding!.qualifiedName} takes no criteria',
+                isDark: isDark, radius: obj.style.cornerRadius);
+          }
           if (isFindMode) {
             // A criterion here finds the records whose *related* records
             // match it (#46), so the box is a real criterion box.
@@ -4012,6 +4101,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             object: obj,
             related: related,
             isDark: isDark,
+            editable: widget.mode == OperationalMode.browse,
           );
         }
 
@@ -4174,7 +4264,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
       case 'button':
       case 'popover_button':
-        final btnText = _resolveTextForRecord(obj.text.isEmpty ? 'Button' : obj.text, record);
+        // A button with an action and no label (a grouped button, an icon)
+        // shows nothing of its own.
+        final btnText = _resolveTextForRecord(obj.text.isEmpty && obj.action == null ? 'Button' : obj.text, record);
         final btnBorder = parseLayoutColor(obj.style.borderColor);
         if (obj.style.fillColor == '#00000000' && obj.style.borderWidth <= 0) {
           return InkWell(
@@ -4244,6 +4336,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           ),
           clipBehavior: Clip.antiAlias,
           child: _buildChart(obj, isDark),
+        );
+
+      case 'tab_control':
+      case 'slide_control':
+        return LayoutPanelControlView(
+          obj: obj,
+          selected: _selectedPanels[obj.id] ?? obj.defaultPanel,
+          onSelect: (i) => setState(() => _selectedPanels[obj.id] = i),
         );
 
       case 'portal':
@@ -4374,7 +4474,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final listProblem = computed ? null : _valueListProblems[obj.fieldBinding!.valueListId];
 
     final rawVal = record[key] ?? ctrl?.text;
-    final effStyle = obj.style.effectiveForValue(rawVal);
+    final effStyle = _styleOn(obj, record, rawVal);
     final isFocused = fn?.hasFocus ?? false;
     final hasDisplayFormatting = layoutStyleHasDisplayFormat(effStyle);
 
@@ -4729,9 +4829,25 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// Runs the button's assigned action. Buttons from older layouts without an
   /// action keep the previous behaviour, guessed from their label.
   Future<void> _handleLayoutButtonClick(LayoutObjectModel obj, String label) async {
+    if (obj.type == 'popover_button' && (widget.layout?.objects.any((o) => o.panelControl == obj.id) ?? false)) {
+      // A popover button opens its popover, and closes it.
+      setState(() => _selectedPanels[obj.id] = (_selectedPanels[obj.id] ?? obj.defaultPanel) == 0 ? -1 : 0);
+      return;
+    }
     final action = obj.action;
     if (action == null) {
       _handleLegacyButtonLabel(label);
+      return;
+    }
+    if (!action.enabled) {
+      // A migrated button whose script could not be told is kept off
+      // until one is chosen in Layout mode.
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(action.isPerformScript
+            ? 'This button is switched off: choose its script in Layout mode.'
+            : 'This button is switched off: File4Base does not run its step yet.'),
+        backgroundColor: Colors.orange.shade800,
+      ));
       return;
     }
     final result = await _actionRunner().run(action);
@@ -5659,12 +5775,22 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         if (current == 1) return missing;
         row = current == 0 ? 1 : current - 1;
       case 'next':
-        if (current >= count) return missing;
+        if (current >= count && !rows.truncated) return missing;
         row = current + 1;
       default:
         final n = num.tryParse(t)?.truncate();
         if (n == null) return missing;
         row = n;
+    }
+    // A portal that read only its first related records does not have its
+    // last one: a row past those it has, or the last one, is refused (any
+    // row when the page read is not in the portal's order), and
+    // no row is left active, so a step after it (Delete Portal Row) never
+    // acts on another row than the one asked for. Next past them ends a
+    // loop like the last row does.
+    if (rows.unordered || (rows.truncated && (t == 'last' || row > count))) {
+      _deactivatePortal();
+      return GoToRecordOutcome(moved: false, atBoundary: t == 'next', errorCode: 3);
     }
     if (count == 0 || row < 1 || row > count) return missing;
 
@@ -6153,7 +6279,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final objects = widget.layout?.objects ?? const <LayoutObjectModel>[];
     return objects.any((o) {
       final binding = o.fieldBinding;
-      if (binding == null || !binding.isRelated) return false;
+      if (binding == null || !binding.readsRelated) return false;
       if (binding.fieldName.toLowerCase() != field.toLowerCase()) return false;
       final occurrence = binding.tableOccurrence ?? '';
       return _occurrenceKey(occurrence) == key || _occurrenceKey(graph[occurrence]?.name ?? '') == key;
