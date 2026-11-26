@@ -42,6 +42,7 @@ class ManageScriptTriggersDialog extends StatefulWidget {
     this.solutionName = '',
     this.canEdit = true,
     this.initialLayoutId,
+    this.initialStatus = ScriptTriggerStatusFilter.all,
     super.key,
   }) : _changes = null;
 
@@ -51,6 +52,7 @@ class ManageScriptTriggersDialog extends StatefulWidget {
     this.solutionName = '',
     this.canEdit = true,
     this.initialLayoutId,
+    this.initialStatus = ScriptTriggerStatusFilter.all,
   });
 
   final ApiClient apiClient;
@@ -65,12 +67,17 @@ class ManageScriptTriggersDialog extends StatefulWidget {
   /// Shows only this layout's triggers at first (from Layout Setup).
   final String? initialLayoutId;
 
+  /// The status shown at first, such as the triggers a migration switched
+  /// off (from the end of a migration, #198).
+  final ScriptTriggerStatusFilter initialStatus;
+
   static Future<ScriptTriggerReviewResult> show(
     BuildContext context, {
     required ApiClient apiClient,
     String solutionName = '',
     bool canEdit = true,
     String? initialLayoutId,
+    ScriptTriggerStatusFilter initialStatus = ScriptTriggerStatusFilter.all,
   }) async {
     final changes = _ReviewChanges();
     final result = await showDialog<ScriptTriggerReviewResult>(
@@ -81,6 +88,7 @@ class ManageScriptTriggersDialog extends StatefulWidget {
         solutionName: solutionName,
         canEdit: canEdit,
         initialLayoutId: initialLayoutId,
+        initialStatus: initialStatus,
       ),
     );
     // Dismissed without a button, it still says what it changed.
@@ -116,6 +124,7 @@ class _ManageScriptTriggersDialogState extends State<ManageScriptTriggersDialog>
   void initState() {
     super.initState();
     _layout = widget.initialLayoutId ?? '';
+    _status = widget.initialStatus;
     unawaited(_load());
   }
 

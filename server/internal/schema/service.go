@@ -326,6 +326,7 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 			mfa_secret VARCHAR(128) NOT NULL DEFAULT '',
 			super_owner BOOLEAN NOT NULL DEFAULT FALSE,
+			password_pending BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at ` + ts + `,
 			updated_at ` + ts + `
 		);`,
@@ -333,6 +334,10 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		`ALTER TABLE sys_users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT FALSE;`,
 		`ALTER TABLE sys_users ADD COLUMN IF NOT EXISTS mfa_secret VARCHAR(128) DEFAULT '';`,
 		`ALTER TABLE sys_users ADD COLUMN IF NOT EXISTS super_owner BOOLEAN DEFAULT FALSE;`,
+		// An account a solution import or a FileMaker migration created
+		// without a usable password (#198): it cannot sign in until an
+		// administrator sets one, which clears the flag.
+		`ALTER TABLE sys_users ADD COLUMN IF NOT EXISTS password_pending BOOLEAN DEFAULT FALSE;`,
 		`CREATE TABLE IF NOT EXISTS sys_user_permissions (
 			id VARCHAR(36) PRIMARY KEY,
 			user_id VARCHAR(36) NOT NULL REFERENCES sys_users(id) ON DELETE CASCADE,
