@@ -2,8 +2,10 @@ package dbal
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -183,7 +185,9 @@ func publishSQLiteFile(tmp, dest string) error {
 	if err := syncFile(tmp); err != nil {
 		return err
 	}
-	if side := sqliteSidecar(dest); side != "" {
+	if side, err := sqliteSidecar(dest); err != nil {
+		return err
+	} else if side != "" {
 		return fmt.Errorf("%s is left from an earlier database of that name: move it away first", side)
 	}
 	if err := os.Link(tmp, dest); err != nil {
@@ -193,23 +197,28 @@ func publishSQLiteFile(tmp, dest string) error {
 		return err
 	}
 	if err := syncDir(filepath.Dir(dest)); err != nil {
-		// Reported as failed, so it is not left published: a retry would
-		// find the name taken.
-		_ = os.Remove(dest)
-		return err
+		// The name is left: once linked, the database may already be open
+		// and written to (by a server, while a CLI tool publishes it).
+		return fmt.Errorf("%s is in place, but its directory could not be synced (a crash may lose it): %w", dest, err)
 	}
 	return nil
 }
 
 // sqliteSidecar is a file SQLite keeps next to the database path, when one
 // is there.
-func sqliteSidecar(path string) string {
+// A file that cannot be looked for (a name too long for the file system)
+// is an error: SQLite could not make it either.
+func sqliteSidecar(path string) (string, error) {
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-		if _, err := os.Lstat(path + suffix); err == nil {
-			return path + suffix
+		_, err := os.Lstat(path + suffix)
+		if err == nil {
+			return path + suffix, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // removeSQLiteFiles deletes a database file and the files SQLite keeps next
@@ -221,18 +230,16 @@ func sqliteSidecar(path string) string {
 // left whole). A database created under the name meanwhile is refused
 // while the old -wal is there (publishSQLiteFile).
 func removeSQLiteFiles(path string) error {
-	gone := ""
+	// The renamed file has one name per database, so a drop that stopped
+	// halfway is finished by the next one.
+	sum := sha256.Sum256([]byte(filepath.Base(path)))
+	gone := filepath.Join(filepath.Dir(path), ".f4b-dropped-"+hex.EncodeToString(sum[:8]))
 	if _, err := os.Lstat(path); err == nil {
-		f, err := createTempFile(path, "dropped")
-		if err != nil {
-			return err
-		}
-		gone = f.Name()
-		_ = f.Close()
 		if err := os.Rename(path, gone); err != nil {
-			_ = os.Remove(gone)
 			return err
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
 		if err := os.Remove(path + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -240,8 +247,8 @@ func removeSQLiteFiles(path string) error {
 		}
 	}
 	forgetWriterQueue(path)
-	if gone != "" {
-		return os.Remove(gone)
+	if err := os.Remove(gone); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	return nil
 }
@@ -288,7 +295,9 @@ func RestoreSQLiteDatabase(ctx context.Context, backup, dest string) (err error)
 	if err := CheckSQLiteStorage(filepath.Dir(dest)); err != nil {
 		return err
 	}
-	if side := sqliteSidecar(backup); side != "" {
+	if side, err := sqliteSidecar(backup); err != nil {
+		return err
+	} else if side != "" {
 		return fmt.Errorf("restore: %s is next to the backup: a backup is the single file sqlite-backup writes, and a copy of a live database without its WAL may miss what was committed last", side)
 	}
 	// The copy is written through the descriptor that created the file.

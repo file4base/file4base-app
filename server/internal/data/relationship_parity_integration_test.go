@@ -586,6 +586,22 @@ func TestMultiKeys_DatesAgainstLines(t *testing.T) {
 		assert.Equal(t, []string{"h1", "h2"}, find("k1"))
 		assert.Equal(t, []string{"h3"}, find("k2"))
 	})
+	t.Run("date against a timestamp", func(t *testing.T) {
+		// Not lines: a date is promoted to midnight of its day, in the
+		// portal as in a find.
+		ctx, k := newKeyedTables(t, "xdatestamp", [2]string{"day", "DATE"}, [2]string{"at", "TIMESTAMP"})
+		k.insert(t, ctx, "keyed",
+			map[string]interface{}{"at": time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC), "label": "k1"},
+			map[string]interface{}{"at": time.Date(2026, 3, 5, 12, 0, 0, 0, time.UTC), "label": "k2"})
+		ids := k.insert(t, ctx, "holders",
+			map[string]interface{}{"day": "2026-03-05", "label": "h1"})
+		portal, batch, find := k.related(t, ctx, ids)
+		want := map[string][]string{ids[0]: {"k1"}}
+		assert.Equal(t, want, portal)
+		assert.Equal(t, want, batch)
+		assert.Equal(t, []string{"h1"}, find("k1"))
+		assert.Empty(t, find("k2"))
+	})
 	t.Run("number", func(t *testing.T) {
 		if testdb.Engine() == dbal.EngineMariaDB {
 			t.Skip("MariaDB reads a number key with its column's zeros (12.000000), which no line holds")

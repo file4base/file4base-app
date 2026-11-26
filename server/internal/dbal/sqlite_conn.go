@@ -164,10 +164,16 @@ var sqliteDriver = &sqlite.Driver{}
 type sqliteConnector struct {
 	dsn    string
 	writer chan struct{}
+	path   string
+	// file is the database file the pool was opened on. A connection that
+	// finds another file under the path (the database was dropped and one
+	// of the same name created while it was being opened) is refused.
+	file os.FileInfo
 }
 
 func newSQLiteConnector(path string) *sqliteConnector {
-	return &sqliteConnector{dsn: sqliteDSN(path), writer: writerQueue(path)}
+	file, _ := os.Stat(path)
+	return &sqliteConnector{dsn: sqliteDSN(path), writer: writerQueue(path), path: path, file: file}
 }
 
 // SQLiteConnector is the connector of an existing database file, with the
@@ -182,6 +188,12 @@ func (c *sqliteConnector) Connect(context.Context) (driver.Conn, error) {
 	conn, err := sqliteDriver.Open(c.dsn)
 	if err != nil {
 		return nil, err
+	}
+	if c.file != nil {
+		if now, err := os.Stat(c.path); err != nil || !os.SameFile(c.file, now) {
+			_ = conn.Close()
+			return nil, fmt.Errorf("sqlite database %s was dropped or replaced since its pool was opened", c.path)
+		}
 	}
 	return &sqliteConn{inner: conn, writer: c.writer}, nil
 }
@@ -313,9 +325,7 @@ func (c *sqliteConn) statementWriter(ctx context.Context, query string, exec boo
 // writes when it is an INSERT, UPDATE, DELETE or REPLACE (with RETURNING).
 func writesDatabase(query string, exec bool) bool {
 	query = skipSQLPreamble(query)
-	words := strings.FieldsFunc(query, func(r rune) bool {
-		return !(r == '_' || r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z')
-	})
+	words := sqlWords(query)
 	if len(words) == 0 {
 		return exec
 	}
@@ -330,9 +340,9 @@ func writesDatabase(query string, exec bool) bool {
 	case "INSERT", "UPDATE", "DELETE", "REPLACE":
 		return true
 	case "WITH":
-		// WITH ... INSERT/UPDATE/DELETE ... RETURNING. A word of a string
-		// or a name only makes a read take its turn.
-		return slices.ContainsFunc(words[1:], func(w string) bool {
+		// WITH ... INSERT/UPDATE/DELETE ... RETURNING. The words of
+		// strings, quoted names and comments are left out.
+		return slices.ContainsFunc(sqlWords(unquotedSQL(query))[1:], func(w string) bool {
 			switch strings.ToUpper(w) {
 			case "INSERT", "UPDATE", "DELETE", "REPLACE":
 				return true
@@ -341,6 +351,43 @@ func writesDatabase(query string, exec bool) bool {
 		})
 	}
 	return false
+}
+
+func sqlWords(query string) []string {
+	return strings.FieldsFunc(query, func(r rune) bool {
+		return !(r == '_' || r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z')
+	})
+}
+
+// unquotedSQL blanks out the strings, quoted names and comments of a
+// statement.
+func unquotedSQL(query string) string {
+	b := []byte(query)
+	for i := 0; i < len(b); i++ {
+		var end string
+		switch {
+		case b[i] == '\'' || b[i] == '"' || b[i] == '`':
+			end = string(b[i])
+		case b[i] == '[':
+			end = "]"
+		case b[i] == '-' && i+1 < len(b) && b[i+1] == '-':
+			end = "\n"
+		case b[i] == '/' && i+1 < len(b) && b[i+1] == '*':
+			end = "*/"
+		default:
+			continue
+		}
+		j := strings.Index(string(b[i+1:]), end)
+		stop := len(b)
+		if j >= 0 {
+			stop = i + 1 + j + len(end)
+		}
+		for k := i; k < stop; k++ {
+			b[k] = ' '
+		}
+		i = stop - 1
+	}
+	return string(b)
 }
 
 // skipSQLPreamble skips the white space, comments and opening parentheses a

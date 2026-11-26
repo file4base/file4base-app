@@ -50,10 +50,13 @@ server tools' assumptions together.
   the new database. A database is never created by opening it: the
   connections open with `mode=rw`, so a name that names no database fails as
   it does on a server.
-- Dropping a database first renames its file out of its name, then removes
-  the `-wal`, `-shm` and `-journal` companions, then the renamed file; it
-  stops at the first failure, so a `-wal` that may hold commits is never
-  removed while its database can still be opened. Creating, dropping and
+- Dropping a database first renames its file out of its name (to a hidden
+  name of its own, so a drop that stopped halfway is finished by the next),
+  then removes the `-wal`, `-shm` and `-journal` companions, then the renamed
+  file; it stops at the first failure, so a `-wal` that may hold commits is
+  never removed while its database can still be opened. A pool refuses to
+  open a connection on a file other than the one it was opened on (a
+  database dropped and created again meanwhile). Creating, dropping and
   opening a database take turns in the server, per database (a slow `fsync`
   holds up that database only); a connection still in use when its pool is
   closed keeps the deleted files it has open until it is closed. There is no
@@ -224,8 +227,12 @@ between them (unverified against FileMaker in this work).
 - `STDDEV_SAMP` scales the numbers by the largest magnitude, so neither
   `1e200` nor `1e-200` overflows or vanishes.
 - `VARCHAR(n)` lengths are not enforced (as on MariaDB in non-strict mode).
-- Dates are `YYYY-MM-DD` text, timestamps `YYYY-MM-DD HH:MM:SS.fff+00:00` text
-  in UTC: their text sorts in time order.
+- Dates are `YYYY-MM-DD` text, timestamps `YYYY-MM-DD HH:MM:SS[.f…]+00:00`
+  text in UTC (the check allows nothing else): their text sorts in time
+  order. A date compared with a timestamp field in a relationship is
+  midnight of its day, as PostgreSQL promotes it. A timestamp bound against
+  a date field is its day, as PostgreSQL binds a parameter in the column's
+  type (MariaDB compares it as a `DATETIME` instead).
 - An empty container is read as an empty value, not `NULL`.
 
 ## Inventory

@@ -61,17 +61,41 @@ type MultiDatabaseManager struct {
 	defaultDBName string
 	drivers       map[string]DatabaseDriver
 	dsn           dsnTemplate
-	// files holds, per SQLite database name, a *sync.Mutex that opening,
-	// creating and dropping its file take, before mu (never the other way
-	// round), so a slow file operation holds up that database only.
-	files sync.Map
+	// files holds, per SQLite database name being opened, created or
+	// dropped, the turn of its file, taken before mu (never the other way
+	// round), so a slow file operation holds up that database only. A turn
+	// no one holds or waits for is removed.
+	filesMu sync.Mutex
+	files   map[string]*fileTurn
+}
+
+type fileTurn struct {
+	sync.Mutex
+	users int
 }
 
 // lockFile takes the turn of a SQLite database's file (see files).
 func (m *MultiDatabaseManager) lockFile(dbName string) func() {
-	mu, _ := m.files.LoadOrStore(dbName, &sync.Mutex{})
-	mu.(*sync.Mutex).Lock()
-	return mu.(*sync.Mutex).Unlock
+	m.filesMu.Lock()
+	if m.files == nil {
+		m.files = map[string]*fileTurn{}
+	}
+	turn := m.files[dbName]
+	if turn == nil {
+		turn = &fileTurn{}
+		m.files[dbName] = turn
+	}
+	turn.users++
+	m.filesMu.Unlock()
+	turn.Lock()
+	return func() {
+		turn.Unlock()
+		m.filesMu.Lock()
+		if turn.users--; turn.users == 0 {
+			delete(m.files, dbName)
+		}
+		m.filesMu.Unlock()
+	}
 }
 
 // NewMultiDatabaseManager initializes a MultiDatabaseManager with a base DSN
@@ -202,24 +226,44 @@ func (m *MultiDatabaseManager) GetDriver(ctx context.Context, dbName string) (Da
 		if err := driver.Ping(ctx); err == nil {
 			return driver, nil
 		}
+		// A ping cut short by the caller says nothing of the pool.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
 
-	if m.sqliteDir() != nil {
+	sqlite := m.sqliteDir() != nil
+	if sqlite {
+		// The file's turn keeps others from opening, creating or dropping
+		// this database meanwhile; mu is held only while the map is read
+		// or written, so a slow opening holds up no other database.
 		defer m.lockFile(dbName)()
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	// Double check after acquiring write lock
-	if driver, exists := m.drivers[dbName]; exists {
-		if err := driver.Ping(ctx); err == nil {
-			return driver, nil
+	stale, exists := m.drivers[dbName]
+	if exists {
+		if err := stale.Ping(ctx); err == nil {
+			m.mu.Unlock()
+			return stale, nil
 		}
-		_ = driver.Close()
+		if err := ctx.Err(); err != nil {
+			m.mu.Unlock()
+			return nil, err
+		}
 		delete(m.drivers, dbName)
 	}
-
 	dsn := m.buildDSNLocked(dbName)
+	if sqlite {
+		m.mu.Unlock()
+	} else {
+		defer m.mu.Unlock()
+	}
+	if exists {
+		_ = stale.Close()
+	}
+
 	newDriver, err := Connect(DriverConfig{
 		EngineType: m.baseEngine,
 		DSN:        dsn,
@@ -239,6 +283,10 @@ func (m *MultiDatabaseManager) GetDriver(ctx context.Context, dbName string) (Da
 		pool.SetConnMaxIdleTime(connMaxIdleTime)
 	}
 
+	if sqlite {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+	}
 	m.drivers[dbName] = newDriver
 	return newDriver, nil
 }
@@ -416,11 +464,12 @@ func (m *MultiDatabaseManager) DropDatabase(ctx context.Context, dbName string) 
 		// until it is closed, never the new database's.
 		defer m.lockFile(dbName)()
 		m.mu.Lock()
-		if d, ok := m.drivers[dbName]; ok {
-			_ = d.Close()
-			delete(m.drivers, dbName)
-		}
+		d, ok := m.drivers[dbName]
+		delete(m.drivers, dbName)
 		m.mu.Unlock()
+		if ok {
+			_ = d.Close()
+		}
 		if err := removeSQLiteFiles(dir.forDatabase(dbName)); err != nil {
 			return fmt.Errorf("failed dropping database %s: %w", dbName, err)
 		}

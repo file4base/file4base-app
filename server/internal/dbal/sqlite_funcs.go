@@ -153,8 +153,9 @@ func sqliteLines(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, 
 // NULL for fewer than two numbers, as on PostgreSQL.
 type stddevSamp struct {
 	n int64
-	// The numbers are divided by scale, the largest magnitude stepped
-	// through so far, so their squares neither overflow nor vanish.
+	// The numbers are divided by scale, a power of two (so the division is
+	// exact) at least the largest magnitude stepped through so far, so
+	// their squares neither overflow nor vanish.
 	scale     float64
 	mean, sum float64 // sum of the squared differences from the mean
 }
@@ -169,13 +170,15 @@ func (a *stddevSamp) Step(_ *sqlite.FunctionContext, args []driver.Value) error 
 	default:
 		return nil
 	}
-	if m := math.Abs(x); m > a.scale {
+	if m := math.Abs(x); m >= a.scale && m > 0 {
+		_, exp := math.Frexp(m) // m < 2^exp
+		scale := math.Ldexp(1, exp)
 		if a.scale > 0 {
-			r := a.scale / m
+			r := a.scale / scale
 			a.mean *= r
 			a.sum *= r * r
 		}
-		a.scale = m
+		a.scale = scale
 	}
 	if a.scale > 0 {
 		x /= a.scale
@@ -284,6 +287,9 @@ func isASCII(s string) bool {
 // value in any column, converting only what its affinity can read ("12"
 // into a NUMERIC column becomes 12, "abc" stays text). It is "" for a type
 // that holds anything (TEXT, BLOB).
+// sqliteSecondsGlob is a timestamp's text up to its seconds.
+const sqliteSecondsGlob = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]"
+
 func SQLiteTypeCheck(column, declType string) string {
 	switch strings.ToUpper(declType) {
 	case "NUMERIC":
@@ -296,8 +302,10 @@ func SQLiteTypeCheck(column, declType string) string {
 	case "TIMESTAMP":
 		// The text bound timestamps are stored as: a day of the calendar,
 		// a time, in UTC ("2026-01-02 03:04:05.25+00:00").
+		// The fraction of a second, if any, is digits only.
 		return fmt.Sprintf("CHECK (%[1]s IS NULL OR (typeof(%[1]s) = 'text' AND "+
-			"%[1]s GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]*+00:00' AND "+
+			"(%[1]s GLOB '"+sqliteSecondsGlob+"+00:00' OR "+
+			"(%[1]s GLOB '"+sqliteSecondsGlob+".[0-9]*+00:00' AND substr(%[1]s, 21, length(%[1]s) - 26) NOT GLOB '*[^0-9]*')) AND "+
 			"date(%[1]s) IS substr(%[1]s, 1, 10)))", column)
 	case "BOOLEAN":
 		return fmt.Sprintf("CHECK (%[1]s IS NULL OR %[1]s IN (0, 1))", column)

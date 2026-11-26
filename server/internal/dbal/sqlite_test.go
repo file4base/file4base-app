@@ -308,7 +308,7 @@ func TestSQLite_RegexpAndLines(t *testing.T) {
 func TestSQLite_StandardDeviation(t *testing.T) {
 	db, _ := newSQLiteDB(t)
 	ctx := context.Background()
-	_, err := db.ExecContext(ctx, `CREATE TABLE t (g TEXT, n NUMERIC); INSERT INTO t VALUES ('a', 1), ('a', 3), ('a', NULL), ('b', 2.5), ('c', NULL), ('d', 1e200), ('d', 3e200), ('e', 1e-200), ('e', 3e-200), ('f', 0), ('f', 0)`)
+	_, err := db.ExecContext(ctx, `CREATE TABLE t (g TEXT, n NUMERIC); INSERT INTO t VALUES ('a', 1), ('a', 3), ('a', NULL), ('b', 2.5), ('c', NULL), ('d', 1e200), ('d', 3e200), ('e', 1e-200), ('e', 3e-200), ('f', 0), ('f', 0), ('g', 999999999999998), ('g', 999999999999999)`)
 	require.NoError(t, err)
 	rows, err := db.QueryContext(ctx, `SELECT g, STDDEV_SAMP(n) FROM t GROUP BY g ORDER BY g`)
 	require.NoError(t, err)
@@ -333,6 +333,7 @@ func TestSQLite_StandardDeviation(t *testing.T) {
 	assert.InDelta(t, 1.4142135623730951, got["d"].(float64)/1e200, 1e-12)
 	assert.InDelta(t, 1.4142135623730951, got["e"].(float64)/1e-200, 1e-12)
 	assert.Equal(t, 0.0, got["f"])
+	assert.InDelta(t, 0.7071067811865476, got["g"], 1e-12, "close numbers keep their difference")
 }
 
 func TestSQLite_StatementsThatWrite(t *testing.T) {
@@ -348,6 +349,8 @@ func TestSQLite_StatementsThatWrite(t *testing.T) {
 		{"/* note */ REPLACE INTO t VALUES (1) RETURNING id", false, true},
 		{"WITH x AS (SELECT 1) UPDATE t SET v = 1 RETURNING id", false, true},
 		{"WITH x AS (SELECT 1) SELECT * FROM x", false, false},
+		{`WITH x AS (SELECT "update", 'delete', [insert] FROM t) SELECT * FROM x -- update`, false, false},
+		{"WITH x AS (SELECT 1) /* replace */ SELECT * FROM x", false, false},
 		{"/* unterminated", false, false},
 		{"VACUUM INTO '/tmp/b.sqlite'", true, false},
 		{"VACUUM main INTO '/tmp/b.sqlite'", true, false},
@@ -582,6 +585,7 @@ func TestSQLite_TypeChecks(t *testing.T) {
 	for _, ok := range []string{
 		`INSERT INTO t (n) VALUES ('12.5')`, `INSERT INTO t (n) VALUES (NULL)`,
 		`INSERT INTO t (d) VALUES ('2026-01-02')`, `INSERT INTO t (ts) VALUES ('2026-01-02 03:04:05.5+00:00')`,
+		`INSERT INTO t (ts) VALUES ('2026-01-02 03:04:05+00:00')`, `INSERT INTO t (ts) VALUES ('2026-01-02 03:04:05.123456+00:00')`,
 		`INSERT INTO t (b) VALUES (1)`, `INSERT INTO t (b) VALUES ('0')`,
 	} {
 		_, err := db.ExecContext(ctx, ok)
@@ -593,6 +597,8 @@ func TestSQLite_TypeChecks(t *testing.T) {
 		`INSERT INTO t (d) VALUES ('2026-02-30')`, `INSERT INTO t (d) VALUES ('13:00')`, `INSERT INTO t (d) VALUES ('2026-01-02 03:04')`,
 		`INSERT INTO t (ts) VALUES ('2026-02-30 10:00:00+00:00')`, `INSERT INTO t (ts) VALUES ('13:00')`, `INSERT INTO t (ts) VALUES ('2026-03-04T12:34:00Z')`,
 		`INSERT INTO t (ts) VALUES ('2026-03-04 12:34:00 +02:00')`, `INSERT INTO t (ts) VALUES ('2026-03-04 12:34:00garbage+00:00')`,
+		`INSERT INTO t (ts) VALUES ('2026-01-02 12:00:00 +00:00')`, `INSERT INTO t (ts) VALUES ('2026-01-02 12:00:00.+00:00')`,
+		`INSERT INTO t (ts) VALUES ('2026-01-02 12:00:00.5x+00:00')`, `INSERT INTO t (ts) VALUES ('2026-01-02 12:00:00.5 +00:00')`,
 	} {
 		_, err := db.ExecContext(ctx, bad)
 		assert.Error(t, err, bad)
@@ -769,6 +775,38 @@ func TestSQLite_OpeningChecksTheFileItsStorage(t *testing.T) {
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
+// A pool opened on a database does not open a connection on another file
+// created under its name after a drop.
+func TestSQLite_PoolRefusesAReplacedFile(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	path := filepath.Join(dir, "sales"+SQLiteFileExtension)
+	require.NoError(t, CreateSQLiteDatabase(ctx, path))
+	db, err := openSQLite(ctx, path)
+	require.NoError(t, err)
+	defer db.Close()
+	db.SetMaxIdleConns(0) // every statement opens a connection
+	_, err = db.ExecContext(ctx, `CREATE TABLE t (v)`)
+	require.NoError(t, err)
+	require.NoError(t, removeSQLiteFiles(path))
+	require.NoError(t, CreateSQLiteDatabase(ctx, path))
+	_, err = db.ExecContext(ctx, `CREATE TABLE u (v)`)
+	assert.ErrorContains(t, err, "replaced")
+}
+
+// The turns of the manager's files are forgotten once no one holds them.
+func TestSQLite_FileTurnsAreForgotten(t *testing.T) {
+	m := &MultiDatabaseManager{}
+	unlock := m.lockFile("a")
+	done := make(chan struct{})
+	go func() { m.lockFile("a")(); close(done) }()
+	unlock()
+	<-done
+	m.filesMu.Lock()
+	defer m.filesMu.Unlock()
+	assert.Empty(t, m.files)
+}
+
 // A drop leaves nothing of the database, nor of its own work.
 func TestSQLite_DropLeavesNoFile(t *testing.T) {
 	dir := t.TempDir()
@@ -788,6 +826,19 @@ func TestSQLite_DropLeavesNoFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, entries)
 	assert.NoError(t, removeSQLiteFiles(path), "dropping a dropped database does nothing")
+
+	// A drop that stopped after the rename is finished by the next one.
+	require.NoError(t, CreateSQLiteDatabase(ctx, path))
+	require.NoError(t, os.Mkdir(path+"-shm", 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(path+"-shm", "x"), nil, 0o600))
+	assert.Error(t, removeSQLiteFiles(path))
+	_, err = os.Stat(path)
+	assert.ErrorIs(t, err, os.ErrNotExist, "the database cannot be opened any more")
+	require.NoError(t, os.RemoveAll(path+"-shm"))
+	require.NoError(t, removeSQLiteFiles(path))
+	entries, err = os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
 }
 
 func TestSQLite_VersionQualification(t *testing.T) {

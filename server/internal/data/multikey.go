@@ -213,7 +213,14 @@ func meetsKeys(dialect dbal.Dialect, column multiKeyColumn, op string, keys func
 func keysMeet(dialect dbal.Dialect, left multiKeyColumn, op string, right multiKeyColumn) string {
 	switch {
 	case !left.lines && !right.lines:
-		return fmt.Sprintf("%s %s %s", left.sql, op, right.sql)
+		l, r := left.sql, right.sql
+		if dialect.Engine() == dbal.EngineSQLite {
+			// A date against a timestamp is midnight of its day, as
+			// PostgreSQL promotes it: the texts compare in time order once
+			// both are timestamps (dbal.TemporalValue).
+			l, r = sqliteAsTimestamp(left, right.kind), sqliteAsTimestamp(right, left.kind)
+		}
+		return fmt.Sprintf("%s %s %s", l, op, r)
 	case !right.lines:
 		return meetsKeys(dialect, left, op, func() []string { return []string{asKeyText(dialect, right)} })
 	case !left.lines:
@@ -235,6 +242,15 @@ func keysMeet(dialect dbal.Dialect, left multiKeyColumn, op string, right multiK
 	return fmt.Sprintf("(CASE WHEN %s AND %s THEN %s %s %s ELSE EXISTS (SELECT 1 FROM %s, %s WHERE %s AND %s AND %s %s %s) END)",
 		mariaSingleLine(left.sql), mariaSingleLine(right.sql), left.sql, op, right.sql,
 		mariaLineTable(left.sql, leftAlias), mariaLineTable(right.sql, rightAlias), mariaPresent(l), mariaPresent(r), l, op, r)
+}
+
+// sqliteAsTimestamp is a date column, compared with a timestamp, as the
+// text of the timestamp at midnight of its day; any other column as it is.
+func sqliteAsTimestamp(column multiKeyColumn, other dbal.AgnosticFieldType) string {
+	if column.kind == dbal.FieldTypeDate && other == dbal.FieldTypeTimestamp {
+		return fmt.Sprintf("(%s || ' 00:00:00+00:00')", column.sql)
+	}
+	return column.sql
 }
 
 // lineSource is how a statement reads the keys of a text match field one
