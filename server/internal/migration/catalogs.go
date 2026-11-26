@@ -55,7 +55,9 @@ func catalogDefinitions(root *xmlNode, catalogs []string, objects ...string) []*
 			switch {
 			case nodeNamed(child, objects...):
 				out = append(out, child)
-			case nodeNamed(child, "Group", "group", "Folder", "folder"):
+			case nodeNamed(child, "Group", "group", "Folder", "folder", "ObjectList"):
+				// Save a Copy as XML wraps some catalogs' members in an
+				// <ObjectList>, for example <AccountsCatalog>.
 				visit(child)
 			}
 		}

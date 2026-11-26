@@ -933,7 +933,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	}
 
 	// 7. Extract Accounts & Privilege Sets (always disabled until password reset)
-	accNodes := catalogDefinitions(root, []string{"AccountCatalog", "accounts"}, "Account", "account")
+	accNodes := catalogDefinitions(root, []string{"AccountCatalog", "AccountsCatalog", "accounts"}, "Account", "account")
 	for _, an := range accNodes {
 		acc, items := convertAccountNode(an)
 		for _, it := range items {
@@ -3041,7 +3041,17 @@ func decodeNodeValue(n *xmlNode) interface{} {
 }
 
 func convertAccountNode(an *xmlNode) (*schema.BundleAccount, []ReportItem) {
+	// A Database Design Report puts the name and privilege set in attributes;
+	// Save a Copy as XML writes <Authentication><AccountName> and a
+	// <PrivilegeSetReference name=…> child instead.
 	username := strings.TrimSpace(firstAttr(an, "name", "username", "AccountName", "Name"))
+	if username == "" {
+		if auth := findFirstChild(an, "Authentication"); auth != nil {
+			if n := findFirstChild(auth, "AccountName"); n != nil {
+				username = strings.TrimSpace(n.Text)
+			}
+		}
+	}
 	if username == "" || strings.EqualFold(username, "[Guest]") || strings.EqualFold(username, "Guest") {
 		return nil, []ReportItem{
 			{
@@ -3054,6 +3064,11 @@ func convertAccountNode(an *xmlNode) (*schema.BundleAccount, []ReportItem) {
 	}
 
 	privSet := strings.TrimSpace(firstAttr(an, "privilegeSet", "role", "PrivilegeSet"))
+	if privSet == "" {
+		if ref := findFirstChild(an, "PrivilegeSetReference"); ref != nil {
+			privSet = firstAttr(ref, "name")
+		}
+	}
 	role := "user"
 	switch strings.ToLower(privSet) {
 	case "[full access]", "full access", "owner":
