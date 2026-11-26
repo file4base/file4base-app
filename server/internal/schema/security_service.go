@@ -251,6 +251,26 @@ func (s *Service) GetUser(ctx context.Context, id string) (*UserMetadata, error)
 	return &u, nil
 }
 
+// RolesWithAccounts returns the roles at least one account holds, whatever
+// its state: those an fmrest grant from a file would open the Data API to.
+// A row it cannot read is an error, never a role without accounts.
+func (s *Service) RolesWithAccounts(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.driver.DB().QueryContext(ctx, `SELECT DISTINCT role FROM sys_users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	roles := map[string]bool{}
+	for rows.Next() {
+		var role string
+		if err := rows.Scan(&role); err != nil {
+			return nil, err
+		}
+		roles[role] = true
+	}
+	return roles, rows.Err()
+}
+
 // countActiveOwners returns how many active owner accounts exist that can
 // sign in: an owner still waiting for a password (#198) is not one.
 func (s *Service) countActiveOwners(ctx context.Context) int {

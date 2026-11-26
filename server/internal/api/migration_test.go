@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/file4base/file4base-app/server/internal/api"
@@ -205,12 +204,13 @@ func TestAPI_MigrationGrantsFMRestOnlyToRolesItFills(t *testing.T) {
  <ExtendedPrivilegesCatalog membercount="1"><ObjectList membercount="1">
   <ExtendedPrivilege id="9" name="fmrest"><ObjectList membercount="1"><PrivilegeSetReference id="4" name="Clerks"/></ObjectList></ExtendedPrivilege>
  </ObjectList></ExtendedPrivilegesCatalog>
- <AccountsCatalog membercount="1"><ObjectList membercount="1">
+ <AccountsCatalog membercount="2"><ObjectList membercount="2">
   <Account id="3" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>clerk</AccountName></Authentication><PrivilegeSetReference id="4" name="Clerks"/></Account>
+  <Account id="5" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>viewer</AccountName></Authentication><PrivilegeSetReference id="6" name="Viewers"/></Account>
  </ObjectList></AccountsCatalog>
  </AddAction></Structure></FMSaveAsXML>`
 
-	migrate := func(withUser bool) (bool, *migration.ConversionReport) {
+	migrate := func(withUser, granted bool) (bool, *migration.ConversionReport) {
 		db := uniqueDB("f4b_migrest")
 		h.createDatabase(db, "alice", "alice-secret")
 		owner := h.login(db, "alice", "alice-secret")
@@ -218,6 +218,12 @@ func TestAPI_MigrationGrantsFMRestOnlyToRolesItFills(t *testing.T) {
 			rec := h.do(http.MethodPost, "/api/v1/security/users", owner,
 				map[string]interface{}{"username": "dave", "password": "dave-secret-pw", "role": "user"}, nil)
 			require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		}
+		if granted {
+			rec := h.do(http.MethodPut, "/api/v1/security/privileges", owner, map[string]interface{}{"privileges": []map[string]interface{}{
+				{"role": "user", "bulk_export": true, "bulk_import": true, "fmrest": true},
+			}}, nil)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		}
 		var res struct {
 			Report *migration.ConversionReport `json:"report"`
@@ -238,14 +244,46 @@ func TestAPI_MigrationGrantsFMRestOnlyToRolesItFills(t *testing.T) {
 		return false, nil
 	}
 
-	granted, _ := migrate(false)
-	assert.True(t, granted, "the role only migrated accounts hold is granted fmrest")
-
-	granted, report := migrate(true)
-	assert.False(t, granted, "a role that already held an account is not granted fmrest")
-	found := false
-	for _, it := range report.ManualActionRequired {
-		found = found || (it.Domain == "privilege" && it.TargetName == "user" && strings.Contains(it.Detail, "already had accounts"))
+	// The role's privilege items, whatever their category.
+	userItems := func(report *migration.ConversionReport) (translated, manual []migration.ReportItem) {
+		for _, it := range report.Translated {
+			if it.Domain == "privilege" && it.TargetName == "user" {
+				translated = append(translated, it)
+			}
+		}
+		for _, it := range report.ManualActionRequired {
+			if it.Domain == "privilege" && it.TargetName == "user" {
+				manual = append(manual, it)
+			}
+		}
+		return translated, manual
 	}
-	assert.True(t, found, "the report says fmrest was not granted: %+v", report.ManualActionRequired)
+
+	// One item per role: granted, with the set that gains it without
+	// carrying it to review.
+	granted, report := migrate(false, false)
+	assert.True(t, granted, "the role only migrated accounts hold is granted fmrest")
+	translated, manual := userItems(report)
+	assert.Empty(t, translated)
+	require.Len(t, manual, 1, "%+v", manual)
+	assert.Contains(t, manual[0].Detail, `is granted to the role "user"`)
+	assert.Contains(t, manual[0].Detail, `"Viewers" do not carry fmrest`)
+
+	// A role that already holds it keeps it, and the same item.
+	granted, report = migrate(true, true)
+	assert.True(t, granted)
+	translated, manual = userItems(report)
+	assert.Empty(t, translated)
+	require.Len(t, manual, 1, "%+v", manual)
+	assert.Contains(t, manual[0].Detail, `is granted to the role "user"`)
+
+	granted, report = migrate(true, false)
+	assert.False(t, granted, "a role that already held an account is not granted fmrest")
+	translated, manual = userItems(report)
+	assert.Empty(t, translated, "nor is it reported as granted")
+	require.Len(t, manual, 1, "one item says it was not granted, and why: %+v", manual)
+	assert.Contains(t, manual[0].Detail, "which was not granted")
+	assert.Contains(t, manual[0].Detail, "already had accounts")
+	assert.Equal(t, "Clerks", manual[0].SourceName)
+	assert.Equal(t, len(report.Translated), report.Counts.TranslatedCount)
 }

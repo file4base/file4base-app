@@ -2,6 +2,7 @@ package schema_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/testdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // TestRolePrivileges covers the capability grants of #39 at the service level.
@@ -19,7 +21,7 @@ func TestRolePrivileges(t *testing.T) {
 		t.Skip("database not accessible, skipping integration test:", err)
 		return
 	}
-	defer driver.Close()
+	t.Cleanup(func() { _ = driver.Close() }) // after the cleanup that empties sys_privileges
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -126,4 +128,79 @@ func TestRolePrivileges(t *testing.T) {
 	assert.Equal(t, []string{schema.CapabilityBulkExport, schema.CapabilityFMRest}, caps)
 	assert.ErrorIs(t, svc.GrantCapability(ctx, "superuser", schema.CapabilityFMRest), schema.ErrUnknownRole)
 	assert.ErrorIs(t, svc.GrantCapability(ctx, "user", "fmxdbc"), schema.ErrUnknownCapability)
+}
+
+// Privileges decoded from a request or a solution file that does not name
+// fmrest leave the stored value as it is; naming it, even as false, sets it.
+func TestRolePrivileges_OmittedFMRestKeepsTheStoredValue(t *testing.T) {
+	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
+	if err != nil {
+		t.Skip("database not accessible, skipping integration test:", err)
+		return
+	}
+	t.Cleanup(func() { _ = driver.Close() }) // after the cleanup that empties sys_privileges
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := driver.Ping(ctx); err != nil {
+		t.Skip("database ping failed, skipping integration test:", err)
+		return
+	}
+	svc := schema.NewService(driver)
+	require.NoError(t, svc.EnsureSystemTables(ctx))
+	t.Cleanup(func() {
+		_, _ = driver.DB().ExecContext(context.Background(), `DELETE FROM sys_privileges`)
+	})
+	_, err = driver.DB().ExecContext(ctx, `DELETE FROM sys_privileges`)
+	require.NoError(t, err)
+
+	fromJSON := func(body string) schema.RolePrivileges {
+		var p schema.RolePrivileges
+		require.NoError(t, json.Unmarshal([]byte(body), &p))
+		return p
+	}
+	fromMsgpack := func(v map[string]interface{}) schema.RolePrivileges {
+		data, err := msgpack.Marshal(v)
+		require.NoError(t, err)
+		var p schema.RolePrivileges
+		require.NoError(t, msgpack.Unmarshal(data, &p))
+		return p
+	}
+	holds := func(role string) bool {
+		allowed, err := svc.RoleAllows(ctx, role, schema.CapabilityFMRest)
+		require.NoError(t, err)
+		return allowed
+	}
+
+	// Omitted for a role with no row: the row is written, not granted.
+	require.NoError(t, svc.SetRolePrivileges(ctx, []schema.RolePrivileges{fromJSON(`{"role":"admin","bulk_export":false,"bulk_import":true}`)}))
+	assert.False(t, holds("admin"))
+	exportOK, err := svc.RoleAllows(ctx, "admin", schema.CapabilityBulkExport)
+	require.NoError(t, err)
+	assert.False(t, exportOK)
+
+	require.NoError(t, svc.SetRolePrivileges(ctx, []schema.RolePrivileges{fromJSON(`{"role":"user","bulk_export":true,"bulk_import":true,"fmrest":true}`)}))
+	require.True(t, holds("user"))
+	for _, p := range []schema.RolePrivileges{
+		fromJSON(`{"role":"user","bulk_export":false,"bulk_import":false}`),
+		fromMsgpack(map[string]interface{}{"role": "user", "bulk_export": true, "bulk_import": false}),
+	} {
+		require.NoError(t, svc.SetRolePrivileges(ctx, []schema.RolePrivileges{p}))
+		assert.True(t, holds("user"), "omitted, fmrest is kept: %+v", p)
+	}
+	require.NoError(t, svc.SetRolePrivileges(ctx, []schema.RolePrivileges{
+		fromMsgpack(map[string]interface{}{"role": "user", "bulk_export": true, "bulk_import": false, "fmrest": false}),
+	}))
+	assert.False(t, holds("user"), "named false, it is withdrawn")
+	for _, p := range []schema.RolePrivileges{
+		fromJSON(`{"role":"user","bulk_export":true,"bulk_import":true,"fmrest":null}`),
+		fromMsgpack(map[string]interface{}{"role": "user", "bulk_export": true, "bulk_import": true, "fmrest": nil}),
+	} {
+		require.NoError(t, svc.SetRolePrivileges(ctx, []schema.RolePrivileges{{Role: "user", BulkExport: true, BulkImport: true, FMRest: true}}))
+		require.NoError(t, svc.SetRolePrivileges(ctx, []schema.RolePrivileges{p}))
+		assert.False(t, holds("user"), "named null, it is withdrawn: %+v", p)
+	}
+
+	// A value built in code always names it.
+	require.NoError(t, svc.SetRolePrivileges(ctx, []schema.RolePrivileges{{Role: "user", BulkExport: true, BulkImport: true, FMRest: true}}))
+	assert.True(t, holds("user"))
 }

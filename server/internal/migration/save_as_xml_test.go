@@ -279,7 +279,7 @@ func TestAnalyzeAndConvert_SaveAsXMLCarriesFMRestToRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []CapabilityGrant{{Role: "user", Capability: schema.CapabilityFMRest}}
+	want := []CapabilityGrant{{Role: "user", Capability: schema.CapabilityFMRest, Sets: []string{"Clerks"}}}
 	if !reflect.DeepEqual(got.Grants, want) {
 		t.Fatalf("grants = %v, want %v", got.Grants, want)
 	}
@@ -292,22 +292,74 @@ func TestAnalyzeAndConvert_SaveAsXMLCarriesFMRestToRoles(t *testing.T) {
 		}
 		return out
 	}
-	translated := privilegeItems(got.Report.Translated)
-	if len(translated) != 1 || translated[0].SourceName != "Clerks" || translated[0].TargetName != "user" {
-		t.Fatalf("translated privilege items = %+v, want Clerks granted to user", translated)
+	// One item per role. The user role is granted it, and its Desk set,
+	// which does not carry it, gains it too, which is to review; a set the
+	// owner role maps from gains it without carrying it.
+	if translated := privilegeItems(got.Report.Translated); len(translated) != 0 {
+		t.Fatalf("translated privilege items = %+v, want none: each role with a set without fmrest is to review", translated)
 	}
-	// A set the owner role maps from gains fmrest without carrying it, and
-	// so does one of a role granted it.
-	manual := privilegeItems(got.Report.ManualActionRequired)
-	gained := map[string]string{}
-	for _, it := range manual {
+	byRole := map[string]ReportItem{}
+	for _, it := range privilegeItems(got.Report.ManualActionRequired) {
 		if !strings.Contains(it.Detail, "#213") {
 			t.Errorf("privilege item without #213: %+v", it)
 		}
-		gained[it.SourceName] = it.TargetName
+		if _, dup := byRole[it.TargetName]; dup {
+			t.Fatalf("two privilege items for the role %s", it.TargetName)
+		}
+		byRole[it.TargetName] = it
 	}
-	if !reflect.DeepEqual(gained, map[string]string{"Desk": "user", "Owner": "owner"}) {
-		t.Fatalf("manual privilege items = %+v, want Desk gaining fmrest through user and Owner through owner", manual)
+	if len(byRole) != 2 || byRole["user"].SourceName != "Clerks, Desk" || byRole["owner"].SourceName != "Owner" ||
+		!strings.Contains(byRole["user"].Detail, `of privilege set(s) "Clerks" is granted to the role "user"`) ||
+		!strings.Contains(byRole["user"].Detail, `"Desk" do not carry fmrest`) {
+		t.Fatalf("manual privilege items = %+v, want the user grant with Desk gaining it, and Owner gaining it through owner", byRole)
+	}
+
+	// Withheld at apply time, the grant leaves one item for its role, saying
+	// it was not granted and why; the other roles' items and the counts
+	// follow.
+	translatedCount, manualCount := got.Report.Counts.TranslatedCount, got.Report.Counts.ManualActionCount
+	got.Report.WithholdGrant(got.Grants[0], "the test says so")
+	var user []ReportItem
+	owner := 0
+	for _, it := range privilegeItems(got.Report.ManualActionRequired) {
+		switch it.TargetName {
+		case "user":
+			user = append(user, it)
+		case "owner":
+			owner++
+		}
+	}
+	if len(user) != 1 || user[0].SourceName != "Clerks" ||
+		!strings.Contains(user[0].Detail, `which was not granted to the role "user" because the test says so`) {
+		t.Fatalf("user privilege items after withholding = %+v, want one saying it was not granted", user)
+	}
+	if owner != 1 {
+		t.Fatalf("owner privilege items after withholding = %d, want 1", owner)
+	}
+	if got.Report.Counts.TranslatedCount != translatedCount || got.Report.Counts.ManualActionCount != manualCount ||
+		len(got.Report.ManualActionRequired) != manualCount {
+		t.Fatalf("counts after withholding = %d translated, %d manual; want %d, %d",
+			got.Report.Counts.TranslatedCount, got.Report.Counts.ManualActionCount, translatedCount, manualCount)
+	}
+
+	// A role whose sets all carry it is granted it as a translation; so
+	// withheld, it becomes the one item to review.
+	only := strings.Replace(doc, `<Account id="4" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>desk</AccountName></Authentication><PrivilegeSetReference id="6" name="Desk"/></Account>`, "", 1)
+	got, err = AnalyzeAndConvert(MigrationRequest{DesignXML: only})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if items := privilegeItems(got.Report.Translated); len(items) != 1 || items[0].TargetName != "user" || items[0].SourceName != "Clerks" {
+		t.Fatalf("translated privilege items = %+v, want Clerks granted to user", items)
+	}
+	translatedCount, manualCount = got.Report.Counts.TranslatedCount, got.Report.Counts.ManualActionCount
+	got.Report.WithholdGrant(got.Grants[0], "the test says so")
+	if items := privilegeItems(got.Report.Translated); len(items) != 0 {
+		t.Fatalf("translated privilege items after withholding = %+v, want none", items)
+	}
+	if got.Report.Counts.TranslatedCount != translatedCount-1 || got.Report.Counts.ManualActionCount != manualCount+1 {
+		t.Fatalf("counts after withholding = %d translated, %d manual; want %d, %d",
+			got.Report.Counts.TranslatedCount, got.Report.Counts.ManualActionCount, translatedCount-1, manualCount+1)
 	}
 }
 

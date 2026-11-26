@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha1"
+	"database/sql"
 	"encoding/base32"
 	"encoding/binary"
 	"errors"
@@ -174,6 +175,24 @@ func (s *Service) EnableUserMFA(ctx context.Context, userID, secret, code string
 	}
 	_, err := s.driver.DB().ExecContext(ctx, q, effectiveSecret, time.Now().UTC(), userID)
 	return err
+}
+
+// UserMFAEnabled reports whether an account has two-step verification on.
+// It reads that column alone, so that a failed read is an error and never
+// an account without it.
+func (s *Service) UserMFAEnabled(ctx context.Context, userID string) (bool, error) {
+	q := `SELECT COALESCE(mfa_enabled, FALSE) FROM sys_users WHERE id = $1`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT COALESCE(mfa_enabled, FALSE) FROM sys_users WHERE id = ?`
+	}
+	var enabled bool
+	if err := s.driver.DB().QueryRowContext(ctx, q, userID).Scan(&enabled); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, ErrAccountNotFound
+		}
+		return false, err
+	}
+	return enabled, nil
 }
 
 // DisableUserMFA turns off MFA and clears the stored TOTP secret for the user.

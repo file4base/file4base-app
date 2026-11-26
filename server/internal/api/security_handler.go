@@ -750,6 +750,7 @@ func (h *SecurityHandler) SetRolePrivileges(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	svc := schemaService(r)
+	// A client from before fmrest does not send it, which leaves it as is.
 	if err := svc.SetRolePrivileges(r.Context(), req.Privileges); err != nil {
 		if errors.Is(err, schema.ErrUnknownRole) {
 			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unknown Role", err.Error())
@@ -835,10 +836,13 @@ func (h *SecurityHandler) EnableUserMFA(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	svc := schemaService(r)
-	if err := svc.EnableUserMFA(r.Context(), id, req.Code, req.Secret); err != nil {
+	if err := svc.EnableUserMFA(r.Context(), id, req.Secret, req.Code); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "MFA Verification Failed", err.Error())
 		return
 	}
+	// The Data API cannot ask for the second factor, so the account's Data
+	// API sessions end now, as its sign-in there is refused from now on.
+	h.sessions.RevokeDataAPIUser(currentSession(r).Database, id)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"id":          id,

@@ -3,12 +3,14 @@ package schema
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // Capabilities a database owner can grant to or withhold from an account
@@ -64,6 +66,62 @@ type RolePrivileges struct {
 	BulkExport bool   `json:"bulk_export" msgpack:"bulk_export"`
 	BulkImport bool   `json:"bulk_import" msgpack:"bulk_import"`
 	FMRest     bool   `json:"fmrest" msgpack:"fmrest"`
+
+	// fmrestOmitted records that the request or solution file these were
+	// decoded from did not name fmrest, as one written before it existed
+	// does: SetRolePrivileges then leaves the stored value as it is, rather
+	// than withdraw it for saying nothing. Any other value names it.
+	fmrestOmitted bool
+}
+
+// rolePrivilegesWire is RolePrivileges as sent. Whether fmrest is there at
+// all is read apart (hasFMRest): a null names it, as false.
+type rolePrivilegesWire struct {
+	Role       string `json:"role" msgpack:"role"`
+	BulkExport bool   `json:"bulk_export" msgpack:"bulk_export"`
+	BulkImport bool   `json:"bulk_import" msgpack:"bulk_import"`
+	FMRest     *bool  `json:"fmrest" msgpack:"fmrest"`
+}
+
+func (p *RolePrivileges) fromWire(w rolePrivilegesWire, hasFMRest bool) {
+	*p = RolePrivileges{Role: w.Role, BulkExport: w.BulkExport, BulkImport: w.BulkImport, fmrestOmitted: !hasFMRest}
+	if w.FMRest != nil {
+		p.FMRest = *w.FMRest
+	}
+}
+
+// UnmarshalJSON reads a role's privileges from a request body.
+func (p *RolePrivileges) UnmarshalJSON(data []byte) error {
+	var w rolePrivilegesWire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return err
+	}
+	_, has := keys[CapabilityFMRest]
+	p.fromWire(w, has)
+	return nil
+}
+
+// DecodeMsgpack reads a role's privileges from a solution file.
+func (p *RolePrivileges) DecodeMsgpack(dec *msgpack.Decoder) error {
+	var raw msgpack.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		return err
+	}
+	var w rolePrivilegesWire
+	if err := msgpack.Unmarshal(raw, &w); err != nil {
+		return err
+	}
+	var keys map[string]msgpack.RawMessage
+	if err := msgpack.Unmarshal(raw, &keys); err != nil {
+		return err
+	}
+	_, has := keys[CapabilityFMRest]
+	p.fromWire(w, has)
+	return nil
 }
 
 // Allows reports whether this set holds a capability.
@@ -88,7 +146,7 @@ func (p RolePrivileges) With(capability string, allowed bool) RolePrivileges {
 	case CapabilityBulkImport:
 		p.BulkImport = allowed
 	case CapabilityFMRest:
-		p.FMRest = allowed
+		p.FMRest, p.fmrestOmitted = allowed, false
 	}
 	return p
 }
@@ -243,21 +301,31 @@ func (s *Service) SetRolePrivileges(ctx context.Context, privileges []RolePrivil
 	}
 	defer tx.Rollback()
 
-	postgres := s.driver.Dialect().Engine() == dbal.EnginePostgres
-	qDel := `DELETE FROM sys_privileges WHERE role = $1`
-	qIns := `INSERT INTO sys_privileges (role, bulk_export, bulk_import, fmrest, updated_at) VALUES ($1, $2, $3, $4, $5)`
-	if !postgres {
-		qDel = `DELETE FROM sys_privileges WHERE role = ?`
-		qIns = `INSERT INTO sys_privileges (role, bulk_export, bulk_import, fmrest, updated_at) VALUES (?, ?, ?, ?, ?)`
+	// One upsert per role, so that an entry without fmrest keeps the stored
+	// value in the same statement that writes the rest (a new row takes the
+	// column default, not granted), with no read for a concurrent change to
+	// slip behind.
+	qFull := `INSERT INTO sys_privileges (role, bulk_export, bulk_import, fmrest, updated_at) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (role) DO UPDATE SET bulk_export = EXCLUDED.bulk_export, bulk_import = EXCLUDED.bulk_import, fmrest = EXCLUDED.fmrest, updated_at = EXCLUDED.updated_at`
+	qKeep := `INSERT INTO sys_privileges (role, bulk_export, bulk_import, updated_at) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (role) DO UPDATE SET bulk_export = EXCLUDED.bulk_export, bulk_import = EXCLUDED.bulk_import, updated_at = EXCLUDED.updated_at`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		qFull = `INSERT INTO sys_privileges (role, bulk_export, bulk_import, fmrest, updated_at) VALUES (?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE bulk_export = VALUES(bulk_export), bulk_import = VALUES(bulk_import), fmrest = VALUES(fmrest), updated_at = VALUES(updated_at)`
+		qKeep = `INSERT INTO sys_privileges (role, bulk_export, bulk_import, updated_at) VALUES (?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE bulk_export = VALUES(bulk_export), bulk_import = VALUES(bulk_import), updated_at = VALUES(updated_at)`
 	}
 
 	now := time.Now().UTC()
 	for _, role := range roles {
 		p := seen[role]
-		if _, err := tx.ExecContext(ctx, qDel, role); err != nil {
-			return fmt.Errorf("failed clearing privileges of role %s: %w", role, err)
+		var err error
+		if p.fmrestOmitted {
+			_, err = tx.ExecContext(ctx, qKeep, role, p.BulkExport, p.BulkImport, now)
+		} else {
+			_, err = tx.ExecContext(ctx, qFull, role, p.BulkExport, p.BulkImport, p.FMRest, now)
 		}
-		if _, err := tx.ExecContext(ctx, qIns, role, p.BulkExport, p.BulkImport, p.FMRest, now); err != nil {
+		if err != nil {
 			return fmt.Errorf("failed storing privileges of role %s: %w", role, err)
 		}
 	}

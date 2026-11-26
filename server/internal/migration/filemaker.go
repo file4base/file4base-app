@@ -178,6 +178,32 @@ type ConvertedSolution struct {
 type CapabilityGrant struct {
 	Role       string
 	Capability string
+	// Sets are the privilege sets that carry it in the file.
+	Sets []string
+}
+
+// WithholdGrant records that a grant was not made, for the reason given:
+// the role's report items about the grant give way to one that says so, so
+// that the report never says both.
+func (r *ConversionReport) WithholdGrant(g CapabilityGrant, reason string) {
+	keep := func(items []ReportItem, count *int) []ReportItem {
+		out := items[:0]
+		for _, it := range items {
+			if it.Domain == "privilege" && it.TargetName == g.Role {
+				*count--
+				continue
+			}
+			out = append(out, it)
+		}
+		return out
+	}
+	r.Translated = keep(r.Translated, &r.Counts.TranslatedCount)
+	r.ManualActionRequired = keep(r.ManualActionRequired, &r.Counts.ManualActionCount)
+	addReportItem(r, ReportItem{
+		Category: CategoryManualActionRequired, Domain: "privilege", SourceName: strings.Join(g.Sets, ", "), TargetName: g.Role,
+		Detail: fmt.Sprintf("Privilege set(s) %s carry %s (Access via FileMaker Data API), which was not granted to the role %q because %s; "+
+			"grant it in Manage Security if all the accounts of the role may use the Data API", quoteList(g.Sets), g.Capability, g.Role, reason),
+	})
 }
 
 // IsFMP12Binary returns true when filename has a .fmp12/.fp7 extension or data
@@ -3174,23 +3200,29 @@ func fmrestGrants(root *xmlNode, setsByRole map[string][]string) ([]CapabilityGr
 			// carry fmrest gains it all the same, which is reported.
 			granting = nil
 		}
+		// One item per role: the grant, or what the role's accounts gain
+		// without their set carrying fmrest, which is to review.
 		if len(granting) > 0 {
-			grants = append(grants, CapabilityGrant{Role: role, Capability: schema.CapabilityFMRest})
-			items = append(items, ReportItem{
-				Category: CategoryTranslated, Domain: "privilege", SourceName: strings.Join(granting, ", "), TargetName: role,
-				Detail: fmt.Sprintf("The fmrest extended privilege (Access via FileMaker Data API) of privilege set(s) %s is granted to the role %q as its fmrest privilege",
-					quoteList(granting), role),
-			})
+			grants = append(grants, CapabilityGrant{Role: role, Capability: schema.CapabilityFMRest, Sets: granting})
 		}
-		if len(without) > 0 && (len(granting) > 0 || role == "owner") {
-			review := "Review these accounts, or withhold fmrest from the role in Manage Security"
-			if role == "owner" {
-				review = "Review these accounts: an owner always holds fmrest"
-			}
+		granted := fmt.Sprintf("The fmrest extended privilege (Access via FileMaker Data API) of privilege set(s) %s is granted to the role %q as its fmrest privilege",
+			quoteList(granting), role)
+		switch {
+		case len(without) == 0 && len(granting) > 0:
+			items = append(items, ReportItem{
+				Category: CategoryTranslated, Domain: "privilege", SourceName: strings.Join(granting, ", "), TargetName: role, Detail: granted,
+			})
+		case len(without) > 0 && len(granting) > 0:
+			items = append(items, ReportItem{
+				Category: CategoryManualActionRequired, Domain: "privilege", SourceName: strings.Join(append(append([]string(nil), granting...), without...), ", "), TargetName: role,
+				Detail: fmt.Sprintf("%s. Privilege set(s) %s do not carry fmrest in FileMaker, but their accounts hold that role, so they gain it too: File4Base grants the Data API per role, not per privilege set (#213). "+
+					"Review these accounts, or withhold fmrest from the role in Manage Security", granted, quoteList(without)),
+			})
+		case len(without) > 0 && role == "owner":
 			items = append(items, ReportItem{
 				Category: CategoryManualActionRequired, Domain: "privilege", SourceName: strings.Join(without, ", "), TargetName: role,
-				Detail: fmt.Sprintf("Privilege set(s) %s do not carry fmrest in FileMaker, but their accounts hold the role %q, which does: File4Base grants the Data API per role, not per privilege set (#213). %s",
-					quoteList(without), role, review),
+				Detail: fmt.Sprintf("Privilege set(s) %s do not carry fmrest in FileMaker, but their accounts hold the role %q, which does: File4Base grants the Data API per role, not per privilege set (#213). "+
+					"Review these accounts: an owner always holds fmrest", quoteList(without), role),
 			})
 		}
 	}

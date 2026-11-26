@@ -1263,13 +1263,10 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 	// makes would open to accounts it knows nothing of.
 	heldRoles := map[string]bool{}
 	if !createdNewDB && len(converted.Grants) > 0 {
-		users, err := targetSvc.ListUsers(r.Context())
-		if err != nil {
+		var err error
+		if heldRoles, err = targetSvc.RolesWithAccounts(r.Context()); err != nil {
 			telemetry.WriteInternalError(w, r, err)
 			return
-		}
-		for _, u := range users {
-			heldRoles[u.Role] = true
 		}
 	}
 
@@ -1289,14 +1286,19 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 	// What the file granted its privilege sets is granted to the roles they
 	// map to (fmrest, #213), unless the role already held accounts here
 	// before the migration: those the file knows nothing of, so the owner
-	// decides.
+	// decides. A role that holds it already keeps it, and the report as it
+	// is, which says which sets gain it through the role.
 	for _, g := range converted.Grants {
 		if heldRoles[g.Role] {
-			converted.Report.ManualActionRequired = append(converted.Report.ManualActionRequired, migration.ReportItem{
-				Category: migration.CategoryManualActionRequired, Domain: "privilege", SourceName: g.Role, TargetName: g.Role,
-				Detail: "The file grants " + g.Capability + " to privilege sets mapped to the role \"" + g.Role + "\", which was not granted " +
-					"because this database already had accounts of that role; grant it in Manage Security if they may all use the Data API",
-			})
+			holds, err := targetSvc.RoleAllows(r.Context(), g.Role, g.Capability)
+			if err != nil {
+				rollbackNote := discardPartialMigration()
+				telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Schema Import Error", err.Error()+rollbackNote)
+				return
+			}
+			if !holds {
+				converted.Report.WithholdGrant(g, "this database already had accounts of that role")
+			}
 			continue
 		}
 		if err := targetSvc.GrantCapability(r.Context(), g.Role, g.Capability); err != nil {

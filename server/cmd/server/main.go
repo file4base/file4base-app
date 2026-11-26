@@ -279,17 +279,23 @@ func main() {
 		log.Println("Warning: database engine did not become reachable during startup")
 	}()
 
+	// The middlewares every request goes through. They wrap the handler
+	// api.Mount returns rather than being chi middlewares, so that the
+	// requests the Data API answers in front of the router (methods chi does
+	// not know) go through them too.
+	middlewares := chi.Chain(
+		corsMiddleware(corsOrigins),
+		telemetry.Middleware("file4base-api", AppVersion, ipResolver.ClientIP),
+		// Note: chi's middleware.RealIP is deliberately not used. It overwrites
+		// RemoteAddr from client-supplied X-Forwarded-For / X-Real-IP headers
+		// unconditionally; the client address is instead resolved per request
+		// through the trusted-proxy aware resolver (ipResolver / FILE4BASE_TRUSTED_PROXIES).
+		middleware.Recoverer,
+		// Every request is bounded to 60 seconds, except the FileMaker migration
+		// routes, which upload and import a whole database (#126).
+		api.RequestTimeout(60*time.Second, api.MigrationTimeouts(migrationTimeout)),
+	)
 	r := chi.NewRouter()
-	r.Use(corsMiddleware(corsOrigins))
-	r.Use(telemetry.Middleware("file4base-api", AppVersion, ipResolver.ClientIP))
-	// Note: chi's middleware.RealIP is deliberately not used. It overwrites
-	// RemoteAddr from client-supplied X-Forwarded-For / X-Real-IP headers
-	// unconditionally; the client address is instead resolved per request
-	// through the trusted-proxy aware resolver (ipResolver / FILE4BASE_TRUSTED_PROXIES).
-	r.Use(middleware.Recoverer)
-	// Every request is bounded to 60 seconds, except the FileMaker migration
-	// routes, which upload and import a whole database (#126).
-	r.Use(api.RequestTimeout(60*time.Second, api.MigrationTimeouts(migrationTimeout)))
 
 	// Cloud-Native Probes & Diagnostic Health (/healthz, /healthz/liveness, /healthz/readiness, etc.)
 	healthHandler := api.NewHealthHandler(dbMgr, AppVersion, &isReady, &isStarted)
@@ -319,7 +325,7 @@ func main() {
 	// the Web Client's Nginx (which mounts the same volume read-only).
 	tlsStore := localca.New(localca.DefaultDir())
 
-	api.Mount(r, dbMgr, sessions, api.Options{
+	handler := api.Mount(r, dbMgr, sessions, api.Options{
 		AllowPublicDatabaseCreation: allowPublicCreate,
 		ControlStore:                controlStore,
 		ChannelSecret:               channelSecret,
@@ -335,7 +341,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              port,
-		Handler:           r,
+		Handler:           middlewares.Handler(handler),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

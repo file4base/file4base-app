@@ -2,6 +2,7 @@ package api
 
 import (
 	"net"
+	"net/http"
 
 	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/clientip"
@@ -75,29 +76,54 @@ type Options struct {
 }
 
 // nodeOnlyMethods are the methods Node's HTTP parser accepts that chi does
-// not know. Registered, they reach the FileMaker Data API, which answers
-// them with code 1704 as FileMaker Server's Express front end does, instead
-// of chi's bare 405. Every other route names its methods, so none of them
-// accepts these.
-var nodeOnlyMethods = []string{
-	"ACL", "BIND", "CHECKOUT", "COPY", "LINK", "LOCK", "M-SEARCH", "MERGE", "MKACTIVITY",
-	"MKCALENDAR", "MKCOL", "MOVE", "NOTIFY", "PROPFIND", "PROPPATCH", "PURGE", "QUERY",
-	"REBIND", "REPORT", "SEARCH", "SOURCE", "SUBSCRIBE", "UNBIND", "UNLINK", "UNLOCK", "UNSUBSCRIBE",
+// not know (chi v5.5 knows the nine of net/http and QUERY). chi answers them
+// with a bare 405 before any route; on /fmi/data, FileMaker Server's Express
+// front end routes them like any other method, answering 1704 on a known
+// path and its 404 page on an unknown one.
+//
+// They are not registered with chi.RegisterMethod: chi holds its methods in
+// the bits of an int, and on a 32-bit build these overflow it, which panics
+// at start-up. dataAPIMethods hands them to the Data API instead.
+var nodeOnlyMethods = map[string]bool{
+	"ACL": true, "BIND": true, "CHECKOUT": true, "COPY": true, "LINK": true, "LOCK": true,
+	"M-SEARCH": true, "MERGE": true, "MKACTIVITY": true, "MKCALENDAR": true, "MKCOL": true,
+	"MOVE": true, "NOTIFY": true, "PROPFIND": true, "PROPPATCH": true, "PURGE": true,
+	"REBIND": true, "REPORT": true, "SEARCH": true, "SOURCE": true, "SUBSCRIBE": true,
+	"UNBIND": true, "UNLINK": true, "UNLOCK": true, "UNSUBSCRIBE": true,
 }
 
-func init() {
-	for _, m := range nodeOnlyMethods {
-		chi.RegisterMethod(m)
+// dataAPIMethods sends a request for a /fmi/data path whose method chi
+// cannot route, one of nodeOnlyMethods, straight to the Data API. Every
+// other request, those for /api/v1 included, goes on to chi unchanged. It
+// wraps the whole router rather than being one of its middlewares, which chi
+// takes only before the first route, and the server registers its health
+// routes before Mount; the server's own middlewares wrap it in turn.
+func dataAPIMethods(dataAPI http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// chi routes the escaped path when there is one.
+			path := r.URL.RawPath
+			if path == "" {
+				path = r.URL.Path
+			}
+			if nodeOnlyMethods[r.Method] && fmdapi.IsPath(path) {
+				dataAPI.ServeHTTP(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
 	}
 }
 
-// Mount registers every domain route of the API on r.
+// Mount registers every domain route of the API on r, and returns the
+// handler to serve: r, in front of which the Data API answers the methods
+// chi does not know (dataAPIMethods) when it is on.
 //
 // Routes fall into two groups:
 //   - public: sign-in and the database selector used before sign-in;
 //   - protected: everything else, which requires a valid session and always
 //     runs against the database that session signed in to.
-func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store, opts Options) {
+func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store, opts Options) http.Handler {
 	controlStore := opts.ControlStore
 	if controlStore == nil {
 		controlStore, _ = control.NewStore(":memory:")
@@ -111,6 +137,17 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 	throttle := opts.LoginThrottle
 	if throttle == nil {
 		throttle = DefaultLoginThrottle()
+	}
+
+	// The Data API, when it serves a database.
+	var dataAPI *fmdapi.Handler
+	if opts.DataAPI != nil && len(opts.DataAPI.Databases) > 0 {
+		dataAPI = fmdapi.New(*opts.DataAPI, fmdapi.Deps{
+			Databases: dbMgr,
+			Sessions:  sessions,
+			Throttle:  throttle,
+			ClientIP:  ipResolver.ClientIP,
+		})
 	}
 
 	schemaHandler := NewSchemaHandler()
@@ -152,13 +189,7 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 
 	// The FileMaker Data API has its own authentication and envelope, and
 	// stays outside the payload-encryption channel.
-	if opts.DataAPI != nil && len(opts.DataAPI.Databases) > 0 {
-		dataAPI := fmdapi.New(*opts.DataAPI, fmdapi.Deps{
-			Databases: dbMgr,
-			Sessions:  sessions,
-			Throttle:  throttle,
-			ClientIP:  ipResolver.ClientIP,
-		})
+	if dataAPI != nil {
 		r.Handle("/fmi/data", dataAPI)
 		r.Handle("/fmi/data/*", dataAPI)
 	}
@@ -184,4 +215,9 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 		solutionHandler.RegisterRoutes(r)
 		serverAdminHandler.RegisterRoutes(r)
 	})
+
+	if dataAPI == nil {
+		return r
+	}
+	return dataAPIMethods(dataAPI)(r)
 }

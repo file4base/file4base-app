@@ -234,6 +234,16 @@ func (h *Handler) session(req *request, token string, renew bool) (auth.Session,
 		h.deps.Sessions.Revoke(token)
 		return auth.Session{}, invalid
 	}
+	// Nor may it have turned on two-step verification since: such an
+	// account cannot sign in here, so it keeps no token either.
+	mfa, err := svc.UserMFAEnabled(ctx, sess.UserID)
+	if err != nil && !errors.Is(err, schema.ErrAccountNotFound) {
+		return auth.Session{}, engineError("-1")
+	}
+	if err != nil || mfa {
+		h.deps.Sessions.Revoke(token)
+		return auth.Session{}, invalid
+	}
 	// So must its role's fmrest privilege, however it was withdrawn (in
 	// Manage Security, which also ends these sessions, or by a solution
 	// import), and whenever: also during the sign-in that read it.

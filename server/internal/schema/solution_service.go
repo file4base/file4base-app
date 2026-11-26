@@ -770,6 +770,15 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	}
 
 	report := &ImportReport{SolutionName: b.SolutionName, TablesCount: len(b.Tables), LayoutsCount: len(b.Layouts), AccountsPendingPassword: []string{}}
+	// The roles that hold accounts before the import, which an fmrest grant
+	// in the file would open the Data API to (step 10).
+	heldRoles := map[string]bool{}
+	if len(b.Privileges) > 0 {
+		var err error
+		if heldRoles, err = s.RolesWithAccounts(ctx); err != nil {
+			return nil, fmt.Errorf("reading accounts: %w", err)
+		}
+	}
 	var undo []func()
 	rollback := func(cause error) error {
 		for i := len(undo) - 1; i >= 0; i-- {
@@ -1448,13 +1457,30 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	}
 
 	// 10. Role privileges (#39). They are keyed by role, so there is nothing
-	// to remap; a file written before they existed leaves them untouched.
+	// to remap; a file written before they existed leaves them untouched,
+	// and so does one written before fmrest for fmrest. The file may
+	// withdraw fmrest, but grants it only to a role that held no account
+	// here before, as a migration does: otherwise the Data API would open
+	// to accounts the file knows nothing of.
 	if len(b.Privileges) > 0 {
 		previous, err := s.ListRolePrivileges(ctx)
 		if err != nil {
 			return nil, rollback(fmt.Errorf("reading role privileges: %w", err))
 		}
-		if err := s.SetRolePrivileges(ctx, b.Privileges); err != nil {
+		privileges := append([]RolePrivileges(nil), b.Privileges...)
+		for i, p := range privileges {
+			if p.Role == roleOwner || !p.FMRest || !heldRoles[p.Role] {
+				continue
+			}
+			if held, err := s.RoleAllows(ctx, p.Role, CapabilityFMRest); err != nil {
+				return nil, rollback(fmt.Errorf("reading role privileges: %w", err))
+			} else if !held {
+				privileges[i] = p.With(CapabilityFMRest, false)
+				report.Warnings = append(report.Warnings, fmt.Sprintf("The file grants fmrest (Access via FileMaker Data API) to the role %q, which was not granted "+
+					"because this database already had accounts of that role; grant it in Manage Security if they may all use the Data API", p.Role))
+			}
+		}
+		if err := s.SetRolePrivileges(ctx, privileges); err != nil {
 			return nil, rollback(fmt.Errorf("restoring role privileges: %w", err))
 		}
 		undo = append(undo, func() { _ = s.SetRolePrivileges(bg, previous) })

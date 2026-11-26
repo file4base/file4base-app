@@ -28,7 +28,7 @@ import (
 // a real PostgreSQL server, exactly as cmd/server wires it.
 type apiHarness struct {
 	t        *testing.T
-	router   *chi.Mux
+	router   http.Handler
 	mgr      *dbal.MultiDatabaseManager
 	sessions *auth.Store
 }
@@ -50,10 +50,12 @@ func newAPIHarness(t *testing.T, opts api.Options) *apiHarness {
 	}
 	t.Cleanup(func() { _ = mgr.Close() })
 
+	// A route before Mount, as the server registers its health routes.
 	r := chi.NewRouter()
+	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	sessions := auth.NewStore(time.Hour)
-	api.Mount(r, mgr, sessions, opts)
-	return &apiHarness{t: t, router: r, mgr: mgr, sessions: sessions}
+	handler := api.Mount(r, mgr, sessions, opts)
+	return &apiHarness{t: t, router: handler, mgr: mgr, sessions: sessions}
 }
 
 // do performs a request and decodes a JSON object/array response into out (when non-nil).
