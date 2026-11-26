@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -42,12 +44,56 @@ type bench struct {
 	duration  time.Duration
 	container string
 	backupDir string
+	noRestore bool
 	results   map[string]any
+	maxWAL    atomic.Int64
+}
+
+// watchWAL records the largest size the WAL reaches (SQLite), every 100 ms,
+// until the returned function is called.
+func (b *bench) watchWAL() (stop func()) {
+	if b.engine != dbal.EngineSQLite {
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		for {
+			if st, err := os.Stat(b.sqlitePath() + "-wal"); err == nil {
+				for {
+					cur := b.maxWAL.Load()
+					if st.Size() <= cur || b.maxWAL.CompareAndSwap(cur, st.Size()) {
+						break
+					}
+				}
+			}
+			select {
+			case <-done:
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}()
+	return func() { close(done) }
 }
 
 // member is one generated record of the members table.
 type member struct {
-	id, name, city, category, fee, joined, notes string
+	id, name, city, category, fee, joined string
+	index                                 int
+}
+
+// notes is a record's notes, made when they are written rather than kept:
+// a 10 GB solution's notes do not fit in memory.
+func notes(index, length int) string {
+	r := rand.New(rand.NewPCG(seed, uint64(index)))
+	var b strings.Builder
+	for b.Len() < length {
+		if b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteString(noteWords[r.IntN(len(noteWords))])
+	}
+	return b.String()
 }
 
 // The text values, chosen for what they test: case variants, accents,
@@ -99,7 +145,7 @@ func open(ctx context.Context, engine dbal.EngineType, admin string, rows, noteB
 		engine: engine, mgr: mgr, adminDSN: admin, dbName: fmt.Sprintf("bench_%d", rows),
 		noteBytes: noteBytes, results: map[string]any{},
 	}
-	b.members = generate(rows, noteBytes)
+	b.members = generate(rows)
 	b.ids = make([]string, len(b.members))
 	for i, m := range b.members {
 		b.ids[i] = m.id
@@ -154,7 +200,7 @@ func (b *bench) close() {
 
 // generate makes the same records on every engine: the order, the ids and
 // the values come from one seeded generator.
-func generate(n, noteBytes int) []member {
+func generate(n int) []member {
 	src := rand.NewChaCha8([32]byte{seed})
 	r := rand.New(src)
 	out := make([]member, n)
@@ -164,13 +210,6 @@ func generate(n, noteBytes int) []member {
 		if err != nil {
 			panic(err)
 		}
-		var notes strings.Builder
-		for notes.Len() < noteBytes {
-			if notes.Len() > 0 {
-				notes.WriteByte(' ')
-			}
-			notes.WriteString(noteWords[r.IntN(len(noteWords))])
-		}
 		out[i] = member{
 			id:       id.String(),
 			name:     firstNames[r.IntN(len(firstNames))] + " " + lastNames[r.IntN(len(lastNames))],
@@ -178,7 +217,7 @@ func generate(n, noteBytes int) []member {
 			category: categories[r.IntN(len(categories))],
 			fee:      fmt.Sprintf("%d.%02d", r.IntN(1000), r.IntN(100)),
 			joined:   base.AddDate(0, 0, r.IntN(4000)).Format("2006-01-02"),
-			notes:    notes.String(),
+			index:    i,
 		}
 	}
 	return out
@@ -260,7 +299,7 @@ func (b *bench) insertMembers(ctx context.Context, table string, rows []member) 
 						q.WriteString(", ")
 					}
 					q.WriteString(d.Placeholder(len(args) + 1))
-					args = append(args, rowValue(rows[i], c, i))
+					args = append(args, rowValue(rows[i], c, b.noteBytes))
 				}
 				q.WriteByte(')')
 			}
@@ -276,7 +315,7 @@ func (b *bench) insertMembers(ctx context.Context, table string, rows []member) 
 	return nil
 }
 
-func rowValue(m member, column, index int) any {
+func rowValue(m member, column, noteBytes int) any {
 	switch memberColumns[column] {
 	case "id":
 		return m.id
@@ -291,9 +330,9 @@ func rowValue(m member, column, index int) any {
 	case "joined":
 		return m.joined
 	case "notes":
-		return m.notes
+		return notes(m.index, noteBytes)
 	case "code":
-		return strconv.Itoa(index % 100000)
+		return strconv.Itoa(m.index % 100000)
 	}
 	return nil
 }

@@ -75,7 +75,8 @@ func (b *bench) vacuumUnderLoad(ctx context.Context) (map[string]any, error) {
 			r := rand.New(rand.NewPCG(seed, uint64(1000+w)))
 			for loadCtx.Err() == nil {
 				start := time.Now()
-				transfers.add(time.Since(start), transfer(loadCtx, db, journalID.Add(1), r))
+				err := transfer(loadCtx, db, journalID.Add(1), r)
+				transfers.add(time.Since(start), err)
 			}
 		}()
 	}

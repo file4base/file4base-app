@@ -67,6 +67,7 @@ func main() {
 	reuse := flag.Bool("reuse", false, "use the existing bench database instead of seeding a new one")
 	busy := flag.Duration("busy-timeout", dbal.DefaultSQLiteBusyTimeout, "SQLite busy_timeout")
 	backupDir := flag.String("backup-dir", "", "where backups are written (default: next to the data)")
+	noRestore := flag.Bool("no-restore", false, "backup: do not restore (when the disk cannot hold a second copy)")
 	flag.Parse()
 
 	et, err := dbal.ParseEngineType(*engine)
@@ -95,6 +96,9 @@ func main() {
 	b.duration = *duration
 	b.container = *container
 	b.backupDir = *backupDir
+	b.noRestore = *noRestore
+	stopWatch := b.watchWAL()
+	defer stopWatch()
 	b.results["meta"] = map[string]any{
 		"engine": string(et), "rows": *rows, "note_bytes": *noteBytes, "duration": duration.String(),
 		"busy_timeout": busy.String(), "server": b.serverVersion(ctx), "started": time.Now().UTC().Format(time.RFC3339),
@@ -115,6 +119,9 @@ func main() {
 			res = map[string]any{"error": err.Error()}
 		}
 		res["elapsed_s"] = round(time.Since(start).Seconds(), 1)
+		if b.engine == dbal.EngineSQLite {
+			res["max_wal_mb"] = mb(b.maxWAL.Swap(0))
+		}
 		b.results[name] = res
 		line, _ := json.Marshal(res)
 		log.Printf("%s: %s", name, line)

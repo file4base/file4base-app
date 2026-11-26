@@ -107,7 +107,7 @@ func (b *bench) importRows(n, offset int) *dataio.Table {
 	t := &dataio.Table{Columns: []string{"Name", "City", "Category", "Fee", "Joined", "Notes"}}
 	for i := range n {
 		m := b.members[(offset+i)%len(b.members)]
-		t.Rows = append(t.Rows, []string{m.name, m.city, m.category, m.fee, m.joined, "imported " + m.notes})
+		t.Rows = append(t.Rows, []string{m.name, m.city, m.category, m.fee, m.joined, "imported " + notes(m.index, b.noteBytes)})
 	}
 	return t
 }
@@ -335,6 +335,10 @@ func (b *bench) backupRestore(ctx context.Context) (map[string]any, error) {
 		out["backup_seconds"] = round(time.Since(start).Seconds(), 2)
 		st, _ := os.Stat(dest)
 		out["backup_mb"] = mb(st.Size())
+		if b.noRestore {
+			_ = os.Remove(dest)
+			return out, nil
+		}
 		target := filepath.Join(b.adminDSN, restored+dbal.SQLiteFileExtension)
 		_ = b.mgr.DropDatabase(ctx, restored)
 		start = time.Now()
@@ -353,6 +357,10 @@ func (b *bench) backupRestore(ctx context.Context) (map[string]any, error) {
 		if size, err := b.dockerExec(ctx, "stat", "-c", "%s", "/tmp/bench.dump"); err == nil {
 			n, _ := strconv.ParseInt(strings.TrimSpace(string(size)), 10, 64)
 			out["backup_mb"] = mb(n)
+		}
+		if b.noRestore {
+			_, _ = b.dockerExec(ctx, "rm", "-f", "/tmp/bench.dump")
+			return out, nil
 		}
 		_ = b.mgr.DropDatabase(ctx, restored)
 		start = time.Now()
