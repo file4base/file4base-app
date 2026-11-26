@@ -137,3 +137,35 @@ func TestPublicDatabaseCreationIsOffByDefault(t *testing.T) {
 		t.Fatal("public creation off: the notice does not say how to create the first solution")
 	}
 }
+
+// A setting is matched the way a browser writes Origin: lower case, without
+// the scheme's default port; anything with a path, query, fragment, wildcard
+// or invalid port is not an origin.
+func TestWebOrigin(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://Files.Example:443":   "https://files.example",
+		"http://files.example:80/":    "http://files.example",
+		"https://files.example:3443":  "https://files.example:3443",
+		"http://[::1]:3000":           "http://[::1]:3000",
+		"https://files.example//":     "",
+		"https://files.example/app":   "",
+		"https://files.example?":      "",
+		"https://files.example#x":     "",
+		"https://:443":                "",
+		"https://files.example:0":     "",
+		"https://files.example:70000": "",
+		"https://user@files.example":  "",
+		"ftp://files.example":         "",
+		"files.example:3000":          "",
+		"https://*.example":           "",
+	} {
+		if got := webOrigin(in); got != want {
+			t.Errorf("webOrigin(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// A default port in the setting still matches the browser's Origin.
+	rec := corsRequest(t, "https://files.example:443", http.MethodGet, "https://files.example")
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://files.example" {
+		t.Fatalf("default port: Access-Control-Allow-Origin = %q", got)
+	}
+}

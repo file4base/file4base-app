@@ -57,8 +57,9 @@ Where a capability is not yet implemented, see
 
 ## Before you start
 
-Launch the containerized stack from the repository root. Run this tutorial on
-your own machine (`localhost`), not on a server that other people can reach.
+Launch the containerized stack from the repository root, on your own machine.
+`docker-compose.first-run.yml` publishes its ports on `127.0.0.1` only, so other
+machines cannot reach it while public database creation is on.
 
 The stack needs a database password (there is no default one). **On a fresh
 install only** (no `.env` and no database volume yet), generate it into a new
@@ -68,29 +69,30 @@ new solution without an account to sign in with, so allow public database
 creation for it:
 
 ```bash
-# PostgreSQL (fresh install only)
-touch .env && chmod 600 .env
-echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)" >> .env
+# PostgreSQL (fresh install only; an existing .env is kept)
+if [ -e .env ]; then echo ".env exists: kept as is"; else (umask 077 &&
+  echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)" > .env); fi
 echo "ALLOW_PUBLIC_DATABASE_CREATION=true" >> .env
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.first-run.yml up -d --build
 ```
 
 ```bash
-# Or MariaDB (fresh install only)
-touch .env && chmod 600 .env
-echo "MARIADB_PASSWORD=$(openssl rand -hex 32)" >> .env
-echo "MARIADB_ROOT_PASSWORD=$(openssl rand -hex 32)" >> .env
+# Or MariaDB (fresh install only; an existing .env is kept)
+if [ -e .env ]; then echo ".env exists: kept as is"; else (umask 077 &&
+  echo "MARIADB_PASSWORD=$(openssl rand -hex 32)" > .env &&
+  echo "MARIADB_ROOT_PASSWORD=$(openssl rand -hex 32)" >> .env); fi
 echo "ALLOW_PUBLIC_DATABASE_CREATION=true" >> .env
-docker compose -f docker-compose.mariadb.yml up -d --build
+docker compose -f docker-compose.mariadb.yml -f docker-compose.first-run.yml up -d --build
 ```
 
 Once Lesson 2 has created the solution, remove the
-`ALLOW_PUBLIC_DATABASE_CREATION` line from `.env` and run the same
-`docker compose ... up -d` command again: from then on only a signed-in owner
-can create databases (README, *First solution*).
+`ALLOW_PUBLIC_DATABASE_CREATION` line from `.env` and start the stack without
+the first-run file (`docker compose up -d`, or
+`docker compose -f docker-compose.mariadb.yml up -d`): from then on only a
+signed-in owner can create databases (README, *First solution*).
 
-This starts three containers: `file4base-postgres`, `file4base-api`, and
-`file4base-web`. Confirm that the API server is healthy:
+This starts three containers: `file4base-postgres` (or `file4base-mariadb`),
+`file4base-api`, and `file4base-web`. Confirm that the API server is healthy:
 
 ```bash
 curl -s http://127.0.0.1:8080/healthz

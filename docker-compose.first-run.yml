@@ -1,0 +1,18 @@
+# Loopback-only ports for creating the first solution of a new server
+# (README, "First solution"). While ALLOW_PUBLIC_DATABASE_CREATION=true,
+# anyone who reaches the API or the Web Client can create a database and
+# become its owner, and Docker's published ports bypass most host firewalls,
+# so this start publishes them on 127.0.0.1 only. Use it with either stack:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.first-run.yml up -d
+#   docker compose -f docker-compose.mariadb.yml -f docker-compose.first-run.yml up -d
+#
+# A plain `docker compose up -d` afterwards restores the normal ports.
+services:
+  api:
+    ports: !override
+      - "127.0.0.1:8080:8080"
+  web:
+    ports: !override
+      - "127.0.0.1:3000:80"
+      - "127.0.0.1:3443:443"

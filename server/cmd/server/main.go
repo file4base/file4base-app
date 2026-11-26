@@ -118,8 +118,8 @@ func parseCORSOrigins(raw string) (allowed []string, notices []string) {
 		case o == "*":
 			notices = append(notices, "Warning: CORS_ALLOWED_ORIGINS contains *: every web site may call this API from a browser. List the origins that need it instead (scheme://host:port).")
 			allowed = append(allowed, o)
-		case isWebOrigin(o):
-			allowed = append(allowed, strings.TrimRight(o, "/"))
+		case webOrigin(o) != "":
+			allowed = append(allowed, webOrigin(o))
 		default:
 			notices = append(notices, fmt.Sprintf("Warning: ignoring CORS_ALLOWED_ORIGINS entry %q: it is not a web origin (scheme://host[:port], no path).", o))
 		}
@@ -130,14 +130,30 @@ func parseCORSOrigins(raw string) (allowed []string, notices []string) {
 	return allowed, append(notices, fmt.Sprintf("CORS: cross-origin browser access allowed for %s", strings.Join(allowed, ", ")))
 }
 
-// isWebOrigin reports whether s has the form a browser sends in an Origin
-// header: http or https, a host, an optional port, and nothing else.
-func isWebOrigin(s string) bool {
-	u, err := url.Parse(strings.TrimRight(s, "/"))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || strings.Contains(u.Host, "*") {
-		return false
+// webOrigin returns s as a browser writes it in an Origin header
+// (scheme://host[:port], lower case, no default port), or "" when s is not
+// a web origin: http or https, a host, a valid port, and at most a single
+// trailing "/".
+func webOrigin(s string) string {
+	if strings.ContainsAny(s, "?#*") {
+		return ""
 	}
-	return u.Path == "" && u.RawQuery == "" && u.Fragment == "" && u.User == nil
+	u, err := url.Parse(s)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" ||
+		u.User != nil || (u.Path != "" && u.Path != "/") {
+		return ""
+	}
+	host := strings.ToLower(u.Host)
+	if port := u.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return ""
+		}
+		if (u.Scheme == "http" && n == 80) || (u.Scheme == "https" && n == 443) {
+			host = strings.TrimSuffix(host, ":"+port)
+		}
+	}
+	return u.Scheme + "://" + host
 }
 
 // envBool reads a boolean environment variable, falling back to def when unset or invalid.
