@@ -819,11 +819,20 @@ func (h *ServerAdminHandler) ListContainers(w http.ResponseWriter, r *http.Reque
 	dbImage := "postgres:16-alpine"
 	dbVersion := "16-alpine"
 	dbPort := "5432/tcp"
-	if h.dbMgr.Engine() == dbal.EngineMariaDB {
+	dbUpdate := "docker compose pull postgres && docker compose up -d postgres"
+	switch h.dbMgr.Engine() {
+	case dbal.EngineMariaDB:
 		dbContainerName = "file4base-mariadb"
 		dbImage = "mariadb:11.4"
 		dbVersion = "11.4"
 		dbPort = "3306/tcp"
+	case dbal.EngineSQLite:
+		// No container: the API reads the database files itself.
+		dbContainerName = "file4base-api (embedded SQLite)"
+		dbImage = "embedded"
+		dbVersion = "embedded"
+		dbPort = ""
+		dbUpdate = "docker compose pull api && docker compose up -d api"
 	}
 	if t, ok := h.restartedAt[dbContainerName]; ok {
 		dbStart = t
@@ -880,7 +889,7 @@ func (h *ServerAdminHandler) ListContainers(w http.ResponseWriter, r *http.Reque
 			"current_version":  dbVersion,
 			"latest_version":   dbVersion,
 			"update_available": false,
-			"update_command":   "docker compose pull postgres && docker compose up -d postgres",
+			"update_command":   dbUpdate,
 			"state":            dbState,
 			"health":           dbHealth,
 			"uptime_seconds":   int64(time.Since(dbStart).Seconds()),
@@ -2366,12 +2375,7 @@ func (h *ServerAdminHandler) GetDatabaseMaintenance(w http.ResponseWriter, r *ht
 	tableStats := make([]map[string]interface{}, 0, len(tables))
 	for _, t := range tables {
 		rowCount := 0
-		var countQuery string
-		if h.dbMgr.Engine() == dbal.EngineMariaDB {
-			countQuery = fmt.Sprintf("SELECT COUNT(*) FROM `%s`", strings.ReplaceAll(t.Name, "`", "``"))
-		} else {
-			countQuery = fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, strings.ReplaceAll(t.Name, `"`, `""`))
-		}
+		countQuery := "SELECT COUNT(*) FROM " + driver.Dialect().QuoteIdentifier(t.Name)
 		_ = driver.DB().QueryRowContext(r.Context(), countQuery).Scan(&rowCount)
 		totalRows += rowCount
 		tableStats = append(tableStats, map[string]interface{}{
@@ -2383,8 +2387,7 @@ func (h *ServerAdminHandler) GetDatabaseMaintenance(w http.ResponseWriter, r *ht
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	summary := map[string]interface{}{
 		"database":         dbName,
 		"engine":           string(h.dbMgr.Engine()),
 		"tables_count":     len(tables),
@@ -2394,7 +2397,17 @@ func (h *ServerAdminHandler) GetDatabaseMaintenance(w http.ResponseWriter, r *ht
 		"total_rows":       totalRows,
 		"tables":           tableStats,
 		"catalog_ok":       true,
-	})
+	}
+	// On SQLite, what the database's connections run with, checked against
+	// the connection contract (docs/specs/sqlite_engine.md).
+	if diag, err := h.dbMgr.DiagnoseSQLite(r.Context(), dbName); err != nil {
+		summary["sqlite_error"] = err.Error()
+	} else if diag != nil {
+		summary["sqlite"] = diag
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(summary)
 }
 
 // RunDatabaseOptimize runs VACUUM ANALYZE / ANALYZE TABLE and catalog verification.
@@ -2426,15 +2439,26 @@ func (h *ServerAdminHandler) RunDatabaseOptimize(w http.ResponseWriter, r *http.
 	svc := schema.NewService(driver)
 	_ = svc.EnsureSystemTables(r.Context())
 
-	if h.dbMgr.Engine() == dbal.EnginePostgres {
+	var opErr error
+	switch h.dbMgr.Engine() {
+	case dbal.EnginePostgres:
 		if op == "vacuum_analyze" {
-			_, _ = driver.DB().ExecContext(r.Context(), "VACUUM ANALYZE")
+			_, opErr = driver.DB().ExecContext(r.Context(), "VACUUM ANALYZE")
 		} else {
-			_, _ = driver.DB().ExecContext(r.Context(), "ANALYZE")
+			_, opErr = driver.DB().ExecContext(r.Context(), "ANALYZE")
 		}
+	case dbal.EngineSQLite:
+		// VACUUM would rewrite the whole file holding the writer lock;
+		// optimize refreshes the statistics the planner needs, bounded.
+		_, opErr = driver.DB().ExecContext(r.Context(), "PRAGMA analysis_limit = 1000; PRAGMA optimize = 0x10002")
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+	if opErr != nil {
+		h.recordAudit("maintenance", "Optimize & Analyze Database", sess.Username, dbName, dbName, "error", fmt.Sprintf("%s failed after %.2f ms: %v", strings.ToUpper(op), durationMs, opErr))
+		telemetry.WriteProblem(w, r, http.StatusInternalServerError, "Optimization Failed", opErr.Error())
+		return
+	}
 	h.recordAudit("maintenance", "Optimize & Analyze Database", sess.Username, dbName, dbName, "success", fmt.Sprintf("Completed %s and catalog integrity check in %.2f ms", strings.ToUpper(op), durationMs))
 
 	w.Header().Set("Content-Type", "application/json")

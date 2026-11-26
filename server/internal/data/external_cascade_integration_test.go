@@ -235,6 +235,12 @@ func TestExternalCascade_PlansThenDeletesEachSolutionInOneTransaction(t *testing
 // A related record moved to another record between the plan and the delete is
 // kept: each is deleted only while it still matches a record being deleted.
 func TestExternalCascade_KeepsWhatMovedSinceThePlan(t *testing.T) {
+	if testdb.Engine() == dbal.EngineSQLite {
+		// The test moves a record from another connection while the delete's
+		// transaction is open; SQLite serializes writers, so that write waits
+		// for the transaction and nothing can move between plan and delete.
+		t.Skip("SQLite has one writer at a time: no write can come between the plan and the delete (docs/specs/sqlite_engine.md, \"Test exceptions\")")
+	}
 	p := newCascadePair(t)
 	p.insert(t, p.peer, "customers", map[string]interface{}{"code": "C-1", "region": "north", "full_name": "Ada"})
 	p.insert(t, p.peer, "customers", map[string]interface{}{"code": "C-1", "region": "north", "full_name": "Ada Again"})

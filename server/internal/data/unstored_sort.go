@@ -85,9 +85,9 @@ func (q *relatedQuery) sortPage(records []map[string]interface{}) []map[string]i
 // same values: numbers as numbers, dates and timestamps in time, text as a
 // FileMaker sort orders it (calc.CompareText), and an empty value where the
 // engine puts a NULL (last in ascending order on PostgreSQL, first on
-// MariaDB).
+// MariaDB and SQLite).
 func sortRecords(engine dbal.EngineType, fields fieldSet, order []SortField, records []map[string]interface{}) {
-	emptyFirst := engine == dbal.EngineMariaDB
+	emptyFirst := engine != dbal.EnginePostgres
 	slices.SortStableFunc(records, func(a, b map[string]interface{}) int {
 		for _, level := range order {
 			c := compareSortValues(a[level.Field], b[level.Field], fields[level.Field], emptyFirst)

@@ -22,6 +22,9 @@ import (
 // the reader is exercised against a real database of the engine under test.
 func testConnection(t *testing.T) (extsource.Connection, string) {
 	t.Helper()
+	if testdb.Engine() == dbal.EngineSQLite {
+		t.Skip("an external SQL source is a server; the SQLite suite has none to read (docs/specs/sqlite_engine.md, \"Test exceptions\")")
+	}
 	dsn := testdb.DevDSN()
 
 	if testdb.Engine() == dbal.EngineMariaDB {

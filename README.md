@@ -36,7 +36,7 @@ WebDirect are trademarks of Claris International Inc. See the
 - **Frontend (Flutter Desktop & Web Client)**: Native desktop application targeting macOS (Apple Silicon M-series & Intel), Windows, and Linux, plus the containerized **File4Base Web Client** served via Nginx, compiled to WebAssembly (WasmGC) with a JavaScript bundle shipped alongside it as a fallback for browsers without WasmGC support.
 - **Server Tools & Container Update Watcher**: Built-in administration console for container monitoring, version update detection & pre-backup stack upgrades, point-in-time snapshots, ACME SSL/TLS, live API telemetry, and cron schedules.
 - **Environment & Preflight Engine**: Automated startup check verifying Docker presence, daemon state, and host architecture, with direct download and auto-launch prompts.
-- **Data Persistence**: Relational storage in PostgreSQL/MariaDB running locally in Docker with dynamic schema metadata tables.
+- **Data Persistence**: Relational storage in PostgreSQL, MariaDB or SQLite (one file per solution, no database server) with dynamic schema metadata tables.
 
 
 ## Repository Documentation
@@ -137,6 +137,22 @@ same host ports), and note that solutions do not move between engines by
 copying volumes — export a solution and its data and import them into the other
 stack. The Go test suite runs against both engines in CI
 (`F4B_TEST_ENGINE=mariadb`).
+
+#### SQLite instead of PostgreSQL
+`docker-compose.sqlite.yml` runs the API alone, with `DB_ENGINE=sqlite`: each
+solution database is one file in the API's named volume, with no database
+server. Keep it on that volume — the server refuses network shares and Docker
+Desktop bind mounts, where SQLite's locks do not protect a database.
+
+```bash
+docker compose -f docker-compose.sqlite.yml up -d
+docker exec file4base-api /app/server sqlite-backup <database> /app/data/backups/<file>
+```
+
+PostgreSQL stays the default engine. See
+[docs/specs/sqlite_engine.md](docs/specs/sqlite_engine.md) for the defaults,
+the differences (sort order, numbers) and the benchmarks; the Go test suite
+runs on SQLite in CI too (`F4B_TEST_ENGINE=sqlite`).
 
 A restore checks the archive before stopping anything and stops at the first
 SQL error. Its exit status says what happened: `0` restored (the API is

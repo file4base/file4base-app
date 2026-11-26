@@ -19,6 +19,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/dbal/mariadb"
 	"github.com/file4base/file4base-app/server/internal/dbal/postgres"
+	"github.com/file4base/file4base-app/server/internal/dbal/sqlite"
 	"github.com/file4base/file4base-app/server/internal/localca"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/file4base/file4base-app/server/internal/transfer"
@@ -31,6 +32,7 @@ const AppVersion = "0.22.0"
 func init() {
 	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
 	dbal.RegisterDialect(dbal.EngineMariaDB, func() dbal.Dialect { return mariadb.New() })
+	dbal.RegisterDialect(dbal.EngineSQLite, func() dbal.Dialect { return sqlite.New() })
 }
 
 // corsMiddleware answers CORS preflights and tags responses for the allowed
@@ -142,9 +144,12 @@ func envBytes(name string, def int64) int64 {
 }
 
 func main() {
+	if runSQLiteTool(os.Args[1:]) {
+		return
+	}
 	engineStr := os.Getenv("DB_ENGINE")
 	if engineStr == "" {
-		engineStr = "postgres"
+		engineStr = string(dbal.DefaultEngine)
 	}
 
 	engineType, err := dbal.ParseEngineType(engineStr)
@@ -153,7 +158,26 @@ func main() {
 	}
 
 	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
+	if engineType == dbal.EngineSQLite {
+		// DATABASE_URL is the data directory, one file per solution database.
+		if dsn == "" {
+			dsn = "./data/solutions"
+		}
+		dbal.SetSQLiteBusyTimeout(envDuration("SQLITE_BUSY_TIMEOUT", dbal.DefaultSQLiteBusyTimeout))
+		dbal.SetSQLiteWriterWait(envDuration("SQLITE_WRITER_WAIT", dbal.DefaultSQLiteWriterWait))
+		dbal.AllowUnsafeSQLiteStorage = envBool("SQLITE_ALLOW_UNSAFE_STORAGE", false)
+		dir, err := dbal.SQLiteDataDir(dsn)
+		if err != nil {
+			log.Fatalf("Invalid DATABASE_URL: %v", err)
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			log.Fatalf("Failed creating the SQLite data directory: %v", err)
+		}
+		if err := dbal.CheckSQLiteStorage(dir); err != nil {
+			log.Fatalf("Refusing the SQLite data directory: %v", err)
+		}
+		log.Printf("SQLite solution databases in %s (writer wait %s, busy timeout %s)", dir, dbal.SQLiteWriterWait(), dbal.SQLiteBusyTimeout())
+	} else if dsn == "" {
 		log.Println("Warning: DATABASE_URL is not set; falling back to the local development DSN with the default password. Set DATABASE_URL for any non-development deployment.")
 		if engineType == dbal.EnginePostgres {
 			dsn = "postgres://file4base:dev_password@localhost:5432/postgres?sslmode=disable"
@@ -240,7 +264,11 @@ func main() {
 			err := dbMgr.Ping(ctxInit)
 			cancelInit()
 			if err == nil {
-				log.Printf("Database engine reachable through administrative database: %s", dbMgr.DefaultDatabase())
+				if engineType == dbal.EngineSQLite {
+					log.Printf("SQLite data directory ready")
+				} else {
+					log.Printf("Database engine reachable through administrative database: %s", dbMgr.DefaultDatabase())
+				}
 				isStarted.Store(true)
 				return
 			}

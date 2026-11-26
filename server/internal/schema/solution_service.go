@@ -2225,7 +2225,7 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 			}
 			insert := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s)`,
 				dialect.QuoteIdentifier(tableName), strings.Join(colNames, ", "), strings.Join(placeholders, ", "))
-			if dialect.Engine() == dbal.EnginePostgres {
+			if dialect.Engine() != dbal.EngineMariaDB {
 				// A record whose id is already there is skipped, not replaced.
 				insert += ` ON CONFLICT (id) DO NOTHING`
 			}
@@ -2234,7 +2234,7 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 				// MariaDB has no ON CONFLICT: an existing id comes back as a
 				// duplicate key, which is this record being skipped. Any other
 				// error still fails the whole import.
-				if dialect.Engine() != dbal.EnginePostgres && dbal.IsDuplicateKey(err) {
+				if dialect.Engine() == dbal.EngineMariaDB && dbal.IsDuplicateKey(err) {
 					report.RecordsSkipped++
 					continue
 				}

@@ -16,6 +16,11 @@ const (
 	EngineSQLite   EngineType = "sqlite"
 )
 
+// DefaultEngine is the engine a server uses when DB_ENGINE is not set, and
+// the one the tests run against when F4B_TEST_ENGINE is not set. It is the
+// one switch that changes the default.
+const DefaultEngine = EnginePostgres
+
 // AgnosticFieldType abstracts field types across database engines
 type AgnosticFieldType string
 

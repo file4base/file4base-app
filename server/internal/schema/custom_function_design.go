@@ -583,10 +583,7 @@ func appendUsage(list []CustomFunctionUsage, u CustomFunctionUsage) []CustomFunc
 // the meantime) stops the change rather than being overwritten with a
 // rewrite of what it held before.
 func (p *renamePlan) apply(ctx context.Context, tx *sql.Tx, d dbal.Dialect) error {
-	lock := " FOR UPDATE"
-	if d.Engine() == dbal.EnginePostgres {
-		lock = " FOR NO KEY UPDATE"
-	}
+	lock := dbal.RowLockClause(d.Engine())
 	for _, w := range p.writes {
 		var current sql.NullString
 		q := fmt.Sprintf(`SELECT %s FROM %s WHERE id = %s%s`, w.column, w.table, d.Placeholder(1), lock)

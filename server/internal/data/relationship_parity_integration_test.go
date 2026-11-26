@@ -9,6 +9,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/testdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vmihailenco/msgpack/v5"
@@ -351,6 +352,9 @@ func TestRelatedRows_SortedByAnUnstoredCalculation(t *testing.T) {
 // A table found without its creation order column is looked up again once
 // that is no longer believed, so a column another server added is used.
 func TestCreationOrder_ColumnAddedElsewhereIsNoticed(t *testing.T) {
+	if testdb.Engine() == dbal.EngineSQLite {
+		t.Skip("SQLite tables are created with their creation order, which cannot be added to a table later (docs/specs/sqlite_engine.md, \"Test exceptions\")")
+	}
 	ctx, a, _ := twoSolutions(t, "xelsewhere", "xelsewhere_unused")
 	a.table(t, ctx, "later", [2]string{"label", "TEXT"})
 	dialect := a.driver.Dialect()
@@ -378,6 +382,9 @@ func TestCreationOrder_ColumnAddedElsewhereIsNoticed(t *testing.T) {
 // the column when its catalog is brought up to date: the records it holds
 // are numbered in the order the engine reads them, the next ones after them.
 func TestCreationOrder_ExistingTableIsUpgraded(t *testing.T) {
+	if testdb.Engine() == dbal.EngineSQLite {
+		t.Skip("SQLite tables are created with their creation order, which cannot be added to a table later (docs/specs/sqlite_engine.md, \"Test exceptions\")")
+	}
 	ctx, a, _ := twoSolutions(t, "xupgrade", "xupgrade_unused")
 	a.table(t, ctx, "older", [2]string{"label", "TEXT"})
 	dialect := a.driver.Dialect()
@@ -569,13 +576,54 @@ func TestMultiKeys_DatesAgainstLines(t *testing.T) {
 			map[string]interface{}{"ats": "2026-03-06 00:00:00", "label": "k2"}) // midnight is a date alone
 		ids := k.insert(t, ctx, "holders",
 			map[string]interface{}{"at": time.Date(2026, 3, 5, 10, 30, 0, 0, time.UTC), "label": "h1"},
-			map[string]interface{}{"at": time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC), "label": "h2"})
+			map[string]interface{}{"at": time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC), "label": "h2"},
+			// Past midnight by less than a millisecond: not a date alone.
+			map[string]interface{}{"at": time.Date(2026, 3, 6, 0, 0, 0, 100_000, time.UTC), "label": "h3"})
 		portal, batch, find := k.related(t, ctx, ids)
-		want := map[string][]string{ids[0]: {"k1"}, ids[1]: {"k1"}}
+		want := map[string][]string{ids[0]: {"k1"}, ids[1]: {"k1"}, ids[2]: {"k2"}}
 		assert.Equal(t, want, portal)
 		assert.Equal(t, want, batch)
 		assert.Equal(t, []string{"h1", "h2"}, find("k1"))
+		assert.Equal(t, []string{"h3"}, find("k2"))
+	})
+	t.Run("date against a timestamp", func(t *testing.T) {
+		// Not lines: a date is promoted to midnight of its day, in the
+		// portal as in a find.
+		ctx, k := newKeyedTables(t, "xdatestamp", [2]string{"day", "DATE"}, [2]string{"at", "TIMESTAMP"})
+		k.insert(t, ctx, "keyed",
+			map[string]interface{}{"at": time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC), "label": "k1"},
+			map[string]interface{}{"at": time.Date(2026, 3, 5, 12, 0, 0, 0, time.UTC), "label": "k2"})
+		ids := k.insert(t, ctx, "holders",
+			map[string]interface{}{"day": "2026-03-05", "label": "h1"})
+		portal, batch, find := k.related(t, ctx, ids)
+		want := map[string][]string{ids[0]: {"k1"}}
+		assert.Equal(t, want, portal)
+		assert.Equal(t, want, batch)
+		assert.Equal(t, []string{"h1"}, find("k1"))
 		assert.Empty(t, find("k2"))
+	})
+	t.Run("number", func(t *testing.T) {
+		if testdb.Engine() == dbal.EngineMariaDB {
+			t.Skip("MariaDB reads a number key with its column's zeros (12.000000), which no line holds")
+		}
+		ctx, k := newKeyedTables(t, "xnumkeys", [2]string{"n", "NUMBER"}, [2]string{"ns", "TEXT"})
+		k.insert(t, ctx, "keyed",
+			map[string]interface{}{"ns": "12\n13", "label": "k1"},
+			map[string]interface{}{"ns": "12", "label": "k2"},
+			map[string]interface{}{"ns": "0.000015", "label": "k3"})
+		// A small number's text is written out, not as an exponent
+		// (SQLite's CAST gives 1.5e-05).
+		ids := k.insert(t, ctx, "holders",
+			map[string]interface{}{"n": 12, "label": "h1"},
+			map[string]interface{}{"n": 13, "label": "h2"},
+			map[string]interface{}{"n": 0.000015, "label": "h3"})
+		portal, batch, find := k.related(t, ctx, ids)
+		want := map[string][]string{ids[0]: {"k1", "k2"}, ids[1]: {"k1"}, ids[2]: {"k3"}}
+		assert.Equal(t, want, portal)
+		assert.Equal(t, want, batch)
+		assert.Equal(t, []string{"h1", "h2"}, find("k1"))
+		assert.Equal(t, []string{"h1"}, find("k2"))
+		assert.Equal(t, []string{"h3"}, find("k3"))
 	})
 }
 

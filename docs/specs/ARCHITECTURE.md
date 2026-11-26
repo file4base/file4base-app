@@ -2,14 +2,14 @@
 
 ## 1. System Overview
 File4Base replicates the integrated database application paradigm using a modern decoupled architecture:
-- **Server**: Go (1.26+) application running in Docker or standalone. Features a database abstraction layer (DBAL) supporting PostgreSQL (primary) and MariaDB (alternative engine), dynamic DDL/metadata management, a dynamic CRUD API, and session-based authentication with role and layout-permission enforcement. WebSocket event streaming (Roadmap Phase 6) and server-side calculation execution (Phase 7) are planned and not implemented yet.
+- **Server**: Go (1.26+) application running in Docker or standalone. Features a database abstraction layer (DBAL) supporting PostgreSQL (primary), MariaDB and SQLite (alternative engines; SQLite keeps each solution in one file, see `sqlite_engine.md`), dynamic DDL/metadata management, a dynamic CRUD API, and session-based authentication with role and layout-permission enforcement. WebSocket event streaming (Roadmap Phase 6) and server-side calculation execution (Phase 7) are planned and not implemented yet.
 - **Client**: Cross-platform Flutter desktop application (macOS, Windows, Linux) that fetches schema metadata and JSON layout definitions to dynamically render forms, interactive relationship graphs, grids, and block-based scripts.
 
 ## 2. Core Pillars (File4Base Equivalences)
 
 | File4Base Concept | File4Base Architectural Solution | Tech Implementation |
 |---|---|---|
-| **Integrated Database Engine** | Multi-engine DBAL with dynamic DDL execution | Go (`dbal` package) + PostgreSQL / MariaDB |
+| **Integrated Database Engine** | Multi-engine DBAL with dynamic DDL execution | Go (`dbal` package) + PostgreSQL / MariaDB / SQLite |
 | **Manage Database (Tables & Fields)** | Metadata Catalog (`sys_tables`, `sys_columns`) + REST API | Dynamic SQL generator (`CREATE/ALTER TABLE`) |
 | **Relationship Graph** | Occurrence & Relationship Catalog (`sys_relationships`) | Flutter Visual Node Canvas (`flutter_graphview` / Custom Painter) |
 | **Layouts & Visual Form Designer** | JSON Layout Engine + Drag-and-Drop Canvas | Flutter `InteractiveViewer` + JSON Schema Renderer |
@@ -79,6 +79,7 @@ file4base-app/
 ├── VERSION                           # Single source of truth for the version
 ├── docker-compose.yml                # PostgreSQL + API + Web Client services
 ├── docker-compose.mariadb.yml        # the same stack on MariaDB
+├── docker-compose.sqlite.yml         # the API alone, solutions in SQLite files
 ├── .env.example                      # Template for docker-compose configuration
 ├── docs/
 │   ├── index.html                    # GitHub Pages landing page

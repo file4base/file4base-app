@@ -108,10 +108,7 @@ func (s *Service) writeFieldOptions(ctx context.Context, tableID, columnID strin
 		return err
 	}
 	defer tx.Rollback()
-	lock := " FOR UPDATE"
-	if dialect.Engine() == dbal.EnginePostgres {
-		lock = " FOR NO KEY UPDATE"
-	}
+	lock := dbal.RowLockClause(dialect.Engine())
 	var current sql.NullString
 	q := fmt.Sprintf("SELECT default_value FROM sys_columns WHERE id = %s AND table_id = %s%s",
 		dialect.Placeholder(1), dialect.Placeholder(2), lock)

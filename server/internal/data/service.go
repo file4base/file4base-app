@@ -97,6 +97,16 @@ func (o QueryOptions) SortOrder() []SortField {
 // against the table's registered fields so a caller cannot name a column that
 // is not there (or inject one).
 func orderByClause(dialect dbal.Dialect, fields fieldSet, tableName string, order []SortField) (string, error) {
+	return orderByKeyed(dialect, fields, tableName, order, nil)
+}
+
+// orderByKeyed is orderByClause where keyed, when set, tells the SQLite
+// text fields that have their sort index (dbal.SQLiteSortIndex): a sort by
+// one orders by its sort key, which reads the index, instead of by the F4B
+// collation, in the same order.
+func orderByKeyed(
+	dialect dbal.Dialect, fields fieldSet, tableName string, order []SortField, keyed func(field string) bool,
+) (string, error) {
 	if len(order) == 0 {
 		return "", nil
 	}
@@ -115,7 +125,17 @@ func orderByClause(dialect dbal.Dialect, fields fieldSet, tableName string, orde
 		if level.Descending {
 			dir = "DESC"
 		}
-		parts = append(parts, fmt.Sprintf("%s %s", dialect.QuoteIdentifier(level.Field), dir))
+		column := dialect.QuoteIdentifier(level.Field)
+		if dialect.Engine() == dbal.EngineSQLite && fields[level.Field] == dbal.FieldTypeText {
+			// SQLite sorts text by its bytes unless told otherwise; F4B sorts
+			// it as calculations and unstored fields do (dbal.SQLiteSortCollation).
+			if keyed != nil && keyed(level.Field) {
+				column = dbal.SQLiteSortKeySQL(column)
+			} else {
+				column += " COLLATE " + dbal.SQLiteSortCollation
+			}
+		}
+		parts = append(parts, fmt.Sprintf("%s %s", column, dir))
 	}
 	if len(parts) == 0 {
 		return "", nil
@@ -573,17 +593,26 @@ func (s *Service) ListRows(ctx context.Context, tableName string, opts QueryOpti
 		limit = MaxPageSize
 	}
 
-	sqlQuery := fmt.Sprintf(
-		"SELECT %s FROM %s %s LIMIT %d OFFSET %d",
-		selectList(dialect, fields),
-		dialect.QuoteIdentifier(tableName),
-		orderClause,
-		limit,
-		opts.Offset,
-	)
-
-	db := s.driver.DB()
-	rows, err := db.QueryContext(ctx, sqlQuery)
+	list := func(from, order string) (*sql.Rows, error) {
+		return s.driver.DB().QueryContext(ctx, fmt.Sprintf("SELECT %s FROM %s %s LIMIT %d OFFSET %d",
+			selectList(dialect, fields), from, order, limit, opts.Offset))
+	}
+	from := dialect.QuoteIdentifier(tableName)
+	index, keyedOrder, err := s.sortIndexOrder(ctx, fields, tableName, opts.SortOrder())
+	if err != nil {
+		return nil, err
+	}
+	var rows *sql.Rows
+	if index != "" {
+		rows, err = list(from+" INDEXED BY "+dialect.QuoteIdentifier(index), keyedOrder)
+		if err != nil && strings.Contains(err.Error(), "no such index") {
+			// A change of the field dropped the index meanwhile.
+			index = ""
+		}
+	}
+	if index == "" {
+		rows, err = list(from, orderClause)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("query failed for table %s: %w", tableName, err)
 	}
@@ -703,6 +732,11 @@ func criterionClause(
 	}
 	if clause, ok, err := temporalCriterionClause(dialect, colIdent, fieldType, crit, place, values); err != nil || ok {
 		return clause, err
+	}
+	if fieldType == dbal.FieldTypeBoolean && dialect.Engine() == dbal.EngineSQLite {
+		// SQLite holds a Boolean as 0 or 1: it is compared as the text
+		// PostgreSQL casts one to, so "==true" finds the true ones.
+		colIdent = fmt.Sprintf("(CASE WHEN %[1]s THEN 'true' WHEN NOT %[1]s THEN 'false' END)", colIdent)
 	}
 	return textCriterionClause(dialect, colIdent, crit, place, values), nil
 }

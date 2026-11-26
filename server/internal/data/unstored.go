@@ -443,6 +443,33 @@ func (s *Service) orderBy(ctx context.Context, fields fieldSet, tableName string
 	return thenBy(s.driver.Dialect(), clause, creation, false), nil
 }
 
+// sortIndexOrder is, on SQLite, the order of a list of a table's records
+// by a text field that has its sort index (dbal.SQLiteSortIndex), and the
+// index: the sort reads it by the field's sort key, and sorts only the
+// records that tie on the field by the rest of the order. index is "" when
+// the list is sorted otherwise (orderBy). The index is named to SQLite,
+// which does not use an index for a sort by more than one field unless told.
+func (s *Service) sortIndexOrder(
+	ctx context.Context, fields fieldSet, tableName string, order []SortField,
+) (index, clause string, err error) {
+	dialect := s.driver.Dialect()
+	if dialect.Engine() != dbal.EngineSQLite || len(order) == 0 || fields[order[0].Field] != dbal.FieldTypeText {
+		return "", "", nil
+	}
+	if index = dbal.SQLiteSortIndex(ctx, s.driver.DB(), tableName, order[0].Field); index == "" {
+		return "", "", nil
+	}
+	first := order[0].Field
+	if clause, err = orderByKeyed(dialect, fields, tableName, order, func(f string) bool { return f == first }); err != nil {
+		return "", "", err
+	}
+	creation, err := s.creationOrder(ctx, tableName)
+	if err != nil {
+		return "", "", err
+	}
+	return index, thenBy(dialect, clause, creation, false), nil
+}
+
 func sortFields(order []SortField) []string {
 	names := make([]string, len(order))
 	for i, level := range order {

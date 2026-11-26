@@ -576,6 +576,15 @@ func findMatchingRecord(
 		case dbal.FieldTypeDate, dbal.FieldTypeTimestamp:
 			clauses = append(clauses, fmt.Sprintf("%s = %s", column, dialect.Placeholder(i+1)))
 			values = append(values, dbal.TemporalValue(dialect.Engine(), fields[field], value))
+		case dbal.FieldTypeBoolean:
+			// Compared as a Boolean: as text, MariaDB's and SQLite's read "1",
+			// never the "true" the value prints as.
+			b, ok := dbal.NormalizeBool(value).(bool)
+			if !ok {
+				return "", nil
+			}
+			clauses = append(clauses, fmt.Sprintf("%s = %s", column, dialect.Placeholder(i+1)))
+			values = append(values, b)
 		default:
 			clauses = append(clauses, fmt.Sprintf("LOWER(%s) = LOWER(%s)",
 				dialect.CastToText(column), dialect.Placeholder(i+1)))

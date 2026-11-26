@@ -29,13 +29,14 @@ import (
 func (s *Service) ensureCreationOrder(ctx context.Context) error {
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
-	schema := "current_schema()"
-	if dialect.Engine() == dbal.EngineMariaDB {
-		schema = "DATABASE()"
+	if dialect.Engine() == dbal.EngineSQLite {
+		// Every SQLite table is created with its creation order, which SQLite
+		// cannot add to an existing table (it is the table's rowid).
+		return nil
 	}
 	// Each physical table, and whether it has the column.
 	rows, err := db.QueryContext(ctx, `SELECT table_name, MAX(CASE WHEN column_name = `+dialect.Placeholder(1)+
-		` THEN 1 ELSE 0 END) FROM information_schema.columns WHERE table_schema = `+schema+` GROUP BY table_name`,
+		` THEN 1 ELSE 0 END) FROM `+dbal.CatalogColumnsSQL(dialect.Engine())+` AS c GROUP BY table_name`,
 		dbal.CreationOrderColumn)
 	if err != nil {
 		return fmt.Errorf("failed reading the tables' columns: %w", err)

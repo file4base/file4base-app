@@ -864,10 +864,7 @@ func (s *Service) serialColumn(ctx context.Context, q execer, tableName, field s
 // lockClause locks the catalog row a serial number is taken from. On
 // PostgreSQL the lock does not block the foreign keys that point at it.
 func lockClause(dialect dbal.Dialect) string {
-	if dialect.Engine() == dbal.EnginePostgres {
-		return " FOR NO KEY UPDATE"
-	}
-	return " FOR UPDATE"
+	return dbal.RowLockClause(dialect.Engine())
 }
 
 // takeSerial takes the next serial value of a field and writes the one that
