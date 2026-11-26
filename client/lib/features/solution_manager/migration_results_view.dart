@@ -107,7 +107,9 @@ List<MigrationReviewGroup> groupMigrationReviewItems(MigrationApplyResultModel r
   final items = <MigrationReviewItem>[
     for (final it in result.report.rejected)
       MigrationReviewItem(severity: MigrationReviewSeverity.rejected, kind: it.domain, name: nameOf(it), detail: it.detail),
-    for (final it in result.report.manualActionRequired)
+    // The accounts' password setup is the accounts panel's business, and a
+    // merge keeps the credentials of the accounts that already existed.
+    for (final it in result.report.manualActionRequired.where((it) => it.domain != 'account'))
       MigrationReviewItem(severity: MigrationReviewSeverity.manualAction, kind: it.domain, name: nameOf(it), detail: it.detail),
     for (final it in result.report.unsupported)
       MigrationReviewItem(severity: MigrationReviewSeverity.unsupported, kind: it.domain, name: nameOf(it), detail: it.detail),

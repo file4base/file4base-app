@@ -65,6 +65,12 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
       setState(() => _error = 'Password cannot be empty.');
       return;
     }
+    // The sign-in dialogs trim what is typed, so such a password could
+    // never be entered.
+    if (p1 != p1.trim()) {
+      setState(() => _error = 'A password cannot start or end with a space.');
+      return;
+    }
     if (p1 != _confirm.text) {
       setState(() => _error = 'Passwords do not match.');
       return;
@@ -105,6 +111,7 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
     return PopScope(
       canPop: !_saving,
       child: AlertDialog(
+      scrollable: true,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       title: Row(
         children: [

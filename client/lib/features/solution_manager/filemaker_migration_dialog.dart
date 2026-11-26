@@ -252,6 +252,7 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
       context,
       apiClient: widget.apiClient,
       solutionName: applied?.report.solutionName ?? '',
+      initialStatus: ScriptTriggerStatusFilter.disabledByMigration,
     );
     if (!mounted) return;
     final script = result.openScript;

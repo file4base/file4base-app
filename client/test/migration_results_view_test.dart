@@ -59,6 +59,13 @@ Map<String, dynamic> _applyResponse() => {
         'manual_action_required': [
           {
             'category': 'manual_action_required',
+            'domain': 'account',
+            'source_name': 'olivia',
+            'target_name': 'olivia',
+            'detail': 'Assign a password and enable migrated account "olivia" in Manage Security before sign-in',
+          },
+          {
+            'category': 'manual_action_required',
             'domain': 'trigger',
             'source_name': 'Plant Form (OnRecordLoad -> Water Plants)',
             'target_name': 'Plant Form',
@@ -105,6 +112,9 @@ class _FakeServer {
         }
         if (path.endsWith('/api/v1/solutions/migrate/apply')) {
           return http.Response(jsonEncode(_applyResponse()), 201, headers: {'content-type': 'application/json'});
+        }
+        if (path == '/api/v1/schemas/script-triggers') {
+          return http.Response('[]', 200, headers: {'content-type': 'application/json'});
         }
         if (path == '/api/v1/schemas/layouts') {
           return http.Response('[]', 200, headers: {'content-type': 'application/json'});
@@ -162,6 +172,7 @@ void main() {
 
   test('review items are grouped by kind, triggers first', () {
     final groups = groupMigrationReviewItems(MigrationApplyResultModel.fromJson(_applyResponse()));
+    // Password setup is the accounts panel's, and olivia already existed.
     expect(groups.map((g) => g.kind), ['trigger', 'script', 'field', 'value_list']);
     expect(groups.first.label, 'Script triggers');
     expect(groups.first.items, hasLength(2));
@@ -263,6 +274,11 @@ void main() {
     await tester.tap(find.byKey(const Key('set-password-save')));
     await tester.pumpAndSettle();
     expect(find.text('Password cannot be empty.'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('set-password-new')), ' Fern-2026-long');
+    await tester.enterText(find.byKey(const Key('set-password-confirm')), ' Fern-2026-long');
+    await tester.tap(find.byKey(const Key('set-password-save')));
+    await tester.pumpAndSettle();
+    expect(find.text('A password cannot start or end with a space.'), findsOneWidget);
 
     await tester.enterText(find.byKey(const Key('set-password-new')), 'Fern-2026-long');
     await tester.enterText(find.byKey(const Key('set-password-confirm')), 'Fern-2026-lonG');
@@ -331,6 +347,11 @@ void main() {
     expect(find.byKey(const Key('migration_apply_btn')), findsNothing);
     expect(find.byKey(const Key('migration_done_btn')), findsOneWidget);
     expect(find.byKey(const Key('migration-full-report')), findsOneWidget);
+
+    // The trigger review opens on the triggers the migration switched off.
+    await tester.tap(find.byKey(const Key('migration-review-triggers')));
+    await tester.pumpAndSettle();
+    expect(find.text('Disabled by migration'), findsOneWidget);
   });
 
   testWidgets('Manage Security marks and filters the accounts without a password', (tester) async {
