@@ -27,7 +27,7 @@ const stepOptionsDesign = `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddActio
    <Field membercount="3">
     <Map New="False" name="Source field 1 match with " index="1" id="1" kind="2" Options="0"><FieldReference id="1" name="Code"><TableOccurrenceReference id="7" name="Open Orders"/></FieldReference></Map>
     <Map New="False" name="Source field 2 import to " index="2" id="2" kind="0" Options="0"><FieldReference id="2" name="Total"><TableOccurrenceReference id="7" name="Open Orders"/></FieldReference></Map>
-    <Map New="False" name="Source field 3 not import to " index="3" id="3" kind="1" Options="0"><FieldReference id="3" name="Note"><TableOccurrenceReference id="7" name="Open Orders"/></FieldReference></Map>
+    <Map New="False" name="Source field 3 not import to " index="3" id="3" kind="1" Options="2"><FieldReference id="3" name="Note"><TableOccurrenceReference id="7" name="Open Orders"/></FieldReference></Map>
    </Field>
    <CharacterSet name="UTF-8" value="5"/>
    <action name="Update" value="2"/>
@@ -140,14 +140,28 @@ func TestStepOptionsAreRead(t *testing.T) {
 		if _, named := maps[0]["source_field"]; named {
 			t.Fatal("a position was taken for a field name")
 		}
+		if maps[0]["target_field_id"] != "1" || maps[1]["target_field_id"] != "2" {
+			t.Fatalf("target field ids = %#v", maps)
+		}
+		// Per-field auto-enter is what FileMaker applies: only the field
+		// whose map carries Options 2, here one that is not imported into.
+		if ae, _ := p["auto_enter_fields"].([]string); len(ae) != 1 || ae[0] != "note" {
+			t.Fatalf("auto_enter_fields = %#v", p["auto_enter_fields"])
+		}
+		if ids, _ := p["auto_enter_field_ids"].([]string); len(ids) != 1 || ids[0] != "3" {
+			t.Fatalf("auto_enter_field_ids = %#v", p["auto_enter_field_ids"])
+		}
+		if steps[0].IsEnabled || p["awaiting_transfer"] != true || p["filemaker_step_enabled"] != true {
+			t.Fatalf("the step does not wait, disabled, for its transfer: enabled=%v %#v", steps[0].IsEnabled, p)
+		}
 		note, _ := p["migration_note"].(string)
 		for _, want := range []string{`"Ledger"`, "into orders", "match on code", "adding the others",
-			"source field 1 -> code", "source field 2 -> total", "without guessing"} {
+			"source field 1 -> code", "source field 2 -> total", "migration review", "stays disabled"} {
 			if !strings.Contains(note, want) {
 				t.Errorf("note lacks %q: %s", want, note)
 			}
 		}
-		if !reported(result.Report, "Steps > Import Records (step 1)", "without guessing") {
+		if !reported(result.Report, "Steps > Import Records (step 1)", "migration review") {
 			t.Error("the step's report item does not say why it stays manual")
 		}
 		if reported(result.Report, "Steps > Import Records (step 1)", "runs a File4Base transfer definition") {

@@ -77,6 +77,16 @@ dialog asks, and the error names the order it tried.
 | --- | --- |
 | **Add** | Every row becomes a new record. |
 | **Update matching** | The record whose match fields hold the same values is updated. Matching is case-insensitive, as a find is, and an empty key matches nothing. A date or timestamp key matches the day or instant it names, whatever text the file writes it in (`2026-01-02 03:04:05`, `2026-01-02T03:04:05Z`, or with an offset). Rows matching no record are added or passed over, as asked. |
+| **Replace found set** | FileMaker's *Replace field contents in found set, in order* (`#191`): the n-th row is written into the n-th record of the found set. Rows left once it runs out are added or passed over, as asked. It matches on nothing, so match fields are refused. |
+
+The import works on the **found set** it is given (`found_set`, record ids in
+order), or on the whole table in creation order. Given a found set, *Update
+matching* updates every record of it that matches a row, and only those, as
+FileMaker does; without one it updates the first matching record of the table.
+*Perform auto-enter options* can be limited to some fields
+(`auto_enter_fields`), as FileMaker chooses them field by field in the import
+field map. `return_record_ids` answers the records added or updated, which
+FileMaker makes the found set afterwards.
 
 A column with no field is left out. Two columns cannot go to the same field,
 and a column cannot be sent to a **calculation** field, whose formula owns its
@@ -105,7 +115,8 @@ validation rules apply as they do to any other write.
 
 ## Exporting
 
-**File > Export Records** writes the found set, or the whole table. CSV,
+**File > Export Records** writes the found set, or the whole table, in creation
+order unless it is sorted. CSV,
 tab-separated text, JSON, XML and HTML are written by the client; an **Excel
 workbook** is written by the server, which is the one format needing a library.
 

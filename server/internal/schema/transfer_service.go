@@ -44,10 +44,18 @@ const (
 	// a transfer replayable: running it twice updates the same records
 	// instead of duplicating them.
 	TransferModeUpdateMatching = "update_matching"
+
+	// TransferModeReplaceFoundSet is FileMaker's "Replace field contents in
+	// found set, in order": the n-th source record replaces the mapped
+	// fields of the n-th record of the destination found set, which is the
+	// found set the running script step holds, or the whole table in
+	// creation order. It matches on nothing (#191).
+	TransferModeReplaceFoundSet = "replace_found_set"
 )
 
-// What happens to a source record that matches no destination record. Only
-// TransferModeUpdateMatching consults it.
+// What happens to a source record that matches no destination record, or,
+// replacing the found set, to the records left once it runs out.
+// TransferModeAdd never consults it.
 const (
 	// TransferUnmatchedAdd adds the record.
 	TransferUnmatchedAdd = "add"
@@ -136,6 +144,13 @@ type TransferDefinition struct {
 	// read. There is no way to tell from the value, so the definition says.
 	DateOrder string `json:"date_order"`
 
+	// PerformAutoEnter applies the destination fields' auto-enter options,
+	// as FileMaker's import option does; AutoEnterFields, when given, are
+	// the only fields it applies them to, as FileMaker 2023 and later choose
+	// them field by field (#191).
+	PerformAutoEnter bool     `json:"perform_auto_enter,omitempty"`
+	AutoEnterFields  []string `json:"auto_enter_fields,omitempty"`
+
 	// CreatedBy is the account that saved it.
 	CreatedBy string `json:"created_by,omitempty"`
 
@@ -175,6 +190,9 @@ type TransferInput struct {
 	OnUnmatched string             `json:"on_unmatched,omitempty"`
 	OnRejected  string             `json:"on_rejected,omitempty"`
 	DateOrder   string             `json:"date_order,omitempty"`
+
+	PerformAutoEnter bool     `json:"perform_auto_enter,omitempty"`
+	AutoEnterFields  []string `json:"auto_enter_fields,omitempty"`
 }
 
 // transferPayload is the part of a definition stored as JSON. The ends are
@@ -189,6 +207,9 @@ type transferPayload struct {
 	OnUnmatched string             `json:"on_unmatched,omitempty"`
 	OnRejected  string             `json:"on_rejected"`
 	DateOrder   string             `json:"date_order"`
+
+	PerformAutoEnter bool     `json:"perform_auto_enter,omitempty"`
+	AutoEnterFields  []string `json:"auto_enter_fields,omitempty"`
 }
 
 func (s *Service) transferPlaceholder(n int) string {
@@ -255,10 +276,10 @@ func checkTransfer(in TransferInput) (TransferInput, error) {
 	switch in.Mode {
 	case "":
 		in.Mode = TransferModeUpdateMatching
-	case TransferModeAdd, TransferModeUpdateMatching:
+	case TransferModeAdd, TransferModeUpdateMatching, TransferModeReplaceFoundSet:
 	default:
-		return in, fmt.Errorf("%w: %q is not a transfer mode; it is %q or %q",
-			ErrInvalidTransfer, in.Mode, TransferModeAdd, TransferModeUpdateMatching)
+		return in, fmt.Errorf("%w: %q is not a transfer mode; it is %q, %q or %q",
+			ErrInvalidTransfer, in.Mode, TransferModeAdd, TransferModeUpdateMatching, TransferModeReplaceFoundSet)
 	}
 
 	keys := make([]string, 0, len(in.MatchFields))
@@ -289,6 +310,33 @@ func checkTransfer(in TransferInput) (TransferInput, error) {
 		return in, fmt.Errorf("%w: %q adds every record, so it matches on nothing",
 			ErrInvalidTransfer, TransferModeAdd)
 	}
+	if in.Mode == TransferModeReplaceFoundSet && len(keys) > 0 {
+		return in, fmt.Errorf("%w: %q pairs records by their place in the found set, so it matches on nothing",
+			ErrInvalidTransfer, TransferModeReplaceFoundSet)
+	}
+
+	if len(in.AutoEnterFields) > 0 && !in.PerformAutoEnter {
+		return in, fmt.Errorf("%w: auto_enter_fields chooses the fields auto-enter is performed on, "+
+			"so it needs perform_auto_enter", ErrInvalidTransfer)
+	}
+	if len(in.AutoEnterFields) > maxTransferMappings {
+		return in, fmt.Errorf("%w: a transfer performs auto-enter on at most %d fields",
+			ErrInvalidTransfer, maxTransferMappings)
+	}
+	var autoEnter []string
+	if in.AutoEnterFields != nil {
+		autoEnter = make([]string, 0, len(in.AutoEnterFields))
+		seen := map[string]bool{}
+		for _, field := range in.AutoEnterFields {
+			field = dbal.NormalizeIdentifier(field)
+			if field == "" || seen[field] {
+				continue
+			}
+			seen[field] = true
+			autoEnter = append(autoEnter, field)
+		}
+	}
+	in.AutoEnterFields = autoEnter
 
 	switch in.OnUnmatched {
 	case "":
@@ -371,9 +419,13 @@ func (s *Service) CreateTransfer(ctx context.Context, in TransferInput, createdB
 		OnUnmatched: in.OnUnmatched,
 		OnRejected:  in.OnRejected,
 		DateOrder:   in.DateOrder,
-		CreatedBy:   createdBy,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+
+		PerformAutoEnter: in.PerformAutoEnter,
+		AutoEnterFields:  in.AutoEnterFields,
+
+		CreatedBy: createdBy,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 	encoded, err := encodeTransferPayload(def)
 	if err != nil {
@@ -430,9 +482,13 @@ func (s *Service) UpdateTransfer(ctx context.Context, id string, in TransferInpu
 		OnUnmatched: in.OnUnmatched,
 		OnRejected:  in.OnRejected,
 		DateOrder:   in.DateOrder,
-		CreatedBy:   current.CreatedBy,
-		CreatedAt:   current.CreatedAt,
-		UpdatedAt:   time.Now().UTC(),
+
+		PerformAutoEnter: in.PerformAutoEnter,
+		AutoEnterFields:  in.AutoEnterFields,
+
+		CreatedBy: current.CreatedBy,
+		CreatedAt: current.CreatedAt,
+		UpdatedAt: time.Now().UTC(),
 	}
 	encoded, err := encodeTransferPayload(def)
 	if err != nil {
@@ -546,6 +602,9 @@ func encodeTransferPayload(def *TransferDefinition) (string, error) {
 		OnUnmatched: def.OnUnmatched,
 		OnRejected:  def.OnRejected,
 		DateOrder:   def.DateOrder,
+
+		PerformAutoEnter: def.PerformAutoEnter,
+		AutoEnterFields:  def.AutoEnterFields,
 	})
 	if err != nil {
 		return "", fmt.Errorf("the transfer %q cannot be stored: %w", def.Name, err)
@@ -579,5 +638,7 @@ func scanTransfer(row rowScanner) (*TransferDefinition, error) {
 	def.OnUnmatched = payload.OnUnmatched
 	def.OnRejected = payload.OnRejected
 	def.DateOrder = payload.DateOrder
+	def.PerformAutoEnter = payload.PerformAutoEnter
+	def.AutoEnterFields = payload.AutoEnterFields
 	return &def, nil
 }

@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/file4base/file4base-app/server/internal/schema"
 )
 
 // Decoders for the step options Save a Copy as XML writes in wrappers of its
@@ -177,6 +179,13 @@ func decodeImportField(n *xmlNode, out map[string]interface{}) []string {
 
 	var mappings []map[string]interface{}
 	skipped := 0
+	// FileMaker 2023 and later choose auto-enter field by field: a Map whose
+	// Options carry 2 performs the field's auto-enter options, on a field
+	// imported into or not. When the maps carry Options at all, that choice
+	// is the one FileMaker applies, and its own step text shows it as "(Do
+	// Auto-Enter)"; the document-wide doAutoEntry is only read without them.
+	perField := false
+	var autoEnterFields, autoEnterIDs []string
 	if fields := findFirstChild(n, "Field"); fields != nil {
 		for _, m := range fields.Children {
 			if m.Name != "Map" {
@@ -185,6 +194,19 @@ func decodeImportField(n *xmlNode, out map[string]interface{}) []string {
 			ref := findFirstChild(m, "FieldReference")
 			if ref == nil {
 				continue
+			}
+			if raw, ok := m.Attrs["Options"]; ok {
+				perField = true
+				if bits, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && bits&2 != 0 {
+					if name := sanitizeIdentifier(firstAttr(ref, "name", "Name")); name != "" {
+						id := ""
+						if n, err := strconv.Atoi(strings.TrimSpace(firstAttr(ref, "id", "ID"))); err == nil && n > 0 {
+							id = strconv.Itoa(n)
+						}
+						autoEnterFields = append(autoEnterFields, name)
+						autoEnterIDs = append(autoEnterIDs, id)
+					}
+				}
 			}
 			var action string
 			switch firstAttr(m, "kind") {
@@ -204,6 +226,11 @@ func decodeImportField(n *xmlNode, out map[string]interface{}) []string {
 				"action":             action,
 				"target_field":       sanitizeIdentifier(target),
 				"target_field_label": target,
+			}
+			// The target field's FileMaker id finds its column even where
+			// the migration had to rename it.
+			if id, err := strconv.Atoi(strings.TrimSpace(firstAttr(ref, "id", "ID"))); err == nil && id > 0 {
+				entry["target_field_id"] = strconv.Itoa(id)
 			}
 			if pos, err := strconv.Atoi(firstAttr(m, "index")); err == nil && pos > 0 {
 				entry["source_position"] = pos
@@ -228,8 +255,39 @@ func decodeImportField(n *xmlNode, out map[string]interface{}) []string {
 		mappings = []map[string]interface{}{}
 	}
 	out["field_mappings"] = mappings
+	if perField {
+		if autoEnterFields == nil {
+			autoEnterFields, autoEnterIDs = []string{}, []string{}
+		}
+		// The FileMaker ids, one per name, find a field the migration
+		// renamed.
+		out["auto_enter_fields"] = autoEnterFields
+		out["auto_enter_field_ids"] = autoEnterIDs
+	}
 	out["skipped_source_fields"] = skipped
 	return unknown
+}
+
+// markSelfImports marks the Import Records steps that import from the very
+// file the design was saved from, so the migration review proposes this
+// solution as their source (#191).
+func markSelfImports(bundle *schema.SolutionBundle, designFileName string) {
+	self := fileMakerFileName(designFileName)
+	if bundle == nil || self == "" {
+		return
+	}
+	for i := range bundle.Scripts {
+		for j := range bundle.Scripts[i].Steps {
+			params := bundle.Scripts[i].Steps[j].Params
+			if params["awaiting_transfer"] != true {
+				continue
+			}
+			source, _ := params["import_source"].(map[string]interface{})
+			if file, _ := source["file"].(string); file != "" && strings.EqualFold(file, self) {
+				source["this_file"] = true
+			}
+		}
+	}
 }
 
 // importRecordsNote says, for the report and for the script editor, what an
@@ -302,21 +360,19 @@ func importRecordsNote(params map[string]interface{}, targetTable string) string
 	switch kind, _ := source["kind"].(string); {
 	case kind == "filemaker" && len(positions) > 0:
 		why = fmt.Sprintf("FileMaker saved its source fields by position only, not by name, and did not save "+
-			"the source table, so the mapping cannot be rebuilt without guessing. Create a transfer from the "+
-			"solution that file became into %s mapping %s, and name it in the step",
+			"the source table. Choose the solution that file became and its table under \"Import Records from "+
+			"other FileMaker files\" in the migration review: it creates the transfer into %s mapping %s and "+
+			"names it in the step, which stays disabled until then",
 			orTable(targetTable), strings.Join(pairs, ", "))
 	case kind == "filemaker" && named < len(mappings):
 		why = "the source fields it reads are not named in the document. Create a transfer and name it in the step"
 	case kind == "filemaker":
-		why = fmt.Sprintf("FileMaker did not save the source table. Create a transfer from the solution that file "+
-			"became into %s mapping %s, and name it in the step", orTable(targetTable), strings.Join(pairs, ", "))
+		why = fmt.Sprintf("FileMaker did not save the source table. Choose the solution that file became and "+
+			"its table in the migration review: it creates the transfer into %s mapping %s and names it in the "+
+			"step", orTable(targetTable), strings.Join(pairs, ", "))
 	default:
 		why = "File4Base scripts never read files from a disk. Import the file by hand (File > Import), or " +
 			"move the data into a solution and run a transfer from it"
-	}
-	if method == importMethodReplace {
-		why += ". A transfer adds or updates matching records; replacing the found set in order has no transfer " +
-			"equivalent, so give the transfer a match field"
 	}
 	return what.String() + "; " + why
 }
@@ -731,6 +787,9 @@ func stepOptionItems(canonical string, params map[string]interface{}, occTableBy
 			params["target_table"] = table
 		}
 		note = "Import Records " + importRecordsNote(params, table)
+		if source, _ := params["import_source"].(map[string]interface{}); source["kind"] == "filemaker" {
+			params["awaiting_transfer"] = true
+		}
 	case "Perform Script":
 		switch {
 		case params["script_missing"] == true:

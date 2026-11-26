@@ -992,6 +992,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// with an XML design is read rather than ignored (#91).
 	tableRows := make(map[string][]map[string]interface{})
 	designFileName := extractDeclaredFileName(root)
+	markSelfImports(bundle, designFileName)
 	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol, bundleRepetitions(bundle),
 		fmpTableMeta, fmpTableRawNames, fmpFieldMeta, designFileName, tableRows, report, fieldNamesByTable); err != nil {
 		return nil, err
@@ -2423,6 +2424,14 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName m
 						"mapping this step referred to were not converted into one, so the step stops "+
 						"the script until a transfer is created and named in it", canonical),
 				})
+			}
+			// An Import Records step that reads another FileMaker file
+			// waits, disabled, for the transfer the migration review
+			// creates (#191); confirming it enables the step again only
+			// if FileMaker had it enabled.
+			if params["awaiting_transfer"] == true {
+				params["filemaker_step_enabled"] = enabled
+				enabled = false
 			}
 			steps = append(steps, schema.BundleStep{
 				ID:          uuid.NewString(),

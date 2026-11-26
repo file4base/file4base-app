@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/auth"
@@ -35,6 +36,7 @@ func NewTransferHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store) 
 func (h *TransferHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/api/v1/transfers", func(r chi.Router) {
 		r.Use(RequireSession)
+		h.registerImportStepRoutes(r)
 		r.Get("/", h.ListTransfers)
 		r.With(RequireAdmin, RequireDesignUnlocked).Post("/", h.CreateTransfer)
 		r.Get("/{id}", h.GetTransfer)
@@ -124,6 +126,15 @@ type TransferRunRequest struct {
 	// this session's database. It is required whenever the two ends are
 	// different solutions, and refused when they are the same one.
 	PeerToken string `json:"peer_token,omitempty"`
+
+	// DestinationFoundSet is the found set of the destination table, in its
+	// order, as the window running an Import Records step holds it (#191):
+	// the records "replace_found_set" replaces and the only ones
+	// "update_matching" matches. Absent, it is the whole table.
+	DestinationFoundSet []string `json:"destination_found_set,omitempty"`
+
+	// ReturnRecordIDs answers the records written, as record_ids.
+	ReturnRecordIDs bool `json:"return_record_ids,omitempty"`
 }
 
 // TransferRunResponse is what a run answers: the report, and, when the
@@ -160,11 +171,14 @@ func (h *TransferHandler) RunTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	report, runErr := transfer.Run(r.Context(), def,
+	report, runErr := transfer.RunWith(r.Context(), def,
 		ends.source.driver, ends.destination.driver,
 		ends.source.database, ends.destination.database,
-		transfer.Account{ID: ends.source.session.UserID, Role: ends.source.session.Role},
-		transfer.Account{ID: ends.destination.session.UserID, Role: ends.destination.session.Role})
+		transfer.Account{ID: ends.source.session.UserID, Role: ends.source.session.Role,
+			Name: ends.source.session.Username},
+		transfer.Account{ID: ends.destination.session.UserID, Role: ends.destination.session.Role,
+			Name: ends.destination.session.Username},
+		transfer.RunOptions{DestinationFoundSet: body.DestinationFoundSet, ReturnRecordIDs: body.ReturnRecordIDs})
 
 	response := TransferRunResponse{Report: report}
 	status := http.StatusOK
@@ -301,6 +315,11 @@ func (h *TransferHandler) endAllows(
 // restored into another database with fresh ids.
 func resolveTransfer(r *http.Request, idOrName string) (*schema.TransferDefinition, error) {
 	svc := schemaService(r)
+	// A name with characters a path keeps escaped, such as parentheses,
+	// reaches the router still escaped.
+	if unescaped, err := url.PathUnescape(idOrName); err == nil {
+		idOrName = unescaped
+	}
 	idOrName = strings.TrimSpace(idOrName)
 	def, err := svc.GetTransfer(r.Context(), idOrName)
 	if err == nil {

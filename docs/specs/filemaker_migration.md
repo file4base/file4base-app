@@ -156,6 +156,20 @@ The two steps are therefore **converted but not configured**:
 - each one is reported under **`manual_action_required`**, naming the script, the step and its position, and saying that a transfer has to be created and named in it;
 - until one is, the step **stops the script** when it runs, reporting that it names no transfer. It is never answered with a *script* of the same name — a transfer and a script are different objects, and falling back from one to the other would run something nobody asked for.
 
+### Import Records from another FileMaker file (`#191`)
+
+An `Import Records` step whose source is another FileMaker file (or its own file) is the one case where the design document says almost enough. It names the file, the target table occurrence, the method (Add, Update, or Replace field contents in found set, in order), *add remaining records*, the match fields, and the auto-enter choice, globally or field by field. It does **not** name the source table, and it names the source fields **only by position**: FileMaker saves "source field 3", not which field that was. So the migration keeps such a step **disabled** and waiting for its transfer, with the mapping it saved (target field, its FileMaker id, the source position, import or match), and the step's own enabled state set aside.
+
+The migration review lists these steps under **Import Records from other FileMaker files**. For each file, the developer says which solution it became (this one when the step imports from its own file, or the solution its file reference or name suggests); another solution needs a session of it. File4Base then infers the source table: a FileMaker file's source positions are its table's fields in **creation order**, which a migrated field keeps as its FileMaker id, so a table **fits** when it has a field at every position the step reads and each is of the type of the field it goes into.
+
+- exactly one table fits and the field names agree at half of the positions or more: **inferred, high confidence**;
+- exactly one table fits, the names do not confirm it: **inferred, medium confidence**;
+- none or several fit: **not inferred**, and the review says why and lists every table with how far it fits.
+
+Nothing is created on its own. The developer creates each step's transfer, or every unambiguous inference at once behind a confirmation listing them, and can pick any table instead. A confirmed step gets a transfer (Add → `add`, Update → `update_matching` on the step's own match fields, Replace → `replace_found_set`, rejected rows passed over as FileMaker skips them), the step names it, and it is enabled again only if FileMaker had it enabled. An update step that saved no match field cannot get one: a match field is never invented.
+
+When the step runs, the transfer runs with the session's account and privileges. Into the table of the window it runs in, it works on that window's **found set** in its order, as FileMaker does — Update updates every matching record of it, Replace writes into it in order — and the records it added or updated become the window's found set afterwards. *With dialog* asks first, and cancelling sets `Get(LastError)` to 1.
+
 A converted step whose transfer reaches another solution also stops the script when the session is not signed in to that solution, naming the solution it needs. A transfer definition carries no credential, so authority comes from a session of each end and from nothing else.
 
 `Loop`, `Exit Loop If` and `End Loop` convert to steps the client runner really executes (`#96`), so a migrated loop runs rather than halting the script.

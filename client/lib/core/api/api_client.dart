@@ -4554,14 +4554,26 @@ class ApiClient {
   /// that report is exactly what the caller needs in order to act. Only a
   /// request that never reached a verdict — no such transfer, no
   /// authorization — throws.
+  ///
+  /// [destinationFoundSet] is the found set of the destination table, in its
+  /// order, as the window running an Import Records step holds it (#191);
+  /// [returnRecordIds] asks for the records written.
   Future<TransferRunReport> runTransfer(
     String idOrName, {
     String? peerToken,
     String? database,
+    List<String>? destinationFoundSet,
+    bool returnRecordIds = false,
   }) async {
     final body = <String, dynamic>{};
     if (peerToken != null && peerToken.isNotEmpty) {
       body['peer_token'] = peerToken;
+    }
+    if (destinationFoundSet != null) {
+      body['destination_found_set'] = destinationFoundSet;
+    }
+    if (returnRecordIds) {
+      body['return_record_ids'] = true;
     }
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/transfers/${Uri.encodeComponent(idOrName)}/run'),
@@ -4576,6 +4588,60 @@ class ApiClient {
     }
     _checkResponse(response);
     throw ApiException.fromResponse(response);
+  }
+
+  /// The migrated Import Records steps that wait for a transfer (#191).
+  Future<List<ImportStepModel>> listImportSteps() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/transfers/import-steps'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((body['steps'] as List<dynamic>?) ?? const [])
+        .map((item) => ImportStepModel.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Which table of [sourceDatabase] (empty: this solution) each step read.
+  /// Another solution is read only with [peerToken], a session of its own.
+  Future<ImportStepsInferResult> inferImportSteps({
+    required String sourceDatabase,
+    required List<String> stepIds,
+    String? peerToken,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/transfers/import-steps/infer'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'source_database': sourceDatabase,
+        'step_ids': stepIds,
+        if (peerToken != null && peerToken.isNotEmpty) 'peer_token': peerToken,
+      }),
+    );
+    _checkResponse(response);
+    return ImportStepsInferResult.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Creates the transfer of each confirmed step and names it in the step.
+  /// [peerTokens] sign in to the other solutions, by database name.
+  Future<List<ImportStepOutcome>> confirmImportSteps(
+    List<ImportStepChoice> items, {
+    Map<String, String> peerTokens = const {},
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/transfers/import-steps/confirm'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'items': items.map((item) => item.toJson()).toList(),
+        if (peerTokens.isNotEmpty) 'peer_tokens': peerTokens,
+      }),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((body['steps'] as List<dynamic>?) ?? const [])
+        .map((item) => ImportStepOutcome.fromJson(item as Map<String, dynamic>))
+        .toList();
   }
 
   // ==========================================

@@ -15,6 +15,41 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+/// A window on [table] that a transfer into it works on (#191): it answers
+/// its found set, shows the imported records, and may ask before running.
+class _ImportWindowHost extends _RecordingHost implements ImportRecordsHost, ExtendedLayoutActionHost {
+  _ImportWindowHost(this.table, {this.answer = 1});
+
+  final String table;
+  final int answer;
+  List<String>? shown;
+  String? asked;
+
+  @override
+  String get actionImportTable => table;
+  @override
+  Future<List<String>?> actionFoundSetIds() async => const ['r3', 'r1'];
+  @override
+  Future<void> actionShowImportedRecords(List<String> ids) async => shown = ids;
+  @override
+  Future<ScriptDialogResult> actionShowDialogEx({
+    required String title,
+    required String message,
+    List<Map<String, dynamic>>? buttons,
+    List<Map<String, dynamic>>? inputFields,
+  }) async {
+    asked = message;
+    return ScriptDialogResult(buttonIndex: answer);
+  }
+
+  @override
+  Future<void> actionCommitRecordEx({bool dialog = true, bool skipValidation = false, bool forceCommit = false}) =>
+      actionCommitRecord();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 class _RecordingHost implements LayoutActionHost {
   final List<String> did = [];
   final Map<String, String> fields = {};
@@ -173,6 +208,7 @@ LayoutActionRunner _transferRunner(
   Map<String, dynamic>? report,
   int reportStatus = 200,
   Future<String?> Function(String solution)? peerTokenProvider,
+  List<Map<String, dynamic>>? runs,
 }) {
   final mock = MockClient((request) async {
     final path = request.url.path;
@@ -184,6 +220,7 @@ LayoutActionRunner _transferRunner(
       final isRun = segments.last == 'run';
       final key = Uri.decodeComponent(isRun ? segments[segments.length - 2] : segments.last);
       if (isRun) {
+        runs?.add(Map<String, dynamic>.from(jsonDecode(request.body.isEmpty ? '{}' : request.body) as Map));
         return http.Response(jsonEncode(report ?? _reportJson()), reportStatus,
             headers: jsonHeaders);
       }
@@ -723,6 +760,90 @@ void main() {
       );
       final result = await _runScript(runner, 'sc1', 'Archive');
       expect(result.completed, isTrue, reason: result.message);
+      expect(host.did, ['commit_records']);
+    });
+
+    test('a transfer into the window works on its found set and shows what it imported (#191)', () async {
+      final host = _ImportWindowHost('project_answers');
+      final runs = <Map<String, dynamic>>[];
+      final runner = _transferRunner(
+        host,
+        scripts: {
+          'sc1': _script('sc1', 'Pull', [
+            _stepJson(1, 'import_records', {'transfer': 'Send answers'}),
+          ]),
+        },
+        transfers: {'Send answers': _transferJson()},
+        report: {
+          ..._reportJson(updated: 2),
+          'record_ids': ['r1', 'r9'],
+        },
+        runs: runs,
+      );
+      final result = await _runScript(runner, 'sc1', 'Pull');
+      expect(result.completed, isTrue, reason: result.message);
+      expect(runs.single['destination_found_set'], ['r3', 'r1'], reason: 'update works on the found set, in order');
+      expect(runs.single['return_record_ids'], isTrue);
+      expect(host.shown, ['r1', 'r9'], reason: 'the records imported are the found set afterwards');
+      expect(host.asked, isNull, reason: 'a step without dialog asks nothing');
+    });
+
+    test('an add sends no found set, and a transfer into another table leaves the window alone', () async {
+      final add = _ImportWindowHost('project_answers');
+      final runs = <Map<String, dynamic>>[];
+      final scripts = {
+        'sc1': _script('sc1', 'Pull', [
+          _stepJson(1, 'import_records', {'transfer': 'Send answers'}),
+        ]),
+      };
+      final runner = _transferRunner(
+        add,
+        scripts: scripts,
+        transfers: {
+          'Send answers': {..._transferJson(), 'mode': 'add', 'match_fields': <String>[]},
+        },
+        report: {
+          ..._reportJson(added: 1),
+          'record_ids': ['r7'],
+        },
+        runs: runs,
+      );
+      expect((await _runScript(runner, 'sc1', 'Pull')).completed, isTrue);
+      expect(runs.single.containsKey('destination_found_set'), isFalse);
+      expect(add.shown, ['r7']);
+
+      final other = _ImportWindowHost('elsewhere');
+      runs.clear();
+      final second = _transferRunner(
+        other,
+        scripts: scripts,
+        transfers: {'Send answers': _transferJson()},
+        report: _reportJson(updated: 1),
+        runs: runs,
+      );
+      expect((await _runScript(second, 'sc1', 'Pull')).completed, isTrue);
+      expect(runs.single.containsKey('destination_found_set'), isFalse);
+      expect(other.shown, isNull);
+    });
+
+    test('with dialog it asks first, and cancelling runs nothing and goes on', () async {
+      final host = _ImportWindowHost('project_answers', answer: 2);
+      final runs = <Map<String, dynamic>>[];
+      final runner = _transferRunner(
+        host,
+        scripts: {
+          'sc1': _script('sc1', 'Pull', [
+            _stepJson(1, 'import_records', {'transfer': 'Send answers', 'dialog': true}),
+            _stepJson(2, 'commit_records'),
+          ]),
+        },
+        transfers: {'Send answers': _transferJson()},
+        runs: runs,
+      );
+      final result = await _runScript(runner, 'sc1', 'Pull');
+      expect(result.completed, isTrue, reason: result.message);
+      expect(host.asked, contains('Send answers'));
+      expect(runs, isEmpty);
       expect(host.did, ['commit_records']);
     });
 

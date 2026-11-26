@@ -155,7 +155,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         RelatedFieldHost,
         PortalRowHost,
         ScriptTriggerHost,
-        DocumentActionHost {
+        DocumentActionHost,
+        ImportRecordsHost {
   /// Without privileges, this solution's records take every command, the
   /// server deciding, and another solution's are only read.
   RecordPrivileges get _privileges =>
@@ -5660,6 +5661,40 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     for (var i = 0; i < count && _records.isNotEmpty; i++) {
       await actionOmitRecord();
     }
+  }
+
+  @override
+  String get actionImportTable => widget.table.name;
+
+  @override
+  Future<List<String>?> actionFoundSetIds() async {
+    if (!await _readWholeFoundSet() || !mounted) return null;
+    return _records.map((r) => r['id']?.toString()).whereType<String>().where((id) => id.isNotEmpty).toList();
+  }
+
+  @override
+  Future<void> actionShowImportedRecords(List<String> ids) async {
+    final List<Map<String, dynamic>> all;
+    try {
+      all = await widget.apiClient.listAllRows(widget.table.name);
+    } on Exception {
+      return; // the found set on screen stays as it was
+    }
+    if (!mounted) return;
+    final byId = {for (final r in all) r['id']?.toString(): r};
+    final imported = [for (final id in ids) ?byId[id]];
+    setState(() {
+      _sortOrder = const [];
+      _unsortedRecords = List<Map<String, dynamic>>.from(imported);
+      _records = List<Map<String, dynamic>>.from(imported);
+      _currentIndex = 0;
+      _isFoundSet = true;
+      _foundSetFind = null;
+      _foundSetInHand = true;
+      _omittedIds.clear();
+    });
+    _rebuildFieldControllers();
+    _recordChanged();
   }
 
   @override

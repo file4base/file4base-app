@@ -78,6 +78,27 @@ type Report struct {
 
 	// Fields are the destination fields that were written, in mapping order.
 	Fields []string `json:"fields"`
+
+	// RecordIDs are the destination records the run added or updated, when
+	// RunOptions.ReturnRecordIDs asked for them: the found set FileMaker
+	// shows once an Import Records step is done (#191).
+	RecordIDs []string `json:"record_ids,omitempty"`
+}
+
+// RunOptions are what a run is told on top of its definition, by the script
+// step that runs it.
+type RunOptions struct {
+	// DestinationFoundSet is the found set of the destination table, in its
+	// order, as the window running an Import Records step holds it: the
+	// records a "replace_found_set" transfer replaces one by one and the only
+	// ones an "update_matching" transfer matches, every matching record being
+	// updated, as FileMaker updates them. Nil is the whole table in creation
+	// order, and an update then updates the first record that matches.
+	DestinationFoundSet []string
+
+	// ReturnRecordIDs lists in the report the records the run added or
+	// updated.
+	ReturnRecordIDs bool
 }
 
 // RejectedCount is how many rows the destination would not accept.
@@ -106,6 +127,20 @@ func Run(
 	sourceDatabase, destinationDatabase string,
 	sourceAccount, destinationAccount Account,
 ) (*Report, error) {
+	return RunWith(ctx, def, sourceDriver, destinationDriver, sourceDatabase, destinationDatabase,
+		sourceAccount, destinationAccount, RunOptions{})
+}
+
+// RunWith is Run, told what the step running it knows: the destination's
+// found set, and whether to answer the records it wrote.
+func RunWith(
+	ctx context.Context,
+	def *schema.TransferDefinition,
+	sourceDriver, destinationDriver dbal.DatabaseDriver,
+	sourceDatabase, destinationDatabase string,
+	sourceAccount, destinationAccount Account,
+	opts RunOptions,
+) (*Report, error) {
 	if def == nil {
 		return nil, fmt.Errorf("%w: no transfer definition", ErrTransfer)
 	}
@@ -125,6 +160,9 @@ func Run(
 
 	source := readingAs(sourceDriver, sourceAccount)
 	destination := readingAs(destinationDriver, destinationAccount)
+	if destinationAccount.Name != "" {
+		destination = destination.WithAccount(destinationAccount.Name)
+	}
 
 	// Both ends are resolved before a single record moves. A mapping that
 	// names a field neither table has stops the run here, which is what the
@@ -172,6 +210,17 @@ func Run(
 	order := data.DateOrder(def.DateOrder)
 	accepted, rejected := screen(def, exported, destinationTypes, order)
 	report.Rejected = rejected
+	// Replacing the found set pairs the n-th row with the n-th record, so a
+	// row left out still takes its record with it rather than shifting every
+	// row after it onto the wrong record.
+	var passOver map[int]bool
+	if def.Mode == schema.TransferModeReplaceFoundSet && len(rejected) > 0 {
+		accepted = exported
+		passOver = make(map[int]bool, len(rejected))
+		for _, r := range rejected {
+			passOver[r.Row-1] = true
+		}
+	}
 
 	if len(rejected) > 0 && def.OnRejected == schema.TransferRejectedAbort {
 		// Nothing has been written: the whole transfer is refused, and the
@@ -186,17 +235,28 @@ func Run(
 		mappings = append(mappings, data.ImportMapping{Column: i, Field: m.DestinationField})
 	}
 	action := data.ImportAdd
-	if def.Mode == schema.TransferModeUpdateMatching {
+	switch def.Mode {
+	case schema.TransferModeUpdateMatching:
 		action = data.ImportUpdateMatching
+	case schema.TransferModeReplaceFoundSet:
+		action = data.ImportReplaceFoundSet
+	}
+	importOpts := data.ImportOptions{
+		Action:           action,
+		Mappings:         mappings,
+		MatchFields:      def.MatchFields,
+		AddUnmatched:     def.OnUnmatched != schema.TransferUnmatchedSkip,
+		DateOrder:        order,
+		PerformAutoEnter: def.PerformAutoEnter,
+		AutoEnterFields:  def.AutoEnterFields,
+		ReturnRecordIDs:  opts.ReturnRecordIDs,
+		PassOver:         passOver,
+	}
+	if action != data.ImportAdd && opts.DestinationFoundSet != nil {
+		importOpts.FoundSet = opts.DestinationFoundSet
 	}
 
-	imported, err := destination.ImportRecords(ctx, def.Destination.Table, accepted, data.ImportOptions{
-		Action:       action,
-		Mappings:     mappings,
-		MatchFields:  def.MatchFields,
-		AddUnmatched: def.OnUnmatched != schema.TransferUnmatchedSkip,
-		DateOrder:    order,
-	})
+	imported, err := destination.ImportRecords(ctx, def.Destination.Table, accepted, importOpts)
 	if err != nil {
 		// The destination transaction rolled back, so the destination is as
 		// it was and the transfer can be replayed.
@@ -211,6 +271,7 @@ func Run(
 	// over for want of a match are skipped.
 	report.Skipped = imported.Skipped
 	report.Fields = imported.Fields
+	report.RecordIDs = imported.RecordIDs
 	report.Committed = true
 	return report, nil
 }

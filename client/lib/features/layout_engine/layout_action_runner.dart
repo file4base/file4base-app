@@ -188,6 +188,24 @@ abstract class DocumentActionHost {
   Future<void> actionNotify(String message);
 }
 
+/// The found set an `Import Records` step works on (#191), as FileMaker's
+/// does: the records it replaces in order, or the only ones it updates when
+/// they match, and the imported records it shows once it is done.
+/// Implemented by the data browser; without it a step works on the whole
+/// table and the window is left as it was.
+abstract class ImportRecordsHost {
+  /// The table of the window's layout.
+  String get actionImportTable;
+
+  /// The ids of every record of the found set, in found-set order, records
+  /// not read yet included; null when the found set cannot be read.
+  Future<List<String>?> actionFoundSetIds();
+
+  /// Makes [ids] the found set, unsorted, in that order, as FileMaker shows
+  /// the records an import added or updated.
+  Future<void> actionShowImportedRecords(List<String> ids);
+}
+
 /// Outcome of running a button action. [message] explains why a script
 /// stopped early (unsupported step, missing script, ...).
 class LayoutActionResult {
@@ -698,7 +716,7 @@ class LayoutActionRunner {
       case 'import_records':
       case 'export_records':
         session.lastError = 0;
-        return _execTransfer(norm, params, vars);
+        return _execTransfer(norm, params, vars, session);
       case 'set_variable':
         if (!params.containsKey('value') &&
             !params.containsKey('formula') &&
@@ -2258,10 +2276,18 @@ class LayoutActionRunner {
   /// `$$transferUpdated`, `$$transferSkipped`, `$$transferRejected` and
   /// `$$transferCommitted`, so the steps after it can test what happened with
   /// an ordinary `If`.
+  ///
+  /// An `Import Records` step works on the window's found set when the
+  /// window shows the transfer's destination table: the records a
+  /// "replace_found_set" transfer replaces in order, and the only ones an
+  /// "update_matching" transfer updates. The records it added or updated are
+  /// then the window's found set, as in FileMaker (#191). With dialog, it
+  /// asks first; cancelling sets error 1 and the script goes on.
   Future<LayoutActionResult> _execTransfer(
     String norm,
     Map<String, dynamic> params,
     Map<String, String> localVars,
+    ScriptSessionState session,
   ) async {
     final label = norm == 'export_records' ? 'Export Records' : 'Import Records';
 
@@ -2324,6 +2350,38 @@ class LayoutActionRunner {
           'transfer whose source is this solution.');
     }
 
+    final importHost =
+        norm == 'import_records' && host is ImportRecordsHost ? host as ImportRecordsHost : null;
+    final inWindow = importHost != null &&
+        importHost.actionImportTable.toLowerCase() == definition.destination.table.toLowerCase();
+
+    final dialog = params['dialog'];
+    if ((dialog == true || dialog?.toString().toLowerCase() == 'true') && _extHost != null) {
+      final answer = await _extHost!.actionShowDialogEx(
+        title: label,
+        message: 'Run the transfer "$name"? It reads ${definition.source.label} and writes '
+            '${definition.destination.label}.',
+        buttons: [
+          {'label': norm == 'export_records' ? 'Export' : 'Import', 'commit': true},
+          const {'label': 'Cancel', 'commit': false},
+        ],
+      );
+      if (answer.buttonIndex != 1) {
+        session.lastError = 1; // the user cancelled, as FileMaker answers it
+        return const LayoutActionResult.ok();
+      }
+    }
+
+    List<String>? foundSet;
+    if (inWindow && definition.usesDestinationFoundSet) {
+      foundSet = await importHost.actionFoundSetIds();
+      if (foundSet == null) {
+        return LayoutActionResult.stopped(
+            '$label "$name" works on the found set of ${definition.destination.table}, '
+            'which could not be read.');
+      }
+    }
+
     String? peerToken;
     final peer = definition.peerDatabase;
     if (peer.isNotEmpty) {
@@ -2338,7 +2396,12 @@ class LayoutActionRunner {
 
     TransferRunReport report;
     try {
-      report = await apiClient.runTransfer(definition.id, peerToken: peerToken);
+      report = await apiClient.runTransfer(
+        definition.id,
+        peerToken: peerToken,
+        destinationFoundSet: foundSet,
+        returnRecordIds: inWindow,
+      );
     } on ApiException catch (e) {
       return LayoutActionResult.stopped('$label "$name" could not run: ${e.detail}');
     } catch (e) {
@@ -2355,6 +2418,9 @@ class LayoutActionRunner {
       // Nothing was written, so the script stops here rather than carrying on
       // as though the records had moved.
       return LayoutActionResult.stopped('$label "$name" was refused: ${report.describeRefusal()}');
+    }
+    if (inWindow) {
+      await importHost.actionShowImportedRecords(report.recordIds);
     }
     return const LayoutActionResult.ok();
   }
