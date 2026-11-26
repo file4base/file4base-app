@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -704,7 +705,37 @@ func criterionClause(
 	if clause, ok, err := temporalCriterionClause(dialect, colIdent, fieldType, crit, place, values); err != nil || ok {
 		return clause, err
 	}
+	if clause, ok := numericEqualityClause(dialect, colIdent, fieldType, crit, place, values); ok {
+		return clause, nil
+	}
 	return textCriterionClause(dialect, colIdent, crit, place, values), nil
+}
+
+// numericEqualityClause compares a Number field with a number by value, as
+// FileMaker does: 12 finds 12 and 12.0. Compared as text, the stored value's
+// spelling decided the match, and on MariaDB, whose DECIMAL(65, 10) column
+// reads back as 12.0000000000, an equality find on a number never matched.
+func numericEqualityClause(
+	dialect dbal.Dialect, colIdent string, fieldType dbal.AgnosticFieldType,
+	crit FindCriterion, place func() string, values *[]interface{},
+) (string, bool) {
+	if fieldType != dbal.FieldTypeNumber {
+		return "", false
+	}
+	switch crit.Operator {
+	case "=", "==", "!=":
+	default:
+		return "", false
+	}
+	num, err := strconv.ParseFloat(strings.TrimSpace(fmt.Sprintf("%v", crit.Value)), 64)
+	if err != nil || math.IsInf(num, 0) || math.IsNaN(num) {
+		return "", false
+	}
+	*values = append(*values, num)
+	if crit.Operator == "!=" {
+		return fmt.Sprintf("(%s IS NULL OR %s <> %s)", colIdent, dialect.NumericValue(colIdent), place()), true
+	}
+	return fmt.Sprintf("%s = %s", dialect.NumericValue(colIdent), place()), true
 }
 
 // textCriterionClause renders a criterion that compares text, or numbers.
