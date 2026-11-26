@@ -255,6 +255,12 @@ type EvaluateExpressionBody struct {
 	// Values are the fields of the record being edited and not committed
 	// yet, by name: the expressions read them in place of what is stored.
 	Values map[string]any `json:"values,omitempty"`
+
+	// Self is, for the expression at the same index, the field Self reads:
+	// the field a layout object shows, whose conditions FileMaker evaluates
+	// with Self as the object's value. A null entry, or none, leaves Self
+	// unknown.
+	Self []*data.SelfField `json:"self,omitempty"`
 }
 
 // EvaluateExpression computes expressions against a record with the engine
@@ -297,8 +303,14 @@ func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request)
 			fmt.Sprintf("at most %d records are evaluated in one request", maxEvaluatedRecords))
 		return
 	}
+	// Self is bound once for every record.
+	evaluated, err := svc.BindSelf(r.Context(), expressions, body.Self)
+	if err != nil {
+		writeDataError(w, r, http.StatusBadRequest, "Evaluation Error", err)
+		return
+	}
 	evaluate := func(recordID string) ([]map[string]interface{}, error) {
-		evaluations, err := svc.EvaluateExpressionsIn(r.Context(), table, body.Occurrence, recordID, expressions, body.ResultType,
+		evaluations, err := svc.EvaluateExpressionsIn(r.Context(), table, body.Occurrence, recordID, evaluated, body.ResultType,
 			data.EvaluationEnv{Variables: body.Variables, Get: body.Get, Values: body.Values})
 		if err != nil {
 			// A record that is not there, or a table that is not reachable,
@@ -315,7 +327,7 @@ func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request)
 				continue
 			}
 			result := map[string]interface{}{
-				"expression":     e.Expression,
+				"expression":     expressions[i],
 				"value":          e.Value,
 				"text":           e.Text,
 				"result_type":    e.ResultType,

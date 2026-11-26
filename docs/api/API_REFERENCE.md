@@ -884,6 +884,24 @@ read in place of the stored ones (calculation fields and unknown names are
 ignored), and the stored calculations and the unstored ones the formula
 reads are computed from them.
 
+A layout object's conditions (hide, conditional formatting) read `Self` as
+the object's value, as FileMaker evaluates them. `self` names, for the
+expression at the same index, the field `Self` stands for: a field of the
+record, or of an occurrence by name (a related field, read from the
+occurrence the expressions are evaluated from), in the repetition the object
+shows (1 by default). A `null` entry, or none, leaves `Self` unknown, and an
+expression reading it answers with its `error`. Each result's `expression` is
+the one sent.
+
+```json
+{
+  "expressions": ["Self > 100", "Self = \"Open\""],
+  "self": [{"field": "marks", "repetition": 2}, {"occurrence": "Orders", "field": "status"}],
+  "record_ids": ["a1b2…", "c3d4…"],
+  "occurrence": "Customers"
+}
+```
+
 `expression` (singular) is accepted for a caller watching one. Without
 `record_id` every field reads as empty, so a formula like `UPPER("ab")` still
 answers. `result_type` is `Text` (the default), `Number`, `Date`, `Timestamp`,

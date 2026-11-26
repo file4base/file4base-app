@@ -590,9 +590,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// holds, and on a record seen for the first time every object with a
   /// condition is hidden, so nothing hidden is ever shown or typed into.
   ///
-  /// The answer also holds `<object id>#<index>` for each conditional format
-  /// of a field whose calculation is true on [record] (see [_conditions]);
-  /// until it is known, none applies.
+  /// The answer also holds `<object id>#<index>@<repetition>` for each
+  /// conditional format of a field whose calculation is true on [record] in
+  /// that repetition (see [_conditions]); until it is known, none applies.
   Set<String> _hiddenOn(LayoutDefinitionModel layout, Map<String, dynamic> record) {
     final conditional = [for (final o in layout.objects) if ((o.hideWhen ?? '').trim().isNotEmpty) o.id];
     final recordId = record['id']?.toString() ?? '';
@@ -625,27 +625,65 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   }
 
   /// The calculations [layout] evaluates against each record, by the key
-  /// its answer is kept under: each object's hide condition, by the object's
-  /// id, and each formula of a field's conditional formats, by
-  /// `<object id>#<index of the rule>`.
-  List<(String, String)> _conditions(LayoutDefinitionModel layout) => [
+  /// its answer is kept under, with the field their Self reads: each
+  /// object's hide condition, by the object's id, and each formula of a
+  /// field's conditional formats in each repetition the field shows, by
+  /// `<object id>#<index of the rule>@<repetition>`. In a field object's
+  /// conditions Self is the value the object shows, as in FileMaker. The
+  /// formats of a portal's row objects are its rows', evaluated there
+  /// against each related record.
+  List<(String, String, ConditionSelf?)> _conditions(LayoutDefinitionModel layout) {
+    if (!identical(layout, _conditionsLayout) || !identical(widget.table, _conditionsTable)) {
+      final inPortals = _portalContents(layout).$2;
+      _conditionsLayout = layout;
+      _conditionsTable = widget.table;
+      _conditionsOf = [
         for (final o in layout.objects) ...[
-          if ((o.hideWhen ?? '').trim().isNotEmpty) (o.id, o.hideWhen!),
-          if (o.type == 'field')
+          if ((o.hideWhen ?? '').trim().isNotEmpty) (o.id, o.hideWhen!, _selvesOf(o).first.$2),
+          if (o.type == 'field' && !inPortals.contains(o.id))
             for (final (i, rule) in o.style.conditionalRules.indexed)
-              if (rule.isFormula && rule.value.trim().isNotEmpty) ('${o.id}#$i', rule.value),
+              if (rule.isFormula && rule.value.trim().isNotEmpty)
+                for (final (n, self) in _selvesOf(o)) ('${o.id}#$i@$n', rule.value, self),
         ],
       ];
-
-  /// [obj]'s style on [record], with the conditional formats that apply.
-  LayoutObjectStyle _styleOn(LayoutObjectModel obj, Map<String, dynamic> record, Object? rawValue) {
-    final layout = widget.layout;
-    if (layout == null || !obj.style.conditionalRules.any((r) => r.isFormula)) {
-      return obj.style.effectiveForValue(rawValue);
     }
-    final truths = _hiddenOn(layout, record);
-    return obj.style.effectiveForValue(rawValue, formulaTrue: (i) => truths.contains('${obj.id}#$i'));
+    return _conditionsOf;
   }
+
+  /// What [_conditions] last answered, and for which layout and table.
+  LayoutDefinitionModel? _conditionsLayout;
+  TableModel? _conditionsTable;
+  List<(String, String, ConditionSelf?)> _conditionsOf = const [];
+
+  /// The field [obj] shows in each of the repetitions it shows, by
+  /// repetition: what Self reads in its conditions. A related field, or one
+  /// several relationships away, shows one value, its first related
+  /// record's; any other object has no Self.
+  List<(int, ConditionSelf?)> _selvesOf(LayoutObjectModel obj) {
+    final binding = obj.type == 'field' ? obj.fieldBinding : null;
+    if (binding == null || binding.fieldName.isEmpty) return const [(1, null)];
+    if (binding.readsRelated) {
+      final occurrence = binding.isAlongPath ? binding.occurrencePath.last : binding.tableOccurrence;
+      return [(1, occurrence == null || occurrence.isEmpty ? null : ConditionSelf(binding.fieldName, occurrence: occurrence))];
+    }
+    final col = widget.table.columns.where((c) => c.name.toLowerCase() == binding.fieldName.toLowerCase()).firstOrNull;
+    if (col == null) return const [(1, null)];
+    return [for (final n in binding.repetitionNumbers(col.maxRepetitions)) (n, ConditionSelf(col.name, repetition: n))];
+  }
+
+  /// Whether the formula of [obj]'s conditional format at an index is true
+  /// on [record] in [repetition]; null when [obj] has no such format.
+  bool Function(int index)? _formulaTrueOn(LayoutObjectModel obj, Map<String, dynamic> record, {int repetition = 1}) {
+    final layout = widget.layout;
+    if (layout == null || !obj.style.conditionalRules.any((r) => r.isFormula)) return null;
+    final truths = _hiddenOn(layout, record);
+    return (i) => truths.contains('${obj.id}#$i@$repetition');
+  }
+
+  /// [obj]'s style on [record], in [repetition], with the conditional
+  /// formats that apply.
+  LayoutObjectStyle _styleOn(LayoutObjectModel obj, Map<String, dynamic> record, Object? rawValue, {int repetition = 1}) =>
+      obj.style.effectiveForValue(rawValue, formulaTrue: _formulaTrueOn(obj, record, repetition: repetition));
 
   /// Evaluates what is queued: for each layout, every condition against
   /// every record waiting, in as few requests as the endpoint allows.
@@ -671,7 +709,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           try {
             final results = await widget.apiClient.evaluateForRecords(
               widget.table.name,
-              expressions: [for (final (_, expression) in chunk) expression],
+              expressions: [for (final (_, expression, _) in chunk) expression],
+              self: [for (final (_, _, self) in chunk) self],
               recordIds: chunkIds,
               occurrence: layout.tableOccurrence,
               resultType: 'Number',
@@ -1104,7 +1143,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// Each entry stores its value; with [showSecondOnly] it shows its second
   /// field instead, and so does a value already stored that the list offers.
   /// Two entries may store the same value with different second values.
-  /// [truncated] says the list has more entries than it offers.
+  /// [truncated] says the list has more entries than it offers. [look] is
+  /// what the field's conditional formats that apply give it.
   Widget _buildValueListControl({
     required String style,
     required List<ValueListItem> items,
@@ -1112,6 +1152,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     required ValueChanged<String> onChanged,
     bool showSecondOnly = false,
     bool truncated = false,
+    ConditionalFormatRule? look,
   }) {
     final values = [for (final item in items) item.value];
     // An entry whose value an earlier entry also stores gets its own key.
@@ -1143,7 +1184,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           next.contains(value) ? next.remove(value) : next.add(value);
           onChanged({for (final item in shown) if (next.contains(item.value)) item.value}.join('\n'));
         }
-        return SingleChildScrollView(
+        return withConditionalLook(look, SingleChildScrollView(
           child: Wrap(
             spacing: 12,
             runSpacing: 2,
@@ -1169,10 +1210,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
               if (truncated) more,
             ],
           ),
-        );
+        ));
 
       case FieldControlStyle.radioButtonSet:
-        return SingleChildScrollView(
+        return withConditionalLook(look, SingleChildScrollView(
           child: Wrap(
             spacing: 12,
             runSpacing: 2,
@@ -1199,7 +1240,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
               if (truncated) more,
             ],
           ),
-        );
+        ));
 
       default:
         // Drop-down list and pop-up menu are the same control; the record may
@@ -1218,10 +1259,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           key: const ValueKey('value-list-control'),
           isExpanded: true,
           initialValue: value.isEmpty ? null : offered.indexWhere((item) => item.value == value),
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             isDense: true,
-            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            border: OutlineInputBorder(),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            border: const OutlineInputBorder(),
+            fillColor: parseLayoutColor(look?.fillColor),
+            filled: parseLayoutColor(look?.fillColor) != null,
           ),
           hint: dash,
           items: [
@@ -1238,7 +1281,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             for (final item in offered)
               Text(
                 showSecondOnly && item.second != null ? item.secondText : item.value,
-                style: const TextStyle(fontSize: 13),
+                style: conditionalTextStyle(const TextStyle(fontSize: 13), look),
               ),
             if (truncated) more,
           ],
@@ -3363,6 +3406,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           related: related,
           isDark: isDark,
           editable: widget.mode == OperationalMode.browse,
+          formulaTrue: _formulaTrueOn(obj, rec),
         );
       }
       final fieldName = obj.fieldBinding?.fieldName ?? obj.text;
@@ -3396,11 +3440,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         );
       }
       // The record key of what the box shows: the repetition it starts at.
-      final key = col == null
-          ? fieldName
-          : ColumnModel.repetitionKey(col.name, obj.fieldBinding?.repetitionNumbers(col.maxRepetitions).first ?? 1);
+      final repetition = col == null ? 1 : obj.fieldBinding?.repetitionNumbers(col.maxRepetitions).first ?? 1;
+      final key = col == null ? fieldName : ColumnModel.repetitionKey(col.name, repetition);
       final rawVal = rec[key];
-      final effStyle = _styleOn(obj, rec, rawVal);
+      final effStyle = _styleOn(obj, rec, rawVal, repetition: repetition);
       // A field FileMaker would not let be entered in Browse mode is shown,
       // never typed into, in the list as in the form.
       final enterable = col != null &&
@@ -4102,6 +4145,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             related: related,
             isDark: isDark,
             editable: widget.mode == OperationalMode.browse,
+            formulaTrue: _formulaTrueOn(obj, record),
           );
         }
 
@@ -4252,7 +4296,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                       left: horizontal && n > numbers.first ? 1 : 0,
                     ),
                     child: _buildFieldCell(cell, col, record, isDark, ColumnModel.repetitionKey(col.name, n),
-                        trigger: listRow ? null : obj),
+                        trigger: listRow ? null : obj, repetition: n),
                   ),
                 ),
             ],
@@ -4260,7 +4304,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         }
         // A box of one repetition past the first edits that repetition.
         return _buildFieldCell(obj, col, record, isDark, ColumnModel.repetitionKey(col.name, numbers.first),
-            trigger: listRow ? null : obj);
+            trigger: listRow ? null : obj, repetition: numbers.first);
 
       case 'button':
       case 'popover_button':
@@ -4425,11 +4469,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     bool isDark,
     String key, {
     LayoutObjectModel? trigger,
+    int repetition = 1,
   }) {
     if (col.storageType == 'CONTAINER') {
       return _buildContainerFieldObject(obj, col, record, isDark, key: key);
     }
-    final cell = _buildFieldBox(obj, col, record, isDark, key, trigger: trigger);
+    final cell = _buildFieldBox(obj, col, record, isDark, key, trigger: trigger, repetition: repetition);
     if (trigger == null) return cell;
     return _withTriggers(() => _fieldBox(trigger, col, key), cell);
   }
@@ -4441,6 +4486,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     bool isDark,
     String key, {
     LayoutObjectModel? trigger,
+    int repetition = 1,
   }) {
 
     final ctrl = _fieldControllers[key];
@@ -4454,8 +4500,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     // A field bound to a value list is filled from a control rather than
     // typed into (#31).
     final offered = computed ? null : _itemsFor(obj.fieldBinding!);
+    final formulaTrue = _formulaTrueOn(obj, record, repetition: repetition);
     if (offered != null) {
       return _buildValueListControl(
+        look: obj.style.conditionalLook(record[key] ?? ctrl?.text, formulaTrue: formulaTrue),
         style: obj.fieldBinding!.effectiveControlStyle(hasValueList: true),
         items: offered,
         showSecondOnly: _valueLists[obj.fieldBinding!.valueListId]?.showSecondOnly ?? false,
@@ -4474,7 +4522,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final listProblem = computed ? null : _valueListProblems[obj.fieldBinding!.valueListId];
 
     final rawVal = record[key] ?? ctrl?.text;
-    final effStyle = _styleOn(obj, record, rawVal);
+    final effStyle = obj.style.effectiveForValue(rawVal, formulaTrue: formulaTrue);
     final isFocused = fn?.hasFocus ?? false;
     final hasDisplayFormatting = layoutStyleHasDisplayFormat(effStyle);
 

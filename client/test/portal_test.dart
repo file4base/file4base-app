@@ -144,16 +144,38 @@ class _RelatedApi extends ApiClient {
     children.removeWhere((c) => c['id'] == id);
   }
 
-  /// Filters asked about: table, expressions, occurrence. The filter is
-  /// true for cu-2 only.
+  /// Filters and conditions asked about: table, expressions, occurrence.
+  /// A filter is true for cu-2 only.
   final List<(String, List<String>, String?)> evaluations = [];
+
+  /// The records each request asked about, and the Self of its expressions.
+  final List<List<String>> evaluatedRecords = [];
+  final List<List<ConditionSelf?>?> evaluatedSelves = [];
 
   @override
   Future<Map<String, List<EvaluationModel>?>> evaluateForRecords(String table,
-      {required List<String> expressions, required List<String> recordIds, String? occurrence, String resultType = 'Text'}) async {
+      {required List<String> expressions,
+      required List<String> recordIds,
+      String? occurrence,
+      String resultType = 'Text',
+      List<ConditionSelf?>? self}) async {
     evaluations.add((table, expressions, occurrence));
+    evaluatedRecords.add(recordIds);
+    evaluatedSelves.add(self);
+    // `Self = "Soto"`, as the server answers it: Self is the field given, of
+    // the record evaluated, or of its first related record.
+    String answer(String id, int i) {
+      final s = self == null || i >= self.length ? null : self[i];
+      if (s == null) return id == 'cu-2' ? '1' : '0';
+      final record = s.occurrence == 'Customers'
+          ? children.first
+          : [...parents, ...children].firstWhere((r) => r['id'] == id, orElse: () => const {});
+      return record[s.field] == 'Soto' ? '1' : '0';
+    }
+
     return {
-      for (final id in recordIds) id: [EvaluationModel(expression: expressions.first, text: id == 'cu-2' ? '1' : '0')],
+      for (final id in recordIds)
+        id: [for (final (i, e) in expressions.indexed) EvaluationModel(expression: e, text: answer(id, i))],
     };
   }
 }
@@ -676,6 +698,54 @@ void main() {
     expect(find.byKey(const ValueKey('portal-cell-cu-1-company')), findsNothing,
         reason: "the customers table has a company column, but the field is the company record's");
     expect(find.text('<company>'), findsNWidgets(2));
+  });
+
+  group('conditional formats (#222)', () {
+    const red = Color(0xFFFF0000);
+    const rule = ConditionalFormatRule(operator: 'formula', value: 'Self = "Soto"', textColor: '#FF0000', fillColor: '#FFFF00');
+    LayoutDefinitionModel withRule(String objectId) {
+      final base = _layoutWithPortal(withRelatedField: true);
+      return base.copyWith(objects: [
+        for (final o in base.objects)
+          if (o.id == objectId) o.copyWith(style: o.style.copyWith(conditionalRules: const [rule])) else o,
+      ]);
+    }
+
+    testWidgets("a portal row is drawn by its own record, Self being the row's field", (tester) async {
+      final api = await _pump(tester, layout: withRule('fld_in_portal'));
+
+      final soto = tester.widget<TextField>(find.byKey(const ValueKey('portal-cell-cu-1-last_name')));
+      final alvarez = tester.widget<TextField>(find.byKey(const ValueKey('portal-cell-cu-2-last_name')));
+      expect(soto.style?.color, red);
+      expect(soto.decoration?.fillColor, const Color(0xFFFFFF00));
+      expect(alvarez.style?.color, isNot(red));
+      expect(alvarez.decoration?.filled, isNot(isTrue));
+
+      final (table, expressions, occurrence) = api.evaluations.single;
+      expect((table, expressions.single, occurrence), ('customers', 'Self = "Soto"', 'occ-customers'),
+          reason: "evaluated from the portal occurrence against the row's record, as FileMaker does");
+      expect([for (final s in api.evaluatedSelves.single!) s?.toJson()], [
+        {'field': 'last_name'},
+      ]);
+      expect(api.evaluatedRecords.single.toSet(), {'cu-1', 'cu-2'}, reason: 'each row shown, in one request');
+
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(api.evaluations, hasLength(1), reason: 'an unchanged row is not asked again');
+    });
+
+    testWidgets('a related field is drawn by its rule, Self being the related field', (tester) async {
+      final api = await _pump(tester, layout: withRule('fld_related'));
+
+      final shown = find.descendant(of: find.byKey(const ValueKey('related-field')), matching: find.text('Soto'));
+      expect(tester.widget<Text>(shown).style?.color, red);
+      final (table, expressions, _) = api.evaluations.single;
+      expect((table, expressions.single), ('companies', 'Self = "Soto"'),
+          reason: 'evaluated against the record shown, from the layout');
+      expect([for (final s in api.evaluatedSelves.single!) s?.toJson()], [
+        {'field': 'last_name', 'occurrence': 'Customers'},
+      ]);
+    });
   });
 
   testWidgets('a button in a portal row is drawn on each row and says it does not run yet', (tester) async {

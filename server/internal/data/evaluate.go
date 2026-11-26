@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/calc"
@@ -71,6 +73,57 @@ func (c *envContext) Get(selector string) (any, error) {
 		return v, nil
 	}
 	return c.unstoredContext.Get(selector)
+}
+
+// SelfField is the field a layout object shows, which Self reads in the
+// object's conditions: a field of the record evaluated (no occurrence), or
+// of an occurrence, by name, seen from the one the expressions are
+// evaluated from, with the repetition the object shows (0 and 1 are the
+// first).
+type SelfField struct {
+	Occurrence string `json:"occurrence,omitempty"`
+	Field      string `json:"field"`
+	Repetition int    `json:"repetition,omitempty"`
+}
+
+// reference writes the field as a formula reads it back.
+func (f SelfField) reference(lib *calc.Library) string {
+	ref := calc.QuoteFieldName(f.Field, lib)
+	if f.Occurrence != "" {
+		ref = calc.QuoteQualifiedName(f.Occurrence, f.Field)
+	}
+	if f.Repetition > 1 {
+		ref += "[" + strconv.Itoa(f.Repetition) + "]"
+	}
+	return ref
+}
+
+// BindSelf returns expressions with each Self written as the field given at
+// the same index of self: how a condition of a layout object reads the
+// object's own value, as FileMaker evaluates Self there, comparing as that
+// field's type does. A nil or empty field leaves its expression as it is,
+// and so does an expression that does not parse, for its evaluation to say
+// why.
+func (s *Service) BindSelf(ctx context.Context, expressions []string, self []*SelfField) ([]string, error) {
+	out := slices.Clone(expressions)
+	bound := func(f *SelfField) bool { return f != nil && strings.TrimSpace(f.Field) != "" }
+	if !slices.ContainsFunc(self, bound) {
+		return out, nil
+	}
+	lib, err := LoadLibrary(ctx, s.driver)
+	if err != nil {
+		return nil, err
+	}
+	opts := calc.Options{Library: lib}
+	for i := range out {
+		if i >= len(self) || !bound(self[i]) {
+			continue
+		}
+		if replaced, err := calc.ReplaceSelf(out[i], opts, self[i].reference(lib)); err == nil {
+			out[i] = replaced
+		}
+	}
+	return out, nil
 }
 
 // variableInput is a variable as a script sends it: a number written as a

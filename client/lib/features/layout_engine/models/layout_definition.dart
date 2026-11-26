@@ -584,20 +584,35 @@ class LayoutObjectStyle {
   /// whether the calculation of the rule at an index is true for the record
   /// shown; without it a formula rule does not apply.
   LayoutObjectStyle effectiveForValue(Object? rawValue, {bool Function(int index)? formulaTrue}) {
-    if (conditionalRules.isEmpty) return this;
-    var effective = this;
+    final look = conditionalLook(rawValue, formulaTrue: formulaTrue);
+    if (look == null) return this;
+    return copyWith(
+      textColor: look.textColor,
+      fillColor: look.fillColor,
+      fontWeight: look.bold ? 'bold' : null,
+      fontStyle: look.italic ? 'italic' : null,
+      underline: look.underline ? true : null,
+    );
+  }
+
+  /// What the rules of [conditionalRules] that apply give, as one rule: the
+  /// colours of the last that sets each, bold, italic or underlined when any
+  /// is. Null when none applies, so an object drawn its own way (a portal
+  /// row, a related field, a value list's control) changes only then.
+  ConditionalFormatRule? conditionalLook(Object? rawValue, {bool Function(int index)? formulaTrue}) {
+    ConditionalFormatRule? look;
     for (final (i, rule) in conditionalRules.indexed) {
-      if (rule.isFormula ? (formulaTrue?.call(i) ?? false) : rule.matches(rawValue)) {
-        effective = effective.copyWith(
-          textColor: rule.textColor ?? effective.textColor,
-          fillColor: rule.fillColor ?? effective.fillColor,
-          fontWeight: rule.bold ? 'bold' : effective.fontWeight,
-          fontStyle: rule.italic ? 'italic' : effective.fontStyle,
-          underline: rule.underline ? true : effective.underline,
-        );
-      }
+      if (!(rule.isFormula ? (formulaTrue?.call(i) ?? false) : rule.matches(rawValue))) continue;
+      look = ConditionalFormatRule(
+        operator: 'formula',
+        textColor: rule.textColor ?? look?.textColor,
+        fillColor: rule.fillColor ?? look?.fillColor,
+        bold: rule.bold || (look?.bold ?? false),
+        italic: rule.italic || (look?.italic ?? false),
+        underline: rule.underline || (look?.underline ?? false),
+      );
     }
-    return effective;
+    return look;
   }
 
   Map<String, dynamic> toJson() => {

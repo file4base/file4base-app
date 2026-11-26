@@ -1073,8 +1073,11 @@ func TestNativeLayoutConditionalFormats(t *testing.T) {
 	design = strings.Replace(design, `<Field id="2" name="Quantity" datatype="number" fieldtype="normal"/>`,
 		`<Field id="2" name="Quantity" datatype="number" fieldtype="normal" maxRepetition="3"/>`, 1)
 	design = replace(design, "000000000006", fmCondition(13, "IsEmpty(Self)", "-", "")+fmCondition(0, "Recipes::Price > 1", "-", ""))
-	// A condition switched off in FileMaker is never applied.
-	design = replace(design, "000000000007", strings.Replace(fmCondition(13, "IsEmpty(Self)", "-", ""), "<Options>7</Options>", "<Options>6</Options>", 1))
+	// A condition switched off in FileMaker is never applied. Self reads a
+	// field of an occurrence no relationship joins to the layout's, which
+	// cannot be read.
+	design = replace(design, "000000000007", strings.Replace(fmCondition(13, "IsEmpty(Self)", "-", ""), "<Options>7</Options>", "<Options>6</Options>", 1)+
+		fmCondition(14, "GetAsDate(Self) = Get(CurrentDate)", "-", ""))
 	// A text has no field.
 	design = replace(design, "000000000001", fmCondition(0, "Recipes::Price > 1", "-", ""))
 	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design, SourceLocale: "fr-FR"})
@@ -1105,20 +1108,20 @@ func TestNativeLayoutConditionalFormats(t *testing.T) {
 		}
 		return out
 	}
+	// Each condition keeps FileMaker's calculation, Self included, with
+	// its fields bound and its decimals written with a point.
 	want := map[string][]string{
-		"Recipes::price": {"price > 100",
-			"Recipes::price≥1 and Recipes::price≤5", "not (Recipes::price≥1 and Recipes::price≤5)", "Recipes::price=0",
-			"Recipes::price≠2.5", "Recipes::price>100", "Recipes::price<0", "Recipes::price≥10", "Recipes::price≤10",
-			"IsEmpty(Recipes::price)", "Recipes::price < 0 and price ≠ 7", "Recipes::price>40"},
-		"Recipes::served_on": {"Recipes::served_on>Date(3;15;1990)",
-			"GetAsDate(Recipes::served_on) < Get(CurrentDate)", "GetAsDate(Recipes::served_on) = Get(CurrentDate)",
-			"GetAsDate(Recipes::served_on) > Get(CurrentDate)", "(Get(CurrentDate) - GetAsDate(Recipes::served_on)) > 3",
-			"(GetAsDate(Recipes::served_on) - Get(CurrentDate)) > 3", "(Get(CurrentDate) - GetAsDate(Recipes::served_on)) < 4",
-			"(GetAsDate(Recipes::served_on) - Get(CurrentDate)) < 4"},
-		"Recipes::unit": {`Recipes::unit="k\"g"`, `Recipes::unit≠"kg"`, `PatternCount(Recipes::unit; "g") > 0`,
-			`PatternCount(Recipes::unit; "g") = 0`, `Left(Recipes::unit; Length("k")) = "k"`, `Right(Recipes::unit; Length("g")) = "g"`},
-		"Ingredient Recipes::price": {"${Ingredient Recipes}::price>5"},
-		"Ingredients::quantity":     {"Recipes::price > 1"},
+		"Recipes::price": {"price > 100", "Self≥1 and Self≤5", "not (Self≥1 and Self≤5)", "Self=0", "Self≠2.5",
+			"Self>100", "Self<0", "Self≥10", "Self≤10", "IsEmpty(Self)", "Self < 0 and price ≠ 7", "Self>40"},
+		"Recipes::served_on": {"Self>Date(3;15;1990)", "GetAsDate(Self) < Get(CurrentDate)",
+			"GetAsDate(Self) = Get(CurrentDate)", "GetAsDate(Self) > Get(CurrentDate)",
+			"(Get(CurrentDate) - GetAsDate(Self)) > 3", "(GetAsDate(Self) - Get(CurrentDate)) > 3",
+			"(Get(CurrentDate) - GetAsDate(Self)) < 4", "(GetAsDate(Self) - Get(CurrentDate)) < 4"},
+		"Recipes::unit": {`Self="k\"g"`, `Self≠"kg"`, `PatternCount(Self; "g") > 0`, `PatternCount(Self; "g") = 0`,
+			`Left(Self; Length("k")) = "k"`, `Right(Self; Length("g")) = "g"`},
+		"Ingredient Recipes::price": {"Self>5"},
+		// Browse mode answers Self in each repetition the box shows.
+		"Ingredients::quantity": {"IsEmpty(Self)", "Recipes::price > 1"},
 	}
 	if len(rulesOf) != len(want) {
 		t.Fatalf("objects with rules: %v", rulesOf)
@@ -1134,8 +1137,8 @@ func TestNativeLayoutConditionalFormats(t *testing.T) {
 			review += it.Detail
 		}
 	}
-	// Not kept: a formula that cannot be bound, an unknown condition, the
-	// repeated box's Self and the text's format.
+	// Not kept: a formula that cannot be bound, an unknown condition, a
+	// Self that cannot be read and the text's format.
 	for _, w := range []string{"4 conditional formats not kept", "1 conditional format switched off in FileMaker, left out",
 		`1 conditional format whose "Value is" condition shows other values than the calculation FileMaker keeps for it`} {
 		if !strings.Contains(review, w) {
@@ -1144,44 +1147,8 @@ func TestNativeLayoutConditionalFormats(t *testing.T) {
 	}
 }
 
-// A box showing one repetition has that repetition as Self; a box showing
-// several has a Self for each, and its conditions on Self are not kept.
-func TestNativeLayoutConditionalFormatOnRepetitions(t *testing.T) {
-	const field = `<Field id="2" name="Quantity" datatype="number" fieldtype="normal"/>`
-	for _, c := range []struct {
-		name, repetitions, show, want string
-	}{
-		{"the second of three", ` maxRepetition="3"`, `show="1"`, `Ingredients::quantity[2]>5`},
-		{"from the second of three, all", ` maxRepetition="3"`, `show="0"`, ``},
-		{"the second of a field that does not repeat", ``, `show="-3"`, `Ingredients::quantity>5`},
-	} {
-		design := strings.Replace(layoutObjectsFixture, field, strings.Replace(field, "/>", c.repetitions+"/>", 1), 1)
-		design = strings.Replace(design, `<Display Style="0" show="-3"/>`, `<Display Style="0" `+c.show+`/>`, 1)
-		at := "<UUID>00000000-0000-0000-0000-000000000006</UUID>"
-		design = strings.Replace(design, at, at+"<Conditions><Formatting>"+fmCondition(5, "Self>5", "5", "")+"</Formatting></Conditions>", 1)
-		got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var def map[string]interface{}
-		encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
-		if err := json.Unmarshal(encoded, &def); err != nil {
-			t.Fatal(err)
-		}
-		kept := ""
-		for _, o := range objectsByType(def)["field"] {
-			if rules, _ := o["style"].(map[string]interface{})["conditional_rules"].([]interface{}); len(rules) == 1 {
-				kept = rules[0].(map[string]interface{})["value"].(string)
-			}
-		}
-		if kept != c.want {
-			t.Errorf("%s: kept %q, want %q", c.name, kept, c.want)
-		}
-	}
-}
-
-// The objects of a portal's rows keep their conditional formats, which the
-// rows do not draw yet: the report says so.
+// The objects of a portal's rows keep their conditional formats, Self
+// included, which each row answers as its own record's value.
 func TestNativeLayoutConditionalFormatInAPortalRow(t *testing.T) {
 	portal := `<LayoutObject type="Portal">
                 <UUID>00000000-0000-0000-0000-000000000050</UUID>
@@ -1205,15 +1172,13 @@ func TestNativeLayoutConditionalFormatInAPortalRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
-	if !strings.Contains(string(encoded), `"value":"Ingredients::quantity\u003c1"`) {
+	if !strings.Contains(string(encoded), `"value":"Self\u003c1"`) {
 		t.Fatalf("definition: %s", encoded)
 	}
-	var review string
 	for _, it := range got.Report.ManualActionRequired {
-		review += it.Detail
-	}
-	if !strings.Contains(review, "1 conditional format of objects in portal rows, kept but not drawn in the rows yet") {
-		t.Fatalf("review: %s", review)
+		if strings.Contains(it.Detail, "conditional format") {
+			t.Errorf("reported: %s", it.Detail)
+		}
 	}
 }
 
