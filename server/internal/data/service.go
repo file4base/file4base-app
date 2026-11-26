@@ -115,7 +115,13 @@ func orderByClause(dialect dbal.Dialect, fields fieldSet, tableName string, orde
 		if level.Descending {
 			dir = "DESC"
 		}
-		parts = append(parts, fmt.Sprintf("%s %s", dialect.QuoteIdentifier(level.Field), dir))
+		column := dialect.QuoteIdentifier(level.Field)
+		if dialect.Engine() == dbal.EngineSQLite && fields[level.Field] == dbal.FieldTypeText {
+			// SQLite sorts text by its bytes unless told otherwise; F4B sorts
+			// it as calculations and unstored fields do (dbal.SQLiteSortCollation).
+			column += " COLLATE " + dbal.SQLiteSortCollation
+		}
+		parts = append(parts, fmt.Sprintf("%s %s", column, dir))
 	}
 	if len(parts) == 0 {
 		return "", nil

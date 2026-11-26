@@ -135,6 +135,19 @@ func mariaPresent(line string) string {
 	return fmt.Sprintf("CHAR_LENGTH(%s) > 0", line)
 }
 
+// sqliteLines is the FROM items of a table of the lines of a text
+// expression on SQLite, as alias: json_each over the JSON array f4b_lines (a
+// function registered on every connection) makes of them, without the empty
+// ones. alias.value is the line. There is no index on lines, as there is
+// none on MariaDB.
+//
+// The expression is read in a subquery of its own: inside json_each's
+// arguments, a field named like one of json_each's columns (key, value,
+// type, path...) would be read as that column.
+func sqliteLines(expr, alias string) string {
+	return fmt.Sprintf("(SELECT f4b_lines(%s) AS f4b$j) AS %s$s, json_each(%s$s.f4b$j) AS %s", expr, alias, alias, alias)
+}
+
 // anyOf is the condition that expr meets op against one of keys.
 func anyOf(expr, op string, keys []string) string {
 	if op == "=" {
@@ -168,6 +181,10 @@ func meetsKeys(dialect dbal.Dialect, column multiKeyColumn, op string, keys func
 		return fmt.Sprintf("EXISTS (SELECT 1 FROM unnest(%s) AS %s(%s) WHERE %s)",
 			pgLines(column.sql), lineAlias, lineValue, anyOf(lineAlias+"."+lineValue, op, keys()))
 	}
+	if dialect.Engine() == dbal.EngineSQLite {
+		return fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s)",
+			sqliteLines(column.sql, lineAlias), anyOf(lineAlias+".value", op, keys()))
+	}
 	// A field of one line is compared whole, without being split.
 	line := mariaLine(column.sql, lineAlias)
 	return fmt.Sprintf("(CASE WHEN %s THEN %s ELSE EXISTS (SELECT 1 FROM %s WHERE %s AND %s) END)",
@@ -195,6 +212,10 @@ func keysMeet(dialect dbal.Dialect, left multiKeyColumn, op string, right multiK
 			pgLines(left.sql), leftAlias, lineValue, pgLines(right.sql), rightAlias, lineValue,
 			leftAlias, lineValue, op, rightAlias, lineValue)
 	}
+	if dialect.Engine() == dbal.EngineSQLite {
+		return fmt.Sprintf("EXISTS (SELECT 1 FROM %s, %s WHERE %s.value %s %s.value)",
+			sqliteLines(left.sql, leftAlias), sqliteLines(right.sql, rightAlias), leftAlias, op, rightAlias)
+	}
 	l, r := mariaLine(left.sql, leftAlias), mariaLine(right.sql, rightAlias)
 	return fmt.Sprintf("(CASE WHEN %s AND %s THEN %s %s %s ELSE EXISTS (SELECT 1 FROM %s, %s WHERE %s AND %s AND %s %s %s) END)",
 		mariaSingleLine(left.sql), mariaSingleLine(right.sql), left.sql, op, right.sql,
@@ -211,6 +232,11 @@ func lineSource(dialect dbal.Dialect, column multiKeyColumn, alias string) (from
 	}
 	if dialect.Engine() == dbal.EnginePostgres {
 		return fmt.Sprintf("CROSS JOIN LATERAL unnest(%s) AS %s(%s)", pgLines(column.sql), alias, lineValue), alias + "." + lineValue, ""
+	}
+	if dialect.Engine() == dbal.EngineSQLite {
+		// The column is qualified by its table, so json_each's own columns
+		// cannot hide it.
+		return fmt.Sprintf("CROSS JOIN json_each(f4b_lines(%s)) AS %s", column.sql, alias), alias + ".value", ""
 	}
 	line := mariaLine(column.sql, alias)
 	return "CROSS JOIN " + mariaLineTable(column.sql, alias), line, mariaPresent(line)
@@ -251,6 +277,18 @@ func keyText(key interface{}) interface{} {
 // one that is, as text: a date or timestamp as keyText writes one.
 func asKeyText(dialect dbal.Dialect, column multiKeyColumn) string {
 	postgres := dialect.Engine() == dbal.EnginePostgres
+	if dialect.Engine() == dbal.EngineSQLite {
+		// Both hold the text of their UTC value (dbal.TemporalValue), which
+		// SQLite's date functions read.
+		switch column.kind {
+		case dbal.FieldTypeDate:
+			return fmt.Sprintf("date(%s)", column.sql)
+		case dbal.FieldTypeTimestamp:
+			return fmt.Sprintf("CASE WHEN strftime('%%H:%%M:%%f', %s) = '00:00:00.000' THEN date(%s) ELSE datetime(%s) END",
+				column.sql, column.sql, column.sql)
+		}
+		return column.sql
+	}
 	switch column.kind {
 	case dbal.FieldTypeDate:
 		if postgres {

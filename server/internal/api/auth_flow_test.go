@@ -743,10 +743,8 @@ func TestAPI_FieldOptionsAreMetadataNotSQL(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 
 	physicalColumns := func(tbl string) map[string]sql.NullString {
-		q := `SELECT column_name, column_default FROM information_schema.columns WHERE table_name = $1`
-		if driver.Dialect().Engine() != dbal.EnginePostgres {
-			q = `SELECT column_name, column_default FROM information_schema.columns WHERE table_name = ? AND table_schema = DATABASE()`
-		}
+		q := `SELECT column_name, column_default FROM ` + dbal.CatalogColumnsSQL(driver.Dialect().Engine()) +
+			` AS c WHERE table_name = ` + driver.Dialect().Placeholder(1)
 		rows, err := driver.DB().QueryContext(ctx, q, tbl)
 		require.NoError(t, err)
 		defer rows.Close()

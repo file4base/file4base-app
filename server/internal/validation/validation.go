@@ -418,15 +418,34 @@ func IsUniqueIndexViolation(err error, table string, fields map[string]Field) (F
 		return Field{}, false
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "uq_f4b_") {
-		return Field{}, false
-	}
 	for name, f := range fields {
 		if strings.Contains(msg, UniqueIndexName(table, name)) {
 			return f, true
 		}
+		// SQLite names the columns of the index, not the index itself.
+		if f.Rules != nil && f.Rules.Unique && sqliteUniqueFailure(msg, table, name) {
+			return f, true
+		}
 	}
 	return Field{}, false
+}
+
+// sqliteUniqueFailure reports whether msg is SQLite's unique violation of
+// the column table.field: "UNIQUE constraint failed: table.field".
+func sqliteUniqueFailure(msg, table, field string) bool {
+	_, rest, ok := strings.Cut(msg, "UNIQUE constraint failed: ")
+	if !ok {
+		return false
+	}
+	if end := strings.Index(rest, " ("); end >= 0 {
+		rest = rest[:end]
+	}
+	for _, column := range strings.Split(rest, ",") {
+		if strings.TrimSpace(column) == table+"."+field {
+			return true
+		}
+	}
+	return false
 }
 
 // UniqueViolation builds the error of a unique rule broken by a concurrent

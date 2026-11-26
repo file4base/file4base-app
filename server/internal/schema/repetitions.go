@@ -71,10 +71,9 @@ func (s *Service) prepareRepetitionsChange(ctx context.Context, tableID, columnI
 // whose maximum went down, even to 1, keeps its companion column and the
 // repetitions in it, so a data bundle has to carry them too.
 func (s *Service) companionColumns(ctx context.Context, table string) (map[string]bool, error) {
-	q := `SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name LIKE '%$reps'`
-	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
-		q = `SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name LIKE '%$reps'`
-	}
+	dialect := s.driver.Dialect()
+	q := `SELECT column_name FROM ` + dbal.CatalogColumnsSQL(dialect.Engine()) + ` AS c WHERE table_name = ` +
+		dialect.Placeholder(1) + ` AND column_name LIKE '%$reps'`
 	rows, err := s.driver.DB().QueryContext(ctx, q, table)
 	if err != nil {
 		return nil, fmt.Errorf("failed listing the repetitions of %s: %w", table, err)

@@ -9,6 +9,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/testdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vmihailenco/msgpack/v5"
@@ -351,6 +352,9 @@ func TestRelatedRows_SortedByAnUnstoredCalculation(t *testing.T) {
 // A table found without its creation order column is looked up again once
 // that is no longer believed, so a column another server added is used.
 func TestCreationOrder_ColumnAddedElsewhereIsNoticed(t *testing.T) {
+	if testdb.Engine() == dbal.EngineSQLite {
+		t.Skip("SQLite tables are created with their creation order, which cannot be added to a table later (docs/specs/sqlite_engine.md, \"Test exceptions\")")
+	}
 	ctx, a, _ := twoSolutions(t, "xelsewhere", "xelsewhere_unused")
 	a.table(t, ctx, "later", [2]string{"label", "TEXT"})
 	dialect := a.driver.Dialect()
@@ -378,6 +382,9 @@ func TestCreationOrder_ColumnAddedElsewhereIsNoticed(t *testing.T) {
 // the column when its catalog is brought up to date: the records it holds
 // are numbered in the order the engine reads them, the next ones after them.
 func TestCreationOrder_ExistingTableIsUpgraded(t *testing.T) {
+	if testdb.Engine() == dbal.EngineSQLite {
+		t.Skip("SQLite tables are created with their creation order, which cannot be added to a table later (docs/specs/sqlite_engine.md, \"Test exceptions\")")
+	}
 	ctx, a, _ := twoSolutions(t, "xupgrade", "xupgrade_unused")
 	a.table(t, ctx, "older", [2]string{"label", "TEXT"})
 	dialect := a.driver.Dialect()

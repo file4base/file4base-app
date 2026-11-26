@@ -92,14 +92,9 @@ func (s *Service) ensureExternalCatalog(ctx context.Context) error {
 func (s *Service) ensureExternalOccurrenceColumns(ctx context.Context) error {
 	db := s.driver.DB()
 	mariadb := s.driver.Dialect().Engine() == dbal.EngineMariaDB
-	q := `SELECT table_name, column_name, is_nullable FROM information_schema.columns
+	q := `SELECT table_name, column_name, is_nullable FROM ` + dbal.CatalogColumnsSQL(s.driver.Dialect().Engine()) + ` AS c
 		WHERE table_name IN ('sys_table_occurrences', 'sys_file_references', 'sys_value_lists', 'sys_columns', 'sys_relationships', '` +
-		RelationshipPredicatesTable + `') AND table_schema = `
-	if mariadb {
-		q += `DATABASE()`
-	} else {
-		q += `current_schema()`
-	}
+		RelationshipPredicatesTable + `')`
 	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return fmt.Errorf("failed reading the catalog columns: %w", err)

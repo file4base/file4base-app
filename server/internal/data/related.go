@@ -961,7 +961,7 @@ func (s *Service) RelatedRowsBatch(
 	if rest, ok := strings.CutPrefix(q.order, "ORDER BY "); ok {
 		order += ", " + rest
 	}
-	sqlText := fmt.Sprintf("SELECT * FROM (%s) f4b_batch %s", strings.Join(branches, " UNION ALL "), order)
+	sqlText := fmt.Sprintf("SELECT * FROM (%s) f4b_batch %s", unionAll(dialect, branches), order)
 	if q.sorted != nil {
 		// Sorted once read: no more records across the batch than one
 		// record's read sorts.
@@ -1004,6 +1004,20 @@ func (s *Service) RelatedRowsBatch(
 
 // batchBranch is the column a batched related read numbers its branches in.
 const batchBranch = "f4b_branch"
+
+// unionAll joins parenthesized SELECTs, each with its own ORDER BY and
+// LIMIT, with UNION ALL. SQLite takes a SELECT of a compound only bare, so
+// there each is read from as a subquery.
+func unionAll(dialect dbal.Dialect, branches []string) string {
+	if dialect.Engine() != dbal.EngineSQLite {
+		return strings.Join(branches, " UNION ALL ")
+	}
+	wrapped := make([]string, len(branches))
+	for i, b := range branches {
+		wrapped[i] = "SELECT * FROM " + b
+	}
+	return strings.Join(wrapped, " UNION ALL ")
+}
 
 func branchOf(v interface{}) int {
 	switch n := v.(type) {

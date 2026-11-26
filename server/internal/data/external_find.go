@@ -437,11 +437,14 @@ func externalKeySets(
 }
 
 // keyRows is a table of rows of bound values. PostgreSQL takes a VALUES list,
-// each value cast to the type it is compared as. MariaDB loses the values a
-// VALUES list binds, so it takes a SELECT per row. A value compared with a
-// text field (text) is bound as the text keyText writes.
+// each value cast to the type it is compared as; SQLite takes one too, its
+// values bound as they are (a cast to DATE would make a number of a date).
+// MariaDB loses the values a VALUES list binds, so it takes a SELECT per row.
+// A value compared with a text field (text) is bound as the text keyText
+// writes.
 func keyRows(dialect dbal.Dialect, types []string, text []bool, rows [][]interface{}, idx *int, values *[]interface{}) string {
 	postgres := dialect.Engine() == dbal.EnginePostgres
+	list := dialect.Engine() != dbal.EngineMariaDB
 	out := make([]string, len(rows))
 	for i, row := range rows {
 		marks := make([]string, len(row))
@@ -456,13 +459,13 @@ func keyRows(dialect dbal.Dialect, types []string, text []bool, rows [][]interfa
 			}
 			*values = append(*values, v)
 		}
-		if postgres {
+		if list {
 			out[i] = "(" + strings.Join(marks, ", ") + ")"
 		} else {
 			out[i] = "SELECT " + strings.Join(marks, ", ")
 		}
 	}
-	if postgres {
+	if list {
 		return "VALUES " + strings.Join(out, ", ")
 	}
 	return strings.Join(out, " UNION ALL ")

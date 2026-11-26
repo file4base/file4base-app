@@ -23,6 +23,9 @@ import (
 // data source, so the import is exercised against a real other database.
 func externalSourceSettings(t *testing.T) (map[string]interface{}, string) {
 	t.Helper()
+	if testdb.Engine() == dbal.EngineSQLite {
+		t.Skip("an external SQL source is a server; the SQLite suite has none to read (docs/specs/sqlite_engine.md, \"Test exceptions\")")
+	}
 	dsn := testdb.DevDSN()
 	if testdb.Engine() == dbal.EngineMariaDB {
 		cfg, err := mysql.ParseDSN(dsn)

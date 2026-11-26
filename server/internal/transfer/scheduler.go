@@ -266,12 +266,7 @@ func (s *Scheduler) Tick(ctx context.Context) int {
 // asked of the engine's own catalog so a database that is not a solution does
 // not log an error every tick.
 func hasScheduleTable(ctx context.Context, driver dbal.DatabaseDriver) bool {
-	q := `SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'sys_transfer_schedules'`
-	if driver.Dialect().Engine() == dbal.EngineMariaDB {
-		q += ` AND table_schema = DATABASE()`
-	} else {
-		q += ` AND table_schema = current_schema()`
-	}
+	q := `SELECT COUNT(*) FROM ` + dbal.CatalogTablesSQL(driver.Dialect().Engine()) + ` AS t WHERE table_name = 'sys_transfer_schedules'`
 	var n int
 	if err := driver.DB().QueryRowContext(ctx, q).Scan(&n); err != nil {
 		return false

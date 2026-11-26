@@ -846,7 +846,7 @@ func (r *relatedReader) fetch(
 				n, batchBranch, list, table, match, present, order, limit)
 		},
 		func(branches []string) string {
-			return fmt.Sprintf("SELECT * FROM (%s) f4b_batch %s", strings.Join(branches, " UNION ALL "), outer)
+			return fmt.Sprintf("SELECT * FROM (%s) f4b_batch %s", unionAll(dialect, branches), outer)
 		},
 		columns,
 		func(memo string) { r.hops[memo] = nil },

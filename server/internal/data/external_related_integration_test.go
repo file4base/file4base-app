@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -182,17 +183,22 @@ func faultyDriver(t *testing.T, database string) (dbal.DatabaseDriver, *atomic.P
 
 func instrumentedDriver(t *testing.T, database string) (dbal.DatabaseDriver, *atomic.Int64, *atomic.Pointer[func(query string) bool]) {
 	t.Helper()
-	dsn, err := dbal.NormalizeDSN(testdb.Engine(), dsnForDatabase(testdb.DevDSN(), database))
-	require.NoError(t, err)
-	name := "pgx"
-	if testdb.Engine() == dbal.EngineMariaDB {
-		name = "mysql"
+	var connector driver.Connector
+	if testdb.Engine() == dbal.EngineSQLite {
+		connector = dbal.SQLiteConnector(filepath.Join(testdb.AdminDSN(), database+dbal.SQLiteFileExtension))
+	} else {
+		dsn, err := dbal.NormalizeDSN(testdb.Engine(), dsnForDatabase(testdb.DevDSN(), database))
+		require.NoError(t, err)
+		name := "pgx"
+		if testdb.Engine() == dbal.EngineMariaDB {
+			name = "mysql"
+		}
+		base, err := sql.Open(name, dsn)
+		require.NoError(t, err)
+		connector, err = base.Driver().(driver.DriverContext).OpenConnector(dsn)
+		require.NoError(t, err)
+		_ = base.Close()
 	}
-	base, err := sql.Open(name, dsn)
-	require.NoError(t, err)
-	connector, err := base.Driver().(driver.DriverContext).OpenConnector(dsn)
-	require.NoError(t, err)
-	_ = base.Close()
 	queries := &atomic.Int64{}
 	fail := &atomic.Pointer[func(query string) bool]{}
 	db := sql.OpenDB(countingConnector{Connector: connector, queries: queries, fail: fail})

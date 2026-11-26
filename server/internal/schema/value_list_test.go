@@ -505,6 +505,20 @@ func TestValueListFieldOptions(t *testing.T) {
 	})
 
 	t.Run("the catalog has each foreign key once", func(t *testing.T) {
+		if driver.Dialect().Engine() == dbal.EngineSQLite {
+			// SQLite keeps the keys in the table's definition.
+			var keys int
+			require.NoError(t, driver.DB().QueryRowContext(ctx,
+				`SELECT COUNT(DISTINCT id) FROM pragma_foreign_key_list('sys_value_lists')`).Scan(&keys))
+			assert.Equal(t, 5, keys, "source table and field, second field, and the two occurrences")
+			var definition string
+			require.NoError(t, driver.DB().QueryRowContext(ctx,
+				`SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'sys_value_lists'`).Scan(&definition))
+			for _, name := range []string{"fk_value_list_second_column_id", "fk_value_list_source_occurrence_id", "fk_value_list_related_occurrence_id"} {
+				assert.Equal(t, 1, strings.Count(definition, name), name)
+			}
+			return
+		}
 		schemaOf := "current_schema()"
 		if driver.Dialect().Engine() == dbal.EngineMariaDB {
 			schemaOf = "DATABASE()"

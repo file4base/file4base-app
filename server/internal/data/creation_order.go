@@ -69,13 +69,8 @@ func HasCreationOrder(ctx context.Context, driver dbal.DatabaseDriver, tableName
 		}
 	}
 	dialect := driver.Dialect()
-	schema := "current_schema()"
-	if dialect.Engine() == dbal.EngineMariaDB {
-		schema = "DATABASE()"
-	}
 	var one int
-	err := driver.DB().QueryRowContext(ctx, `SELECT 1 FROM information_schema.columns WHERE table_schema = `+schema+
-		` AND table_name = `+dialect.Placeholder(1)+` AND column_name = `+dialect.Placeholder(2),
+	err := driver.DB().QueryRowContext(ctx, `SELECT 1 FROM `+dbal.CatalogColumnsSQL(dialect.Engine())+` AS c WHERE table_name = `+dialect.Placeholder(1)+` AND column_name = `+dialect.Placeholder(2),
 		tableName, dbal.CreationOrderColumn).Scan(&one)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err

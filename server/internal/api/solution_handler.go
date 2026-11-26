@@ -499,8 +499,11 @@ func (h *SolutionHandler) ExportSolution(w http.ResponseWriter, r *http.Request)
 	}
 
 	port := 5432
-	if h.dbMgr.Engine() == dbal.EngineMariaDB {
+	switch h.dbMgr.Engine() {
+	case dbal.EngineMariaDB:
 		port = 3306
+	case dbal.EngineSQLite:
+		port = 0 // a file, reached through the API only
 	}
 	opts := schema.ExportOptions{
 		SolutionName: solutionName,

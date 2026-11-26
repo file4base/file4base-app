@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/api"
+	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -443,7 +444,7 @@ func TestAPI_SolutionImportValidatesAndRollsBack(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "rolled back")
 	assert.Equal(t, 1, tableCount(), "the table created by the failed import was removed")
 	var exists bool
-	require.NoError(t, driver.DB().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'fresh')`).Scan(&exists))
+	require.NoError(t, driver.DB().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM `+dbal.CatalogTablesSQL(driver.Dialect().Engine())+` AS t WHERE table_name = 'fresh')`).Scan(&exists))
 	assert.False(t, exists, "and so was its physical table")
 
 	// Not a solution file at all
