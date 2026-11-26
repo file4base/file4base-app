@@ -9,7 +9,6 @@
 
 # MariaDB: a default table occurrence collides with an occurrence whose name
 # differs only in case. No fixture is replayed on MariaDB until it is fixed.
-migration@mariadb #146
 
 containers/upload_download@v1 login-rw status
 containers/upload_download@v2 login-rw status
