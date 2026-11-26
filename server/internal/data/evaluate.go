@@ -81,26 +81,33 @@ func (c *envContext) Get(selector string) (any, error) {
 	return c.unstoredContext.Get(selector)
 }
 
-// SelfField is the field a layout object shows, which Self reads in the
-// object's conditions: a field of the record evaluated (no occurrence), or
-// of an occurrence, by name, seen from the one the expressions are
-// evaluated from, with the repetition the object shows (0 and 1 are the
-// first).
+// SelfField is what Self reads in a layout object's conditions: the field
+// the object shows, of the record evaluated (no occurrence) or of an
+// occurrence, by name, seen from the one the expressions are evaluated
+// from, with the repetition the object shows (0 and 1 are the first); or,
+// for a text or a button, the text it shows, which FileMaker's Self
+// answers there.
 type SelfField struct {
-	Occurrence string `json:"occurrence,omitempty"`
-	Field      string `json:"field"`
-	Repetition int    `json:"repetition,omitempty"`
+	Occurrence string  `json:"occurrence,omitempty"`
+	Field      string  `json:"field,omitempty"`
+	Repetition int     `json:"repetition,omitempty"`
+	Text       *string `json:"text,omitempty"`
 }
 
-// bound reports whether f names a field.
-func (f *SelfField) bound() bool { return f != nil && strings.TrimSpace(f.Field) != "" }
+// bound reports whether f names a field or gives a text.
+func (f *SelfField) bound() bool {
+	return f != nil && (f.Text != nil || strings.TrimSpace(f.Field) != "")
+}
 
-// read answers Self: the field's value in the record evaluated, or in the
-// first record related through the occurrence, in the repetition given,
-// as a reference to that field reads it. Self is answered as a value, not
-// written into the formula, so a Let variable of the same name does not
-// capture it.
+// read answers Self: the text given, or the field's value in the record
+// evaluated, or in the first record related through the occurrence, in the
+// repetition given, as a reference to that field reads it. Self is answered
+// as a value, not written into the formula, so a Let variable of the same
+// name does not capture it.
 func (f *SelfField) read(c *unstoredContext) (any, error) {
+	if f.Text != nil {
+		return *f.Text, nil
+	}
 	rep := max(f.Repetition, 1)
 	if f.Occurrence == "" {
 		return c.Field(f.Field, rep)

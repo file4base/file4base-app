@@ -50,6 +50,17 @@ String? layoutFieldUnreadableNotice(FieldBindingModel? binding) {
   return null;
 }
 
+/// Whether [obj] is a text or a button, whose conditions read as Self the
+/// text it shows (FileMaker's Self is "the content of the object").
+bool layoutObjectShowsText(LayoutObjectModel obj) =>
+    obj.type == 'label' || obj.type == 'button' || obj.type == 'popover_button';
+
+/// The text Self reads in the conditions of [obj], a text or a button: the
+/// text it shows, as written. Null, Self unknown, when it merges a field,
+/// so shows another text on each record.
+String? layoutTextSelf(LayoutObjectModel obj) =>
+    !layoutObjectShowsText(obj) || obj.text.contains('{{') ? null : obj.text;
+
 /// Whether a calculation's answer, as text, is true the way FileMaker reads
 /// a condition: a number other than zero.
 bool isLayoutConditionTrue(String text) {

@@ -1378,10 +1378,13 @@ class _PortalViewState extends State<PortalView> {
     return ofRow ? _column(target, content.fieldBinding?.fieldName ?? '') : null;
   }
 
-  /// The formulas of the row objects' conditional formats, by the key their
-  /// answer is kept under, each with its Self: the field the object shows
-  /// of the row's record.
-  List<(String, String, ConditionSelf)> _rowConditions(RelatedTarget target) {
+  /// The calculations of the row objects' conditions, by the key their
+  /// answer is kept under, each with its Self: each object's hide
+  /// condition, by the object's id, and each formula of the conditional
+  /// formats of a field, a text or a button, by `<object id>#<index of the
+  /// rule>`. Self is the field a field object shows of the row's record, or
+  /// the text a text or a button shows.
+  List<(String, String, ConditionSelf?)> _rowConditions(RelatedTarget target) {
     // The target and the objects are made anew on each build: they are
     // told apart by what the conditions depend on.
     final of = Object.hash(
@@ -1389,19 +1392,26 @@ class _PortalViewState extends State<PortalView> {
       target.occurrence.id,
       Object.hashAll([
         for (final content in widget.contents)
-          for (final (i, rule) in content.style.conditionalRules.indexed)
-            if (rule.isFormula)
-              Object.hash(content.id, i, rule.value, content.fieldBinding?.fieldName, content.fieldBinding?.tableOccurrence),
+          if ((content.hideWhen ?? '').trim().isNotEmpty || content.style.conditionalRules.any((r) => r.isFormula))
+            Object.hash(content.id, content.type, content.text, content.hideWhen, content.fieldBinding?.fieldName,
+                content.fieldBinding?.tableOccurrence,
+                Object.hashAll([for (final rule in content.style.conditionalRules) rule.isFormula ? rule.value : null])),
       ]),
     );
     if (of != _rowConditionsOf) {
       _rowConditionsOf = of;
       _rowConditionsList = [
-        for (final content in widget.contents)
-          if (_rowColumn(target, content) case final col?)
+        for (final content in widget.contents) ...[
+          if ((content.hideWhen ?? '').trim().isNotEmpty) (content.id, content.hideWhen!, _rowSelf(target, content)),
+          if (_rowSelf(target, content) case final self?)
             for (final (i, rule) in content.style.conditionalRules.indexed)
-              if (rule.isFormula && rule.value.trim().isNotEmpty) ('${content.id}#$i', rule.value, ConditionSelf(col.name)),
+              if (rule.isFormula && rule.value.trim().isNotEmpty) ('${content.id}#$i', rule.value, self),
+        ],
       ];
+      _rowHideable = {
+        for (final content in widget.contents)
+          if ((content.hideWhen ?? '').trim().isNotEmpty) content.id,
+      };
       // Answers to other conditions do not hold for these.
       _rowTruths.clear();
       _lastRowTruths.clear();
@@ -1409,14 +1419,29 @@ class _PortalViewState extends State<PortalView> {
     return _rowConditionsList;
   }
 
+  /// What Self reads in the conditions of [content] on a row: the field of
+  /// the row's record it shows, or the text a text or a button shows. Null,
+  /// Self unknown, for anything else; a field object then keeps no format.
+  ConditionSelf? _rowSelf(RelatedTarget target, LayoutObjectModel content) {
+    if (_rowColumn(target, content) case final col?) return ConditionSelf(col.name);
+    if (layoutTextSelf(content) case final text?) return ConditionSelf.text(text);
+    return null;
+  }
+
   /// What [_rowConditions] last answered, and for which conditions.
   int? _rowConditionsOf;
-  List<(String, String, ConditionSelf)> _rowConditionsList = const [];
+  List<(String, String, ConditionSelf?)> _rowConditionsList = const [];
 
-  /// The conditional formats true on [row], evaluated from the portal's
-  /// occurrence against the row's record, as FileMaker evaluates those of a
-  /// portal row. Asked while the row is drawn, so only the rows on screen
-  /// are evaluated.
+  /// The row objects with a hide condition, which a row hides until its
+  /// answer is in, so nothing hidden is ever shown or typed into.
+  Set<String> _rowHideable = const {};
+
+  /// The conditions true on [row], evaluated from the portal's occurrence
+  /// against the row's record, as FileMaker evaluates those of a portal
+  /// row: the ids of the objects it hides, and the keys of the formats that
+  /// apply. Asked while the row is drawn, so only the rows on screen are
+  /// evaluated. Until the row's answer is in, its last one holds, and a
+  /// row seen for the first time hides every object with a condition.
   Set<String> _truthsOn(RelatedTarget target, Map<String, dynamic> row) {
     final rowId = row['id']?.toString() ?? '';
     if (rowId.isEmpty || _rowConditions(target).isEmpty) return const {};
@@ -1428,7 +1453,7 @@ class _PortalViewState extends State<PortalView> {
       if (_rowQueue.isEmpty) scheduleMicrotask(() => unawaited(_evaluateRows()));
       _rowQueue[key] = rowId;
     }
-    return _lastRowTruths[rowId] ?? const {};
+    return _lastRowTruths[rowId] ?? _rowHideable;
   }
 
   /// Evaluates the rows queued, in as few requests as the endpoint allows.
@@ -1436,7 +1461,7 @@ class _PortalViewState extends State<PortalView> {
     final queued = Map.of(_rowQueue);
     _rowQueue.clear();
     final target = _target;
-    final conditions = target == null ? const <(String, String, ConditionSelf)>[] : _rowConditions(target);
+    final conditions = target == null ? const <(String, String, ConditionSelf?)>[] : _rowConditions(target);
     final ids = queued.values.toSet().toList();
     final truths = {for (final id in ids) id: <String>{}};
     if (target != null && conditions.isNotEmpty) {
@@ -1668,6 +1693,8 @@ class _PortalViewState extends State<PortalView> {
     final rowId = row['id']?.toString() ?? '';
     final controller = widget.rowController;
     final active = controller != null && controller.activeRow == number;
+    // The row's own answers: the objects it hides, the formats that apply.
+    final truths = _truthsOn(target, row);
     final container = Container(
       key: ValueKey('portal-row-$rowId'),
       height: rowHeight,
@@ -1687,13 +1714,14 @@ class _PortalViewState extends State<PortalView> {
         clipBehavior: Clip.none,
         children: [
           for (final content in widget.contents)
-            Positioned(
-              left: content.x - widget.object.x,
-              top: content.y - widget.object.y,
-              width: content.width,
-              height: content.height,
-              child: _cell(target, content, rowId, row, number),
-            ),
+            if (!truths.contains(content.id))
+              Positioned(
+                left: content.x - widget.object.x,
+                top: content.y - widget.object.y,
+                width: content.width,
+                height: content.height,
+                child: _cell(target, content, rowId, row, number, truths),
+              ),
           if (_config.allowDeletion && _privileges.delete && rowId.isNotEmpty)
             Positioned(
               right: 2,
@@ -1725,11 +1753,13 @@ class _PortalViewState extends State<PortalView> {
   }
 
   /// A cell of a portal row: a field of the related record, or any other
-  /// object drawn inside the portal, which repeats unchanged.
+  /// object drawn inside the portal, which repeats, with the conditional
+  /// formats [truths] says apply on the row.
   Widget _cell(RelatedTarget target, LayoutObjectModel content, String rowId,
-      Map<String, dynamic> row, int number) {
+      Map<String, dynamic> row, int number, Set<String> truths) {
+    bool formulaTrue(int i) => truths.contains('${content.id}#$i');
     if (content.type != 'field') {
-      return _staticContent(content);
+      return _staticContent(content, content.style.conditionalLook(content.text, formulaTrue: formulaTrue));
     }
 
     final field = content.fieldBinding?.fieldName ?? '';
@@ -1744,8 +1774,7 @@ class _PortalViewState extends State<PortalView> {
     }
 
     final text = widget.related.formatValue(col, row[col.name]);
-    final truths = content.style.conditionalRules.any((r) => r.isFormula) ? _truthsOn(target, row) : const <String>{};
-    final look = content.style.conditionalLook(row[col.name], formulaTrue: (i) => truths.contains('${content.id}#$i'));
+    final look = content.style.conditionalLook(row[col.name], formulaTrue: formulaTrue);
     final fill = parseLayoutColor(look?.fillColor);
     if (col.isPrimaryKey || isComputedColumn(col) || !_privileges.edit) {
       return Container(
@@ -1816,17 +1845,23 @@ class _PortalViewState extends State<PortalView> {
     );
   }
 
-  Widget _staticContent(LayoutObjectModel content) {
+  /// An object of a portal row other than a field, with the conditional
+  /// formats that apply ([look]).
+  Widget _staticContent(LayoutObjectModel content, ConditionalFormatRule? look) {
     if (content.type == 'label') {
       return Container(
         alignment: Alignment.centerLeft,
         padding: const EdgeInsets.symmetric(horizontal: 4),
+        color: parseLayoutColor(look?.fillColor),
         child: Text(
           content.text,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: content.style.fontSize > 0 ? content.style.fontSize : 12,
-            fontWeight: content.style.fontWeight == 'bold' ? FontWeight.bold : FontWeight.normal,
+          style: conditionalTextStyle(
+            TextStyle(
+              fontSize: content.style.fontSize > 0 ? content.style.fontSize : 12,
+              fontWeight: content.style.fontWeight == 'bold' ? FontWeight.bold : FontWeight.normal,
+            ),
+            look,
           ),
         ),
       );
@@ -1834,7 +1869,7 @@ class _PortalViewState extends State<PortalView> {
     if (content.type == 'button' || content.type == 'popover_button') {
       // Drawn as on the layout. What it runs would need the row's record
       // as the current one, which a script does not have here yet.
-      final fill = parseLayoutColor(content.style.fillColor);
+      final fill = parseLayoutColor(look?.fillColor ?? content.style.fillColor);
       final line = parseLayoutColor(content.style.borderColor);
       return InkWell(
         onTap: () => _report('A button in a portal row does not run yet.'),
@@ -1849,7 +1884,8 @@ class _PortalViewState extends State<PortalView> {
           ),
           child: content.text.isEmpty
               ? null
-              : Text(content.text, overflow: TextOverflow.ellipsis, style: layoutTextStyle(content.style)),
+              : Text(content.text,
+                  overflow: TextOverflow.ellipsis, style: conditionalTextStyle(layoutTextStyle(content.style), look)),
         ),
       );
     }

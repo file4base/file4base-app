@@ -4314,7 +4314,7 @@
                   "record_id": { "type": "string" },
                   "record_ids": { "type": "array", "items": { "type": "string" }, "maxItems": 100, "description": "Evaluates every expression against each record, in one request." },
                   "occurrence": { "type": "string", "description": "Occurrence of the table (id or name) the expressions are evaluated from, as a layout on it does; a related field is read through its relationships. Absent: the table's own occurrence." },
-                  "self": { "type": "array", "items": { "type": "object", "nullable": true, "properties": { "field": { "type": "string" }, "occurrence": { "type": "string" }, "repetition": { "type": "integer", "minimum": 1 } }, "required": ["field"] }, "description": "For the expression at the same index, the field Self reads, as a layout object's conditions read it: a field of the record (no occurrence) or of an occurrence by name, in the repetition shown (1 by default). A null entry leaves Self unknown." },
+                  "self": { "type": "array", "items": { "type": "object", "nullable": true, "properties": { "field": { "type": "string" }, "occurrence": { "type": "string" }, "repetition": { "type": "integer", "minimum": 1 }, "text": { "type": "string" } } }, "description": "For the expression at the same index, what Self reads, as a layout object's conditions read it: a field of the record (no occurrence) or of an occurrence by name, in the repetition shown (1 by default), or the text a text object or a button shows (text, which wins over field). A null entry, or one with neither, leaves Self unknown." },
                   "result_type": { "type": "string" }
                 }
               }
