@@ -2,7 +2,11 @@
 
 package dbal
 
-import "syscall"
+import (
+	"os"
+	"path/filepath"
+	"syscall"
+)
 
 // Filesystem magic numbers (statfs f_type) SQLite databases are refused on.
 var unsafeSQLiteFilesystems = map[int64]string{
@@ -27,17 +31,35 @@ var knownSQLiteFilesystems = map[int64]string{
 	0xF2F52010: "f2fs",
 }
 
+// sqliteFilesystem reads the filesystem type twice: from statfs, and from
+// the mount table, which names the filesystems that have no magic number of
+// their own or share a local one (Docker Desktop's "fakeowner", WSL's
+// "drvfs"). Either one finding an unsafe filesystem refuses the directory.
 func sqliteFilesystem(dir string) (string, bool) {
+	name := ""
 	var st syscall.Statfs_t
-	if err := syscall.Statfs(dir, &st); err != nil {
-		return "", false
+	if err := syscall.Statfs(dir, &st); err == nil {
+		magic := int64(st.Type) & 0xFFFFFFFF
+		if n, ok := unsafeSQLiteFilesystems[magic]; ok {
+			return n, true
+		}
+		name = knownSQLiteFilesystems[magic]
 	}
-	magic := int64(st.Type) & 0xFFFFFFFF
-	if name, ok := unsafeSQLiteFilesystems[magic]; ok {
-		return name, true
+	if mountinfo, err := os.ReadFile("/proc/self/mountinfo"); err == nil {
+		abs, err := filepath.Abs(dir)
+		if err == nil {
+			if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+				abs = resolved
+			}
+			if fstype := mountType(string(mountinfo), abs); fstype != "" {
+				if unsafeMountType(fstype) {
+					return fstype, true
+				}
+				if name == "" {
+					name = fstype
+				}
+			}
+		}
 	}
-	if name, ok := knownSQLiteFilesystems[magic]; ok {
-		return name, false
-	}
-	return "", false
+	return name, false
 }

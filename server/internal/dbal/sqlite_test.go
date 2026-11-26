@@ -192,6 +192,64 @@ func TestSQLite_ReadThenWriteTransactionsDoNotDeadlock(t *testing.T) {
 	assert.Equal(t, 16, n, "no update was lost")
 }
 
+// Writers of the process wait for the writer lock in the order they asked
+// for it, and no longer than busy_timeout; a statement outside a
+// transaction waits its turn as well.
+func TestSQLite_WritersTakeTurnsAndWaitAtMostTheBusyTimeout(t *testing.T) {
+	previous := SQLiteBusyTimeout()
+	SetSQLiteBusyTimeout(300 * time.Millisecond)
+	t.Cleanup(func() { SetSQLiteBusyTimeout(previous) })
+	db, _ := newSQLiteDB(t)
+	ctx := context.Background()
+	db.SetMaxOpenConns(12)
+	_, err := db.ExecContext(ctx, `CREATE TABLE turns (n INTEGER)`)
+	require.NoError(t, err)
+
+	holder, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+
+	start := time.Now()
+	_, err = db.BeginTx(ctx, nil)
+	assert.ErrorIs(t, err, ErrSQLiteBusy)
+	assert.GreaterOrEqual(t, time.Since(start), 300*time.Millisecond)
+	assert.Less(t, time.Since(start), 2*time.Second, "the wait is bounded by busy_timeout")
+	_, err = db.ExecContext(ctx, `INSERT INTO turns VALUES (-1)`)
+	assert.ErrorIs(t, err, ErrSQLiteBusy, "a statement on its own waits for the lock too")
+
+	// Eight writers queue one after the other while the lock is held, then
+	// get it in that order.
+	SetSQLiteBusyTimeout(10 * time.Second)
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tx, err := db.BeginTx(ctx, nil)
+			if !assert.NoError(t, err) {
+				return
+			}
+			defer tx.Rollback()
+			_, err = tx.ExecContext(ctx, `INSERT INTO turns VALUES ($1)`, i)
+			assert.NoError(t, err)
+			assert.NoError(t, tx.Commit())
+		}()
+		time.Sleep(20 * time.Millisecond)
+	}
+	require.NoError(t, holder.Rollback())
+	wg.Wait()
+
+	rows, err := db.QueryContext(ctx, `SELECT n FROM turns ORDER BY rowid`)
+	require.NoError(t, err)
+	defer rows.Close()
+	var order []int
+	for rows.Next() {
+		var n int
+		require.NoError(t, rows.Scan(&n))
+		order = append(order, n)
+	}
+	assert.Equal(t, []int{0, 1, 2, 3, 4, 5, 6, 7}, order)
+}
+
 func TestSQLite_UnicodeCaseFunctions(t *testing.T) {
 	db, _ := newSQLiteDB(t)
 	ctx := context.Background()

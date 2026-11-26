@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -65,6 +66,10 @@ func SQLiteBusyTimeout() time.Duration {
 	return time.Duration(sqliteBusyTimeout.Load())
 }
 
+// ErrSQLiteBusy is returned when a write did not get the writer lock of its
+// database within busy_timeout. Its text is SQLite's own for the same case.
+var ErrSQLiteBusy = errors.New("database is locked: no write lock within busy_timeout")
+
 // ErrSQLiteTransactionEnded is returned for every statement, and for the
 // commit, of a transaction SQLite rolled back by itself.
 var ErrSQLiteTransactionEnded = errors.New("sqlite rolled the transaction back")
@@ -109,7 +114,7 @@ func SQLitePath(dsn string) (string, error) {
 // it is in WAL mode, converting a database that is not (a copy taken with
 // VACUUM INTO is in rollback-journal mode until it is converted).
 func openSQLite(ctx context.Context, path string) (*sql.DB, error) {
-	db := sql.OpenDB(&sqliteConnector{dsn: sqliteDSN(path)})
+	db := sql.OpenDB(newSQLiteConnector(path))
 	if err := ensureWAL(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite database %s: %w", path, err)
@@ -142,14 +147,21 @@ func ensureWAL(ctx context.Context, db *sql.DB) error {
 // control store's.
 var sqliteDriver = &sqlite.Driver{}
 
-type sqliteConnector struct{ dsn string }
+type sqliteConnector struct {
+	dsn    string
+	writer chan struct{}
+}
+
+func newSQLiteConnector(path string) *sqliteConnector {
+	return &sqliteConnector{dsn: sqliteDSN(path), writer: writerQueue(path)}
+}
 
 // SQLiteConnector is the connector of an existing database file, with the
 // connection contract, for a caller that wraps the connections (tests that
 // count or fail statements). openSQLite's check of the journal mode is not
 // made.
 func SQLiteConnector(path string) driver.Connector {
-	return &sqliteConnector{dsn: sqliteDSN(path)}
+	return newSQLiteConnector(path)
 }
 
 func (c *sqliteConnector) Connect(context.Context) (driver.Conn, error) {
@@ -157,7 +169,26 @@ func (c *sqliteConnector) Connect(context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &sqliteConn{inner: conn}, nil
+	return &sqliteConn{inner: conn, writer: c.writer}, nil
+}
+
+// writerQueues holds, for each database file, the writer lock of this
+// process: a channel of one slot, which a write transaction (and a write
+// statement outside one) takes before SQLite's own lock and gives back when
+// it ends. SQLite lets one writer at a time and makes the others poll, with
+// growing sleeps, so under load a writer could wait far longer than the
+// ones that came after it; a channel serves its waiters in the order they
+// came. SQLite's busy_timeout still covers writers of other processes (a
+// restore, a maintenance tool).
+var writerQueues sync.Map
+
+func writerQueue(path string) chan struct{} {
+	key := path
+	if abs, err := filepath.Abs(path); err == nil {
+		key = abs
+	}
+	q, _ := writerQueues.LoadOrStore(key, make(chan struct{}, 1))
+	return q.(chan struct{})
 }
 
 func (c *sqliteConnector) Driver() driver.Driver { return sqliteDriver }
@@ -176,9 +207,11 @@ func (c *sqliteConnector) Driver() driver.Driver { return sqliteDriver }
 // engine; and it hands back NUMERIC and BOOLEAN columns as the PostgreSQL
 // driver does (see normalizeSQLiteValue).
 type sqliteConn struct {
-	inner driver.Conn
-	inTx  bool
-	ended bool
+	inner   driver.Conn
+	writer  chan struct{}
+	holding bool
+	inTx    bool
+	ended   bool
 }
 
 var (
@@ -207,15 +240,70 @@ func (c *sqliteConn) PrepareContext(ctx context.Context, query string) (driver.S
 	return &sqliteStmt{c: c, inner: stmt}, nil
 }
 
-func (c *sqliteConn) Close() error { return c.inner.Close() }
+func (c *sqliteConn) Close() error {
+	c.releaseWriter()
+	return c.inner.Close()
+}
+
+// acquireWriter waits for this process's writer lock of the database, in
+// turn, up to busy_timeout.
+func (c *sqliteConn) acquireWriter(ctx context.Context) error {
+	if c.writer == nil || c.holding {
+		return nil
+	}
+	select {
+	case c.writer <- struct{}{}:
+		c.holding = true
+		return nil
+	default:
+	}
+	timer := time.NewTimer(SQLiteBusyTimeout())
+	defer timer.Stop()
+	select {
+	case c.writer <- struct{}{}:
+		c.holding = true
+		return nil
+	case <-timer.C:
+		return ErrSQLiteBusy
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// statementWriter takes the writer lock for a statement run outside a
+// transaction: it is a transaction of its own, and Exec is how File4Base
+// writes, so it waits its turn as a transaction does. Within a transaction
+// the lock is already held.
+func (c *sqliteConn) statementWriter(ctx context.Context) (release func(), err error) {
+	if c.inTx || c.holding {
+		return func() {}, nil
+	}
+	if err := c.acquireWriter(ctx); err != nil {
+		return nil, err
+	}
+	return c.releaseWriter, nil
+}
+
+func (c *sqliteConn) releaseWriter() {
+	if c.holding {
+		c.holding = false
+		<-c.writer
+	}
+}
 
 func (c *sqliteConn) Begin() (driver.Tx, error) {
 	return c.BeginTx(context.Background(), driver.TxOptions{})
 }
 
 func (c *sqliteConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	if !opts.ReadOnly {
+		if err := c.acquireWriter(ctx); err != nil {
+			return nil, err
+		}
+	}
 	tx, err := c.inner.(driver.ConnBeginTx).BeginTx(ctx, opts)
 	if err != nil {
+		c.releaseWriter()
 		return nil, err
 	}
 	c.inTx, c.ended = true, false
@@ -226,6 +314,11 @@ func (c *sqliteConn) ExecContext(ctx context.Context, query string, args []drive
 	if err := c.refuseIfEnded(); err != nil {
 		return nil, err
 	}
+	release, err := c.statementWriter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if handled, err := c.columnDDL(ctx, query); err != nil {
 		return nil, c.afterError(err)
 	} else if handled {
@@ -487,7 +580,10 @@ func (t *sqliteTx) Rollback() error {
 	return t.inner.Rollback()
 }
 
-func (t *sqliteTx) done() { t.c.inTx, t.c.ended = false, false }
+func (t *sqliteTx) done() {
+	t.c.inTx, t.c.ended = false, false
+	t.c.releaseWriter()
+}
 
 type sqliteStmt struct {
 	c     *sqliteConn
@@ -514,6 +610,11 @@ func (s *sqliteStmt) ExecContext(ctx context.Context, args []driver.NamedValue) 
 	if err := s.c.refuseIfEnded(); err != nil {
 		return nil, err
 	}
+	release, err := s.c.statementWriter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	res, err := s.inner.(driver.StmtExecContext).ExecContext(ctx, args)
 	if err != nil {
 		return nil, s.c.afterError(err)
