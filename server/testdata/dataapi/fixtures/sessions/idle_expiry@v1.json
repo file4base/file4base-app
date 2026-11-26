@@ -1,0 +1,206 @@
+{
+  "fixture": "sessions/idle_expiry@v1",
+  "scenario": "sessions/idle_expiry",
+  "group": "sessions",
+  "version": "v1",
+  "fresh": false,
+  "title": "Idle expiry after 15 minutes, and whether validateSession renews the idle timer",
+  "rows": ["T2", "T3", "V3", "EC19"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-a",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "a",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login-b",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "b",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "idle-600s",
+      "rows": [],
+      "idle_seconds": 600
+    },
+    {
+      "id": "validate-a-at-10min",
+      "rows": ["V3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/validateSession",
+        "headers": [
+          ["Authorization", "Bearer {{token:a}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "isSessionInUse": false
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "idle-330s",
+      "rows": [],
+      "idle_seconds": 330
+    },
+    {
+      "id": "b-after-15min30s-idle",
+      "rows": ["T2", "T3", "EC19"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts",
+        "headers": [
+          ["Authorization", "Bearer {{token:b}}"]
+        ]
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "a-5min30s-after-validate",
+      "rows": ["V3", "T2"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts",
+        "headers": [
+          ["Authorization", "Bearer {{token:a}}"]
+        ]
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout-a",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions/{{token:a}}",
+        "headers": []
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    }
+  ]
+}

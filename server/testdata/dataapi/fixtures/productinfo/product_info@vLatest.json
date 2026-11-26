@@ -1,0 +1,169 @@
+{
+  "fixture": "productinfo/product_info@vLatest",
+  "scenario": "productinfo/product_info",
+  "group": "productinfo",
+  "version": "vLatest",
+  "fresh": false,
+  "title": "Host information, with and without a session, and a wrong method",
+  "rows": ["P1", "P2", "P3", "P4", "X3", "X4", "X7"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "anonymous",
+      "rows": ["P1", "P2", "P3", "P4", "X3", "X4", "X7"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/productInfo",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "response": {
+            "productInfo": {
+              "name": "FileMaker Data API Engine",
+              "dateFormat": "MM/dd/yyyy",
+              "timeFormat": "HH:mm:ss",
+              "timeStampFormat": "MM/dd/yyyy HH:mm:ss"
+            }
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "with-bearer",
+      "rows": ["P1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/productInfo",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "response": {
+            "productInfo": {
+              "name": "FileMaker Data API Engine",
+              "dateFormat": "MM/dd/yyyy",
+              "timeFormat": "HH:mm:ss",
+              "timeStampFormat": "MM/dd/yyyy HH:mm:ss"
+            }
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "post-method",
+      "rows": ["X18"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/productInfo",
+        "headers": [
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 405,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Resource doesn't support the specified HTTP verb",
+              "code": "1704"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

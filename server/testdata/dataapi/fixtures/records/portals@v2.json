@@ -1,0 +1,1599 @@
+{
+  "fixture": "records/portals@v2",
+  "scenario": "records/portals",
+  "group": "records",
+  "version": "v2",
+  "fresh": false,
+  "title": "portalData and portalDataInfo: selection, paging, names, sort, filters, layout.response",
+  "rows": ["R15", "R16", "R17", "PD1", "PD2", "PD3", "PD4", "PD5", "PD6", "PD7", "PD8", "PD10"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "all-portals-limit-3",
+      "rows": ["PD1", "PD2", "PD3", "PD4", "PD5", "PD6", "PD8"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=3&_offset=8",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Portals",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 3
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 8,
+                  "Code": "C008",
+                  "Name": "חברת בדיקה",
+                  "Country": "United States",
+                  "FavoriteContact": "José כהן",
+                  "Notes": ""
+                },
+                "portalData": {
+                  "OrdersPortal": [
+                    {
+                      "recordId": "16",
+                      "Customer_Orders::OrderID": 16,
+                      "Customer_Orders::OrderNo": "SO-0016",
+                      "Customer_Orders::OrderDate": "09/29/2020",
+                      "Customer_Orders::Amount": 100,
+                      "Customer_Orders::Status": "Draft",
+                      "Customer_Orders::Paid": 1,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "15",
+                      "Customer_Orders::OrderID": 15,
+                      "Customer_Orders::OrderNo": "SO-0015",
+                      "Customer_Orders::OrderDate": "09/12/2020",
+                      "Customer_Orders::Amount": 19.99,
+                      "Customer_Orders::Status": "Cancelled",
+                      "Customer_Orders::Paid": 0,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "14",
+                      "Customer_Orders::OrderID": 14,
+                      "Customer_Orders::OrderNo": "SO-0014",
+                      "Customer_Orders::OrderDate": "08/26/2020",
+                      "Customer_Orders::Amount": 0.005,
+                      "Customer_Orders::Status": "Shipped",
+                      "Customer_Orders::Paid": "",
+                      "modId": "0"
+                    }
+                  ],
+                  "PaidOrdersPortal": [
+                    {
+                      "recordId": "16",
+                      "Customer_Orders::OrderID": 16,
+                      "Customer_Orders::OrderNo": "SO-0016",
+                      "Customer_Orders::Amount": 100,
+                      "modId": "0"
+                    }
+                  ],
+                  "Customer_Contacts": [
+                    {
+                      "recordId": "9",
+                      "Customer_Contacts::ContactID": 9,
+                      "Customer_Contacts::FirstName": "José",
+                      "Customer_Contacts::LastName": "כהן",
+                      "Customer_Contacts::Role": "Technical",
+                      "modId": "0"
+                    }
+                  ],
+                  "OrderLinesPortal": [
+                    {
+                      "recordId": "29",
+                      "Customer_Order_Lines::LineID": 29,
+                      "Customer_Order_Lines::OrderID": 14,
+                      "Customer_Order_Lines::ProductCode": "P024",
+                      "Customer_Order_Lines::Qty": 0,
+                      "Customer_Order_Lines::LineTotal": 0,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "28",
+                      "Customer_Order_Lines::LineID": 28,
+                      "Customer_Order_Lines::OrderID": 14,
+                      "Customer_Order_Lines::ProductCode": "P017",
+                      "Customer_Order_Lines::Qty": -1,
+                      "Customer_Order_Lines::LineTotal": 0,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "27",
+                      "Customer_Order_Lines::LineID": 27,
+                      "Customer_Order_Lines::OrderID": 14,
+                      "Customer_Order_Lines::ProductCode": "P010",
+                      "Customer_Order_Lines::Qty": 2.5,
+                      "Customer_Order_Lines::LineTotal": 0.025,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "30",
+                      "Customer_Order_Lines::LineID": 30,
+                      "Customer_Order_Lines::OrderID": 15,
+                      "Customer_Order_Lines::ProductCode": "P001",
+                      "Customer_Order_Lines::Qty": 1000000,
+                      "Customer_Order_Lines::LineTotal": 1234500000,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "32",
+                      "Customer_Order_Lines::LineID": 32,
+                      "Customer_Order_Lines::OrderID": 16,
+                      "Customer_Order_Lines::ProductCode": "P015",
+                      "Customer_Order_Lines::Qty": 1,
+                      "Customer_Order_Lines::LineTotal": 9.99,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "31",
+                      "Customer_Order_Lines::LineID": 31,
+                      "Customer_Order_Lines::OrderID": 16,
+                      "Customer_Order_Lines::ProductCode": "P008",
+                      "Customer_Order_Lines::Qty": 3,
+                      "Customer_Order_Lines::LineTotal": -15,
+                      "modId": "0"
+                    }
+                  ],
+                  "SameCountryPortal": [
+                    {
+                      "recordId": "18",
+                      "Customers_SameCountry::CustomerID": 18,
+                      "Customers_SameCountry::Name": "Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long Long End",
+                      "Customers_SameCountry::Country": "United States",
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "28",
+                      "Customers_SameCountry::CustomerID": 28,
+                      "Customers_SameCountry::Name": "Ørsted Nordic ApS",
+                      "Customers_SameCountry::Country": "United States",
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "8",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "OrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 3,
+                    "returnedCount": 3
+                  },
+                  {
+                    "portalObjectName": "PaidOrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 1,
+                    "returnedCount": 1
+                  },
+                  {
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Contacts",
+                    "foundCount": 1,
+                    "returnedCount": 1
+                  },
+                  {
+                    "portalObjectName": "OrderLinesPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Order_Lines",
+                    "foundCount": 6,
+                    "returnedCount": 6
+                  },
+                  {
+                    "portalObjectName": "SameCountryPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customers_SameCountry",
+                    "foundCount": 2,
+                    "returnedCount": 2
+                  }
+                ]
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 9,
+                  "Code": "C009",
+                  "Name": "Nguyễn Văn Trading",
+                  "Country": "Brasil",
+                  "FavoriteContact": "",
+                  "Notes": "Note for customer 9\rsecond line é à ü\rthird line"
+                },
+                "portalData": {
+                  "OrdersPortal": [
+                    {
+                      "recordId": "20",
+                      "Customer_Orders::OrderID": 20,
+                      "Customer_Orders::OrderNo": "SO-0020",
+                      "Customer_Orders::OrderDate": "12/06/2020",
+                      "Customer_Orders::Amount": 1234.56,
+                      "Customer_Orders::Status": "Draft",
+                      "Customer_Orders::Paid": "",
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "19",
+                      "Customer_Orders::OrderID": 19,
+                      "Customer_Orders::OrderNo": "SO-0019",
+                      "Customer_Orders::OrderDate": "11/19/2020",
+                      "Customer_Orders::Amount": 250.5,
+                      "Customer_Orders::Status": "Cancelled",
+                      "Customer_Orders::Paid": 1,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "18",
+                      "Customer_Orders::OrderID": 18,
+                      "Customer_Orders::OrderNo": "SO-0018",
+                      "Customer_Orders::OrderDate": "11/02/2020",
+                      "Customer_Orders::Amount": 3.333333333333333333,
+                      "Customer_Orders::Status": "Shipped",
+                      "Customer_Orders::Paid": 0,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "17",
+                      "Customer_Orders::OrderID": 17,
+                      "Customer_Orders::OrderNo": "SO-0017",
+                      "Customer_Orders::OrderDate": "10/16/2020",
+                      "Customer_Orders::Amount": "",
+                      "Customer_Orders::Status": "Confirmed",
+                      "Customer_Orders::Paid": "",
+                      "modId": "0"
+                    }
+                  ],
+                  "PaidOrdersPortal": [
+                    {
+                      "recordId": "19",
+                      "Customer_Orders::OrderID": 19,
+                      "Customer_Orders::OrderNo": "SO-0019",
+                      "Customer_Orders::Amount": 250.5,
+                      "modId": "0"
+                    }
+                  ],
+                  "Customer_Contacts": [],
+                  "OrderLinesPortal": [
+                    {
+                      "recordId": "35",
+                      "Customer_Order_Lines::LineID": 35,
+                      "Customer_Order_Lines::OrderID": 17,
+                      "Customer_Order_Lines::ProductCode": "P006",
+                      "Customer_Order_Lines::Qty": 2.5,
+                      "Customer_Order_Lines::LineTotal": 0.025,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "34",
+                      "Customer_Order_Lines::LineID": 34,
+                      "Customer_Order_Lines::OrderID": 17,
+                      "Customer_Order_Lines::ProductCode": "P029",
+                      "Customer_Order_Lines::Qty": 10,
+                      "Customer_Order_Lines::LineTotal": 1000,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "33",
+                      "Customer_Order_Lines::LineID": 33,
+                      "Customer_Order_Lines::OrderID": 17,
+                      "Customer_Order_Lines::ProductCode": "P022",
+                      "Customer_Order_Lines::Qty": 2,
+                      "Customer_Order_Lines::LineTotal": 39.998,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "36",
+                      "Customer_Order_Lines::LineID": 36,
+                      "Customer_Order_Lines::OrderID": 18,
+                      "Customer_Order_Lines::ProductCode": "P013",
+                      "Customer_Order_Lines::Qty": -1,
+                      "Customer_Order_Lines::LineTotal": 0,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "38",
+                      "Customer_Order_Lines::LineID": 38,
+                      "Customer_Order_Lines::OrderID": 19,
+                      "Customer_Order_Lines::ProductCode": "P027",
+                      "Customer_Order_Lines::Qty": 1000000,
+                      "Customer_Order_Lines::LineTotal": 1234500000,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "37",
+                      "Customer_Order_Lines::LineID": 37,
+                      "Customer_Order_Lines::OrderID": 19,
+                      "Customer_Order_Lines::ProductCode": "P020",
+                      "Customer_Order_Lines::Qty": 0,
+                      "Customer_Order_Lines::LineTotal": 0,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "41",
+                      "Customer_Order_Lines::LineID": 41,
+                      "Customer_Order_Lines::OrderID": 20,
+                      "Customer_Order_Lines::ProductCode": "P018",
+                      "Customer_Order_Lines::Qty": 2,
+                      "Customer_Order_Lines::LineTotal": 39.998,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "40",
+                      "Customer_Order_Lines::LineID": 40,
+                      "Customer_Order_Lines::OrderID": 20,
+                      "Customer_Order_Lines::ProductCode": "P011",
+                      "Customer_Order_Lines::Qty": 1,
+                      "Customer_Order_Lines::LineTotal": 9.99,
+                      "modId": "0"
+                    }
+                  ],
+                  "SameCountryPortal": [
+                    {
+                      "recordId": "19",
+                      "Customers_SameCountry::CustomerID": 19,
+                      "Customers_SameCountry::Name": "Straße Müller GmbH",
+                      "Customers_SameCountry::Country": "Brasil",
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "29",
+                      "Customers_SameCountry::CustomerID": 29,
+                      "Customers_SameCountry::Name": "Šoštanj d.o.o.",
+                      "Customers_SameCountry::Country": "Brasil",
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "9",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "OrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 4,
+                    "returnedCount": 4
+                  },
+                  {
+                    "portalObjectName": "PaidOrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 1,
+                    "returnedCount": 1
+                  },
+                  {
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Contacts",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  },
+                  {
+                    "portalObjectName": "OrderLinesPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Order_Lines",
+                    "foundCount": 9,
+                    "returnedCount": 8
+                  },
+                  {
+                    "portalObjectName": "SameCountryPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customers_SameCountry",
+                    "foundCount": 2,
+                    "returnedCount": 2
+                  }
+                ]
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 10,
+                  "Code": "C010",
+                  "Name": "Emoji 😀 Shop",
+                  "Country": "France",
+                  "FavoriteContact": "Jean Martin",
+                  "Notes": "Note for customer 10\rsecond line é à ü\rthird line"
+                },
+                "portalData": {
+                  "OrdersPortal": [],
+                  "PaidOrdersPortal": [],
+                  "Customer_Contacts": [
+                    {
+                      "recordId": "10",
+                      "Customer_Contacts::ContactID": 10,
+                      "Customer_Contacts::FirstName": "Jean",
+                      "Customer_Contacts::LastName": "Martin",
+                      "Customer_Contacts::Role": "Sales",
+                      "modId": "0"
+                    }
+                  ],
+                  "OrderLinesPortal": [],
+                  "SameCountryPortal": [
+                    {
+                      "recordId": "20",
+                      "Customers_SameCountry::CustomerID": 20,
+                      "Customers_SameCountry::Name": "Ñandú Español S.A.",
+                      "Customers_SameCountry::Country": "France",
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "30",
+                      "Customers_SameCountry::CustomerID": 30,
+                      "Customers_SameCountry::Name": "Zulu Last",
+                      "Customers_SameCountry::Country": "France",
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "10",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "OrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  },
+                  {
+                    "portalObjectName": "PaidOrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  },
+                  {
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Contacts",
+                    "foundCount": 1,
+                    "returnedCount": 1
+                  },
+                  {
+                    "portalObjectName": "OrderLinesPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Order_Lines",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  },
+                  {
+                    "portalObjectName": "SameCountryPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customers_SameCountry",
+                    "foundCount": 2,
+                    "returnedCount": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "portal-selection-by-name",
+      "rows": ["R16"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=2&_offset=9&portal=%5B%22OrdersPortal%22%5D",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Portals",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 2
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 9,
+                  "Code": "C009",
+                  "Name": "Nguyễn Văn Trading",
+                  "Country": "Brasil",
+                  "FavoriteContact": "",
+                  "Notes": "Note for customer 9\rsecond line é à ü\rthird line"
+                },
+                "portalData": {
+                  "OrdersPortal": [
+                    {
+                      "recordId": "20",
+                      "Customer_Orders::OrderID": 20,
+                      "Customer_Orders::OrderNo": "SO-0020",
+                      "Customer_Orders::OrderDate": "12/06/2020",
+                      "Customer_Orders::Amount": 1234.56,
+                      "Customer_Orders::Status": "Draft",
+                      "Customer_Orders::Paid": "",
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "19",
+                      "Customer_Orders::OrderID": 19,
+                      "Customer_Orders::OrderNo": "SO-0019",
+                      "Customer_Orders::OrderDate": "11/19/2020",
+                      "Customer_Orders::Amount": 250.5,
+                      "Customer_Orders::Status": "Cancelled",
+                      "Customer_Orders::Paid": 1,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "18",
+                      "Customer_Orders::OrderID": 18,
+                      "Customer_Orders::OrderNo": "SO-0018",
+                      "Customer_Orders::OrderDate": "11/02/2020",
+                      "Customer_Orders::Amount": 3.333333333333333333,
+                      "Customer_Orders::Status": "Shipped",
+                      "Customer_Orders::Paid": 0,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "17",
+                      "Customer_Orders::OrderID": 17,
+                      "Customer_Orders::OrderNo": "SO-0017",
+                      "Customer_Orders::OrderDate": "10/16/2020",
+                      "Customer_Orders::Amount": "",
+                      "Customer_Orders::Status": "Confirmed",
+                      "Customer_Orders::Paid": "",
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "9",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "OrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 4,
+                    "returnedCount": 4
+                  }
+                ]
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 10,
+                  "Code": "C010",
+                  "Name": "Emoji 😀 Shop",
+                  "Country": "France",
+                  "FavoriteContact": "Jean Martin",
+                  "Notes": "Note for customer 10\rsecond line é à ü\rthird line"
+                },
+                "portalData": {
+                  "OrdersPortal": []
+                },
+                "recordId": "10",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "OrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "portal-selection-by-occurrence",
+      "rows": ["R16", "PD1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=2&_offset=1&portal=%5B%22Customer_Contacts%22%5D",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Portals",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 2
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001",
+                  "Name": "Alpha Industries",
+                  "Country": "Deutschland",
+                  "FavoriteContact": "Zoë Παπαδοπούλου",
+                  "Notes": "Note for customer 1\rsecond line é à ü\rthird line"
+                },
+                "portalData": {
+                  "Customer_Contacts": [
+                    {
+                      "recordId": "1",
+                      "Customer_Contacts::ContactID": 1,
+                      "Customer_Contacts::FirstName": "Zoë",
+                      "Customer_Contacts::LastName": "Παπαδοπούλου",
+                      "Customer_Contacts::Role": "Technical",
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "1",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Contacts",
+                    "foundCount": 1,
+                    "returnedCount": 1
+                  }
+                ]
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 2,
+                  "Code": "C002",
+                  "Name": "Zoë Ångström & Fils",
+                  "Country": "España",
+                  "FavoriteContact": "Ελένη Muñoz",
+                  "Notes": "Note for customer 2\rsecond line é à ü\rthird line"
+                },
+                "portalData": {
+                  "Customer_Contacts": [
+                    {
+                      "recordId": "3",
+                      "Customer_Contacts::ContactID": 3,
+                      "Customer_Contacts::FirstName": "Ελένη",
+                      "Customer_Contacts::LastName": "Muñoz",
+                      "Customer_Contacts::Role": "Management",
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "2",
+                      "Customer_Contacts::ContactID": 2,
+                      "Customer_Contacts::FirstName": "Łukasz",
+                      "Customer_Contacts::LastName": "علي",
+                      "Customer_Contacts::Role": "Sales",
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "2",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Contacts",
+                    "foundCount": 2,
+                    "returnedCount": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "portal-selection-occurrence-of-named-portal",
+      "rows": ["R16", "PD1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=1&_offset=9&portal=%5B%22Customer_Orders%22%5D",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "110",
+              "message": "Related tables are missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "portal-selection-empty",
+      "rows": ["R16"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=1&_offset=9&portal=%5B%5D",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Portals",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 9,
+                  "Code": "C009",
+                  "Name": "Nguyễn Văn Trading",
+                  "Country": "Brasil",
+                  "FavoriteContact": "",
+                  "Notes": "Note for customer 9\rsecond line é à ü\rthird line"
+                },
+                "portalData": {},
+                "recordId": "9",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "portal-selection-unknown",
+      "rows": ["R16"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=1&_offset=9&portal=%5B%22NoSuchPortal%22%5D",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "110",
+              "message": "Related tables are missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "portal-selection-not-json",
+      "rows": ["R16"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=1&_offset=9&portal=OrdersPortal",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "11",
+              "message": "Name is not valid"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "portal-paging",
+      "rows": ["R17", "PD7"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=1&_offset=9&portal=%5B%22OrdersPortal%22%2C%22OrderLinesPortal%22%5D&_offset.OrdersPortal=2&_limit.OrdersPortal=2&_offset.OrderLinesPortal=8&_limit.OrderLinesPortal=5",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Portals",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 9,
+                  "Code": "C009",
+                  "Name": "Nguyễn Văn Trading",
+                  "Country": "Brasil",
+                  "FavoriteContact": "",
+                  "Notes": "Note for customer 9\rsecond line é à ü\rthird line"
+                },
+                "portalData": {
+                  "OrdersPortal": [
+                    {
+                      "recordId": "19",
+                      "Customer_Orders::OrderID": 19,
+                      "Customer_Orders::OrderNo": "SO-0019",
+                      "Customer_Orders::OrderDate": "11/19/2020",
+                      "Customer_Orders::Amount": 250.5,
+                      "Customer_Orders::Status": "Cancelled",
+                      "Customer_Orders::Paid": 1,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "18",
+                      "Customer_Orders::OrderID": 18,
+                      "Customer_Orders::OrderNo": "SO-0018",
+                      "Customer_Orders::OrderDate": "11/02/2020",
+                      "Customer_Orders::Amount": 3.333333333333333333,
+                      "Customer_Orders::Status": "Shipped",
+                      "Customer_Orders::Paid": 0,
+                      "modId": "0"
+                    }
+                  ],
+                  "OrderLinesPortal": [
+                    {
+                      "recordId": "40",
+                      "Customer_Order_Lines::LineID": 40,
+                      "Customer_Order_Lines::OrderID": 20,
+                      "Customer_Order_Lines::ProductCode": "P011",
+                      "Customer_Order_Lines::Qty": 1,
+                      "Customer_Order_Lines::LineTotal": 9.99,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "39",
+                      "Customer_Order_Lines::LineID": 39,
+                      "Customer_Order_Lines::OrderID": 20,
+                      "Customer_Order_Lines::ProductCode": "P004",
+                      "Customer_Order_Lines::Qty": 3,
+                      "Customer_Order_Lines::LineTotal": -15,
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "9",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "OrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 4,
+                    "returnedCount": 2
+                  },
+                  {
+                    "portalObjectName": "OrderLinesPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Order_Lines",
+                    "foundCount": 9,
+                    "returnedCount": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "portal-paging-offset-past-end",
+      "rows": ["R17", "PD7"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=1&_offset=9&portal=%5B%22OrdersPortal%22%5D&_offset.OrdersPortal=10",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Portals",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 9,
+                  "Code": "C009",
+                  "Name": "Nguyễn Văn Trading",
+                  "Country": "Brasil",
+                  "FavoriteContact": "",
+                  "Notes": "Note for customer 9\rsecond line é à ü\rthird line"
+                },
+                "portalData": {
+                  "OrdersPortal": []
+                },
+                "recordId": "9",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "OrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "portal-paging-offset-0",
+      "rows": ["R17", "PD7"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=1&_offset=9&portal=%5B%22OrdersPortal%22%5D&_offset.OrdersPortal=0",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "The _offset.OrdersPortal must be an integer with value greater than 0.",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "portal-paging-limit-0",
+      "rows": ["R17", "PD7"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=1&_offset=9&portal=%5B%22OrdersPortal%22%5D&_limit.OrdersPortal=0",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "The _limit.OrdersPortal must be an integer with value greater than 0.",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "portal-paging-unprefixed",
+      "rows": ["R17"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=1&_offset=9&portal=%5B%22OrdersPortal%22%5D&offset.OrdersPortal=2&limit.OrdersPortal=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Unknown parameter(s): offset.OrdersPortal",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "portal-paging-by-occurrence-name",
+      "rows": ["R17"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=1&_offset=1&portal=%5B%22Customer_Contacts%22%5D&_limit.Customer_Contacts=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Portals",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001",
+                  "Name": "Alpha Industries",
+                  "Country": "Deutschland",
+                  "FavoriteContact": "Zoë Παπαδοπούλου",
+                  "Notes": "Note for customer 1\rsecond line é à ü\rthird line"
+                },
+                "portalData": {
+                  "Customer_Contacts": [
+                    {
+                      "recordId": "1",
+                      "Customer_Contacts::ContactID": 1,
+                      "Customer_Contacts::FirstName": "Zoë",
+                      "Customer_Contacts::LastName": "Παπαδοπούλου",
+                      "Customer_Contacts::Role": "Technical",
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "1",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Contacts",
+                    "foundCount": 1,
+                    "returnedCount": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "orders-lines-portal-sorted",
+      "rows": ["PD4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Orders/records?_limit=3&_offset=7",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Orders",
+              "table": "Orders",
+              "totalRecordCount": 60,
+              "foundCount": 60,
+              "returnedCount": 3
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "OrderID": 7,
+                  "CustomerID": 4,
+                  "OrderNo": "SO-0007",
+                  "OrderDate": "04/29/2020",
+                  "Amount": "",
+                  "Status": "Cancelled",
+                  "Paid": 1,
+                  "Comment": "",
+                  "FeaturedProduct": "P008",
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "11/26/2026 13:06:28",
+                  "cLineCount": 2,
+                  "cLineTotal": 1234500000,
+                  "cCustomerName": "Ελληνική Εταιρεία",
+                  "sOrderCount": 60,
+                  "sAmountTotal": 600009350.269999999999999998,
+                  "Order_Customer::Name": "Ελληνική Εταιρεία",
+                  "Order_Customer::Code": "C004"
+                },
+                "portalData": {
+                  "LinesPortal": [
+                    {
+                      "recordId": "13",
+                      "Order_Lines::LineID": 13,
+                      "Order_Lines::ProductCode": "P002",
+                      "Order_Lines::Description": "Ligne 13 — article spécial",
+                      "Order_Lines::Qty": 0,
+                      "Order_Lines::UnitPrice": 33.333333,
+                      "Order_Lines::LineTotal": 0,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "14",
+                      "Order_Lines::LineID": 14,
+                      "Order_Lines::ProductCode": "P009",
+                      "Order_Lines::Description": "Ligne 14 — article spécial",
+                      "Order_Lines::Qty": 1000000,
+                      "Order_Lines::UnitPrice": 1234.5,
+                      "Order_Lines::LineTotal": 1234500000,
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "7",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "LinesPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Order_Lines",
+                    "foundCount": 2,
+                    "returnedCount": 2
+                  }
+                ]
+              },
+              {
+                "fieldData": {
+                  "OrderID": 8,
+                  "CustomerID": 4,
+                  "OrderNo": "SO-0008",
+                  "OrderDate": "05/16/2020",
+                  "Amount": 3.333333333333333333,
+                  "Status": "Draft",
+                  "Paid": "",
+                  "Comment": "Commande n°8 – livrée à l'entrepôt\rligne 2",
+                  "FeaturedProduct": "P009",
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "11/26/2026 13:06:28",
+                  "cLineCount": 3,
+                  "cLineTotal": 34.988,
+                  "cCustomerName": "Ελληνική Εταιρεία",
+                  "sOrderCount": 60,
+                  "sAmountTotal": 600009350.269999999999999998,
+                  "Order_Customer::Name": "Ελληνική Εταιρεία",
+                  "Order_Customer::Code": "C004"
+                },
+                "portalData": {
+                  "LinesPortal": [
+                    {
+                      "recordId": "15",
+                      "Order_Lines::LineID": 15,
+                      "Order_Lines::ProductCode": "P016",
+                      "Order_Lines::Description": "Ligne 15 — article spécial",
+                      "Order_Lines::Qty": 3,
+                      "Order_Lines::UnitPrice": -5,
+                      "Order_Lines::LineTotal": -15,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "16",
+                      "Order_Lines::LineID": 16,
+                      "Order_Lines::ProductCode": "P023",
+                      "Order_Lines::Description": "",
+                      "Order_Lines::Qty": 1,
+                      "Order_Lines::UnitPrice": 9.99,
+                      "Order_Lines::LineTotal": 9.99,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "17",
+                      "Order_Lines::LineID": 17,
+                      "Order_Lines::ProductCode": "P030",
+                      "Order_Lines::Description": "Ligne 17 — article spécial",
+                      "Order_Lines::Qty": 2,
+                      "Order_Lines::UnitPrice": 19.999,
+                      "Order_Lines::LineTotal": 39.998,
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "8",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "LinesPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Order_Lines",
+                    "foundCount": 3,
+                    "returnedCount": 3
+                  }
+                ]
+              },
+              {
+                "fieldData": {
+                  "OrderID": 9,
+                  "CustomerID": 4,
+                  "OrderNo": "SO-0009",
+                  "OrderDate": "06/02/2020",
+                  "Amount": 250.5,
+                  "Status": "Confirmed",
+                  "Paid": 0,
+                  "Comment": "",
+                  "FeaturedProduct": "P010",
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "11/26/2026 13:06:28",
+                  "cLineCount": 1,
+                  "cLineTotal": 1000,
+                  "cCustomerName": "Ελληνική Εταιρεία",
+                  "sOrderCount": 60,
+                  "sAmountTotal": 600009350.269999999999999998,
+                  "Order_Customer::Name": "Ελληνική Εταιρεία",
+                  "Order_Customer::Code": "C004"
+                },
+                "portalData": {
+                  "LinesPortal": [
+                    {
+                      "recordId": "18",
+                      "Order_Lines::LineID": 18,
+                      "Order_Lines::ProductCode": "P007",
+                      "Order_Lines::Description": "Ligne 18 — article spécial",
+                      "Order_Lines::Qty": 10,
+                      "Order_Lines::UnitPrice": 100,
+                      "Order_Lines::LineTotal": 1000,
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "9",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "LinesPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Order_Lines",
+                    "foundCount": 1,
+                    "returnedCount": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "layout-response",
+      "rows": ["R15"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=2&layout.response=API_Customers_Nested",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 2
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 2,
+                  "Code": "C002"
+                },
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "layout-response-other-table",
+      "rows": ["R15"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=2&layout.response=API_Products",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Products",
+              "table": "Products",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 2
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 1,
+                  "ProductCode": "P001",
+                  "ProductName": "Écran 27\"",
+                  "Price": 199.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 2,
+                  "ProductCode": "P002",
+                  "ProductName": "Clavier AZERTY",
+                  "Price": 29.9,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "layout-response-missing",
+      "rows": ["R15", "EC8"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records?_limit=2&layout.response=NoSuchLayout",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "105",
+              "message": "Layout is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

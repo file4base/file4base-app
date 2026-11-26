@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,11 @@ func newAPIHarness(t *testing.T, opts api.Options) *apiHarness {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := mgr.Ping(ctx); err != nil {
+		// CI sets F4B_TEST_REQUIRE_DB, so that a missing database fails
+		// instead of skipping every test that needs one.
+		if os.Getenv("F4B_TEST_REQUIRE_DB") != "" {
+			t.Fatal("the test database is not available:", err)
+		}
 		t.Skip("PostgreSQL not available:", err)
 	}
 	t.Cleanup(func() { _ = mgr.Close() })

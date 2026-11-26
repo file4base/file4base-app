@@ -1,0 +1,1153 @@
+{
+  "fixture": "containers/upload_download@v2",
+  "scenario": "containers/upload_download",
+  "group": "containers",
+  "version": "v2",
+  "fresh": true,
+  "title": "Container upload (both routes) and download URLs",
+  "rows": ["U1", "U2", "U3", "U4", "U5", "U6", "U7", "CU1", "CU2", "CU3", "FD14"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login-ro",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_ro}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "ro",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "upload-png",
+      "rows": ["U1", "U2", "U4", "U6"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3/containers/Photo",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "1"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-after-upload",
+      "rows": ["FD14", "CU1", "U4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 3,
+                  "Code": "C003",
+                  "Name": "Łódź Żółć Sp. z o.o.",
+                  "Email": "contact3@example.test",
+                  "Status": "Archivé",
+                  "Country": "Österreich",
+                  "Interests": "Hardware\rSoftware",
+                  "Pin": "0111",
+                  "Rating": 4,
+                  "Balance": -1,
+                  "LooseNumber": 15,
+                  "SignupDate": "10/15/1582",
+                  "PreferredTime": "12:00:00",
+                  "Duration": "-01:30:00",
+                  "LastContact": "06/15/2999 23:59:59",
+                  "Photo": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "Tags(1)": "tag3a",
+                  "Tags(2)": "",
+                  "Tags(3)": "ünïcødé",
+                  "Scores(1)": 3,
+                  "Scores(2)": -4.5,
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "<now>",
+                  "CreatedBy": "Admin",
+                  "ModifiedBy": "api_rw",
+                  "Source": "reference-build",
+                  "cDisplayName": "C003 – Łódź Żółć Sp. z o.o.",
+                  "cNameUpper": "ŁÓDŹ ŻÓŁĆ SP. Z O.O.",
+                  "cBalanceRounded": -1,
+                  "cSignupPlus30": "11/14/1582",
+                  "cDurationPlusHour": "-00:30:00",
+                  "cContactStamp": "10/15/1582 12:00:00",
+                  "cPhotoCopy": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "cOrderCount": 3,
+                  "cOrdersTotal": 119.995,
+                  "cDivByZero": "?",
+                  "cRepeatCalc(1)": "tag3a#1",
+                  "cRepeatCalc(2)": "",
+                  "cRepeatCalc(3)": "ünïcødé#3",
+                  "cGlobalEcho": "Global text – é ü 日本",
+                  "sCount": 30,
+                  "sTotalBalance": 123456789014222222112222189879.0459368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "Global text – é ü 日本",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "",
+                  "Customer_Orders::OrderNo": "SO-0004"
+                },
+                "portalData": {},
+                "recordId": "3",
+                "modId": "1"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "capture-url",
+      "rows": [],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "capture": [
+        {
+          "var": "photo",
+          "from": "body",
+          "path": ["response", "data", 0, "fieldData", "Photo"]
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 3,
+                  "Code": "C003",
+                  "Name": "Łódź Żółć Sp. z o.o.",
+                  "Email": "contact3@example.test",
+                  "Status": "Archivé",
+                  "Country": "Österreich",
+                  "Interests": "Hardware\rSoftware",
+                  "Pin": "0111",
+                  "Rating": 4,
+                  "Balance": -1,
+                  "LooseNumber": 15,
+                  "SignupDate": "10/15/1582",
+                  "PreferredTime": "12:00:00",
+                  "Duration": "-01:30:00",
+                  "LastContact": "06/15/2999 23:59:59",
+                  "Photo": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "Tags(1)": "tag3a",
+                  "Tags(2)": "",
+                  "Tags(3)": "ünïcødé",
+                  "Scores(1)": 3,
+                  "Scores(2)": -4.5,
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "<now>",
+                  "CreatedBy": "Admin",
+                  "ModifiedBy": "api_rw",
+                  "Source": "reference-build",
+                  "cDisplayName": "C003 – Łódź Żółć Sp. z o.o.",
+                  "cNameUpper": "ŁÓDŹ ŻÓŁĆ SP. Z O.O.",
+                  "cBalanceRounded": -1,
+                  "cSignupPlus30": "11/14/1582",
+                  "cDurationPlusHour": "-00:30:00",
+                  "cContactStamp": "10/15/1582 12:00:00",
+                  "cPhotoCopy": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "cOrderCount": 3,
+                  "cOrdersTotal": 119.995,
+                  "cDivByZero": "?",
+                  "cRepeatCalc(1)": "tag3a#1",
+                  "cRepeatCalc(2)": "",
+                  "cRepeatCalc(3)": "ünïcødé#3",
+                  "cGlobalEcho": "Global text – é ü 日本",
+                  "sCount": 30,
+                  "sTotalBalance": 123456789014222222112222189879.0459368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "Global text – é ü 日本",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "",
+                  "Customer_Orders::OrderNo": "SO-0004"
+                },
+                "portalData": {},
+                "recordId": "3",
+                "modId": "1"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "download-without-auth",
+      "rows": ["CU1", "CU2", "CU3"],
+      "request": {
+        "method": "GET",
+        "url": "{{var:photo}}",
+        "headers": [],
+        "cookies": true
+      },
+      "response": {
+        "status": 302,
+        "headers": [
+          ["Content-Type", "text/html"],
+          ["Location", "/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor&Redirect"],
+          ["Set-Cookie", "X-FMS-Session-Key=<cookie>; HttpOnly"]
+        ],
+        "body_base64": "PGh0bWw+PGhlYWQ+PHRpdGxlPk1vdmVkIFRlbXBvcmFyaWx5PC90aXRsZT48L2hlYWQ+PGJvZHk+PGgxPjMwMiBNb3ZlZCBUZW1wb3JhcmlseTwvaDE+PC9ib2R5PjwvaHRtbD4=",
+        "body_sha256": "de90fd3c8aeeb32a95af854d2198514307829fd3c005a173b85bf895b5a12b66",
+        "body_length": 101
+      }
+    },
+    {
+      "id": "download-again-with-cookie",
+      "rows": ["CU2"],
+      "request": {
+        "method": "GET",
+        "url": "{{var:photo}}",
+        "headers": [],
+        "cookies": true
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "image/png"],
+          ["Cache-Control", "max-age=8640001"]
+        ],
+        "body_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "body_sha256": "6b7fa434f92a8b80aab02d9bf1a12e49ffcae424e4013a1c4f68b67e3d2bbcd0",
+        "body_length": 70
+      }
+    },
+    {
+      "id": "upload-repetition-1",
+      "rows": ["U5"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/4/containers/Photo/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "note.txt",
+            "content_type": "text/plain",
+            "base64": "Y29uZm9ybWFuY2UgdXBsb2FkIHRleHQK"
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "1"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "upload-repetition-2-non-repeating",
+      "rows": ["U5"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/4/containers/Photo/2",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "111",
+              "message": "Field repetition is invalid"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "upload-modid-match",
+      "rows": ["U3"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/5/containers/Photo?modId=0",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "1"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "upload-modid-stale",
+      "rows": ["U3", "EC14"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/5/containers/Photo?modId=0",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "306",
+              "message": "Record modification ID does not match"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "upload-text-field",
+      "rows": ["U7"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/5/containers/Name",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "408",
+              "message": "Specified field has inappropriate data type for this operation"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "upload-field-not-on-layout",
+      "rows": ["U7", "EC6"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/5/containers/Photo",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "2"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "upload-unknown-field",
+      "rows": ["U7", "EC6"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/5/containers/NoSuchField",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "102",
+              "message": "Field is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "upload-calc-container",
+      "rows": ["U7"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/5/containers/cPhotoCopy",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "201",
+              "message": "Field cannot be modified"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "upload-global-container",
+      "rows": ["U7", "GL4"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/5/containers/gContainer",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "2"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "upload-missing-record",
+      "rows": ["U7", "EC5"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/9999/containers/Photo",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "upload-wrong-part-name",
+      "rows": ["U2"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/6/containers/Photo",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "file",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Unexpected field",
+              "code": "1630"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "upload-two-parts",
+      "rows": ["U2"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/6/containers/Photo",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          },
+          {
+            "name": "other",
+            "text": "x"
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "1"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "upload-no-filename",
+      "rows": ["U2"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/6/containers/Photo",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "text": "plain field value"
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Request validation failed: Parameter (upload) is required",
+              "code": "10"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "upload-empty-file",
+      "rows": ["U2"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/6/containers/Photo",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "empty.bin",
+            "content_type": "application/octet-stream",
+            "text": ""
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "2"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "upload-json-body",
+      "rows": ["U2"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/6/containers/Photo",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"upload\":\"x\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Invalid content type (application/json).  These are valid: multipart/form-data",
+              "code": "1708"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "upload-repetition-tags-text",
+      "rows": ["U5", "U7"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/6/containers/Tags/2",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "408",
+              "message": "Specified field has inappropriate data type for this operation"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "read-after-uploads",
+      "rows": ["U4", "U6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/4",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 4,
+                  "Code": "C004",
+                  "Name": "Ελληνική Εταιρεία",
+                  "Email": "contact4@example.test",
+                  "Status": "Active",
+                  "Country": "Côte d'Ivoire",
+                  "Interests": "Services",
+                  "Pin": "0148",
+                  "Rating": 5,
+                  "Balance": 3.14159265358979323846264338327950288419716939937510,
+                  "LooseNumber": " 7 ",
+                  "SignupDate": "12/30/1899",
+                  "PreferredTime": "23:59:59",
+                  "Duration": "00:00:00",
+                  "LastContact": "05/05/0999 12:34:56.123",
+                  "Photo": "https://<host>/Streaming/MainDB/<container-token>.txt?RCType=EmbeddedRCFileProcessor",
+                  "Tags(1)": "tag4a",
+                  "Tags(2)": "tag4b",
+                  "Tags(3)": "",
+                  "Scores(1)": 4,
+                  "Scores(2)": "",
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "<now>",
+                  "CreatedBy": "Admin",
+                  "ModifiedBy": "api_rw",
+                  "Source": "reference-build",
+                  "cDisplayName": "C004 – Ελληνική Εταιρεία",
+                  "cNameUpper": "ΕΛΛΗΝΙΚΉ ΕΤΑΙΡΕΊΑ",
+                  "cBalanceRounded": 3.14,
+                  "cSignupPlus30": "01/29/1900",
+                  "cDurationPlusHour": "01:00:00",
+                  "cContactStamp": "12/30/1899 23:59:59",
+                  "cPhotoCopy": "https://<host>/Streaming/MainDB/<container-token>.txt?RCType=EmbeddedRCFileProcessor",
+                  "cOrderCount": 4,
+                  "cOrdersTotal": 1488.393333333333333333,
+                  "cDivByZero": "?",
+                  "cRepeatCalc(1)": "tag4a#1",
+                  "cRepeatCalc(2)": "tag4b#2",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "Global text – é ü 日本",
+                  "sCount": 30,
+                  "sTotalBalance": 123456789014222222112222189879.0459368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "Global text – é ü 日本",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "Дмитрий",
+                  "Customer_Orders::OrderNo": "SO-0007"
+                },
+                "portalData": {},
+                "recordId": "4",
+                "modId": "1"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "upload-read-only-account",
+      "rows": ["U1", "AC1"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/7/containers/Photo",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"]
+        ],
+        "multipart": [
+          {
+            "name": "upload",
+            "filename": "pixel.png",
+            "content_type": "image/png",
+            "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          }
+        ]
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "9",
+              "message": "Insufficient privileges"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout-before-download",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "download-after-logout",
+      "rows": ["CU2"],
+      "request": {
+        "method": "GET",
+        "url": "{{var:photo}}",
+        "headers": [],
+        "cookies": true
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "image/png"],
+          ["Cache-Control", "max-age=8640001"]
+        ],
+        "body_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "body_sha256": "6b7fa434f92a8b80aab02d9bf1a12e49ffcae424e4013a1c4f68b67e3d2bbcd0",
+        "body_length": 70
+      }
+    },
+    {
+      "id": "download-after-logout-no-cookie",
+      "rows": ["CU2"],
+      "request": {
+        "method": "GET",
+        "url": "{{var:photo}}",
+        "headers": []
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "text/html; charset=utf-8"]
+        ],
+        "body_base64": "PGh0bWw+PGhlYWQ+PHRpdGxlPlVuYXV0aG9yaXplZDwvdGl0bGU+PC9oZWFkPjxib2R5PjxoMT40MDEgVW5hdXRob3JpemVkPC9oMT48L2JvZHk+PC9odG1sPg==",
+        "body_sha256": "16c0551784c9139620b075ea47e38f2e79c20735ec11c8933a0424360dc227dd",
+        "body_length": 91
+      }
+    },
+    {
+      "id": "logout-ro",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:ro}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

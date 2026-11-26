@@ -1,0 +1,106 @@
+# Where each fixture File4Base does not pass yet first fails. See README.md:
+# failing earlier or differently fails the test, and so does passing.
+#
+#   migration@ENGINE ISSUE         the reference file does not migrate on ENGINE,
+#                                  for the known cause tracked by ISSUE
+#   FIXTURE STEP KIND [ENGINE]     FIXTURE first fails at STEP, with a KIND difference
+#
+# Today there is no /fmi/data route.
+
+# MariaDB: a default table occurrence collides with an occurrence whose name
+# differs only in case. No fixture is replayed on MariaDB until it is fixed.
+migration@mariadb #146
+
+containers/upload_download@v1 login-rw status
+containers/upload_download@v2 login-rw status
+containers/upload_download@vLatest login-rw status
+databases/list@v1 anonymous status
+databases/list@v2 anonymous status
+databases/list@vLatest anonymous status
+find/operators_number_date@v1 login-rw status
+find/operators_number_date@v2 login-rw status
+find/operators_number_date@vLatest login-rw status
+find/operators_text@v1 login-rw status
+find/operators_text@v2 login-rw status
+find/operators_text@vLatest login-rw status
+find/params@v1 login-rw status
+find/params@v2 login-rw status
+find/params@vLatest login-rw status
+find/requests@v1 login-rw status
+find/requests@v2 login-rw status
+find/requests@vLatest login-rw status
+find/scripts@v1 login-rw status
+find/scripts@v2 login-rw status
+find/scripts@vLatest login-rw status
+globals/patch@v1 login-rw status
+globals/patch@v2 login-rw status
+globals/patch@vLatest login-rw status
+locking/record_lock@v1 login-rw status
+locking/record_lock@v2 login-rw status
+locking/record_lock@vLatest login-rw status
+metadata/layout_metadata_old@v1 login-rw status
+metadata/layout_metadata_old@v2 login-rw status
+metadata/layout_metadata_old@vLatest login-rw status
+metadata/layout_metadata@v1 login-rw status
+metadata/layout_metadata@v2 login-rw status
+metadata/layout_metadata@vLatest login-rw status
+metadata/layouts_list@v1 login-rw status
+metadata/layouts_list@v2 login-rw status
+metadata/layouts_list@vLatest login-rw status
+metadata/scripts_list@v1 login-rw status
+metadata/scripts_list@v2 login-rw status
+metadata/scripts_list@vLatest login-rw status
+privileges/access@v1 login-rw status
+privileges/access@v2 login-rw status
+privileges/access@vLatest login-rw status
+productinfo/product_info@v1 anonymous status
+productinfo/product_info@v2 anonymous status
+productinfo/product_info@vLatest anonymous status
+records/get_by_id@v1 login-rw status
+records/get_by_id@v2 login-rw status
+records/get_by_id@vLatest login-rw status
+records/portals@v1 login-rw status
+records/portals@v2 login-rw status
+records/portals@vLatest login-rw status
+records/range_paging@v1 login-rw status
+records/range_paging@v2 login-rw status
+records/range_paging@vLatest login-rw status
+records/range_sort@v1 login-rw status
+records/range_sort@v2 login-rw status
+records/range_sort@vLatest login-rw status
+records/value_contract@v1 login-rw status
+records/value_contract@v2 login-rw status
+records/value_contract@vLatest login-rw status
+routing/envelope_and_routes@v1 version-v3 status
+routing/envelope_and_routes@v2 version-v3 status
+routing/envelope_and_routes@vLatest version-v3 status
+scripts/execute@v1 login-rw status
+scripts/execute@v2 login-rw status
+scripts/execute@vLatest login-rw status
+scripts/on_reads@v1 login-rw status
+scripts/on_reads@v2 login-rw status
+scripts/on_reads@vLatest login-rw status
+sessions/idle_expiry@v1 login-a status
+sessions/idle_expiry@v2 login-a status
+sessions/idle_expiry@vLatest login-a status
+sessions/login_variants@v1 basic-empty-object status
+sessions/login_variants@v2 basic-empty-object status
+sessions/login_variants@vLatest basic-empty-object status
+sessions/token_lifecycle@v1 login status
+sessions/token_lifecycle@v2 login status
+sessions/token_lifecycle@vLatest login status
+writes/create@v1 login-rw status
+writes/create@v2 login-rw status
+writes/create@vLatest login-rw status
+writes/delete@v1 login-rw status
+writes/delete@v2 login-rw status
+writes/delete@vLatest login-rw status
+writes/duplicate@v1 login-rw status
+writes/duplicate@v2 login-rw status
+writes/duplicate@vLatest login-rw status
+writes/edit@v1 login-rw status
+writes/edit@v2 login-rw status
+writes/edit@vLatest login-rw status
+writes/validation@v1 login-rw status
+writes/validation@v2 login-rw status
+writes/validation@vLatest login-rw status

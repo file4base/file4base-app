@@ -1,0 +1,844 @@
+{
+  "fixture": "privileges/access@v2",
+  "scenario": "privileges/access",
+  "group": "privileges",
+  "version": "v2",
+  "fresh": true,
+  "title": "Privilege effects: read-only account writes, no-access layouts and fields, full access",
+  "rows": ["AC1", "AC4", "C20", "E11", "DL5", "LN6", "M18", "R23", "SC6", "EC9", "EC3"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login-ro",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_ro}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "ro",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login-admin",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:admin}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "admin",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ro-create",
+      "rows": ["C20", "EC9"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"ProductCode\":\"ZZ\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "200",
+              "message": "Record access is denied"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "ro-edit",
+      "rows": ["E11", "EC9"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"ProductName\":\"x\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "201",
+              "message": "Field cannot be modified"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "ro-delete",
+      "rows": ["DL5", "EC9"],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "200",
+              "message": "Record access is denied"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "ro-duplicate",
+      "rows": ["DU1", "EC9"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "200",
+              "message": "Record access is denied"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "ro-read",
+      "rows": ["AC1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_limit=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Products",
+              "table": "Products",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 1,
+                  "ProductCode": "P001",
+                  "ProductName": "Écran 27\"",
+                  "Price": 199.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ro-noaccess-layout",
+      "rows": ["LN6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_NoAccess/records?_limit=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "105",
+              "message": "Layout is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "ro-find",
+      "rows": ["AC1"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/_find",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"query\":[{\"ProductCode\":\"P001\"}]}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Products",
+              "table": "Products",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 1,
+                  "ProductCode": "P001",
+                  "ProductName": "Écran 27\"",
+                  "Price": 199.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rw-restricted-read",
+      "rows": ["M18"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Restricted/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Restricted",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001",
+                  "Name": "Alpha Industries",
+                  "SecretNote": "<No Access>",
+                  "Rating": 2
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rw-find-on-noaccess-field",
+      "rows": ["M18", "F19"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Restricted/_find",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"query\":[{\"SecretNote\":\"*\"}]}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "102",
+              "message": "Field is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "rw-edit-noaccess-field",
+      "rows": ["M18", "E11"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Restricted/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"SecretNote\":\"x\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "102",
+              "message": "Field is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "rw-sort-noaccess-field",
+      "rows": ["M18"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Restricted/records?_limit=2&_sort=%5B%7B%22fieldName%22%3A%22SecretNote%22%7D%5D",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "102",
+              "message": "Field is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "rw-edit-on-readonly-layout",
+      "rows": ["AC4"],
+      "note": "DataAPI_ReadWrite: layouts other than API_NoAccess are read-only for the layout design, records read/write",
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/8",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Pin\":\"0000\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "1"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "admin-noaccess-layout",
+      "rows": ["LN6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_NoAccess/records?_limit=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:admin}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_NoAccess",
+              "table": "Products",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 1,
+                  "ProductCode": "P001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "admin-restricted-read",
+      "rows": ["M18"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Restricted/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:admin}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Restricted",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001",
+                  "Name": "Alpha Industries",
+                  "SecretNote": "secret-01",
+                  "Rating": 2
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "admin-metadata-restricted",
+      "rows": ["M18"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Restricted",
+        "headers": [
+          ["Authorization", "Bearer {{token:admin}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "fieldMetaData": [
+              {
+                "name": "CustomerID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Code",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 8,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Name",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "SecretNote",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Rating",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": true,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              }
+            ],
+            "portalMetaData": {}
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ro-script",
+      "rows": ["SC6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/script/API_ReturnContext",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "API_Products\rProducts\r30\r1\rapi_ro\rDataAPI_ReadOnly\rparam=",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-ro",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:ro}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-admin",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:admin}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

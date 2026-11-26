@@ -1,0 +1,431 @@
+{
+  "fixture": "locking/record_lock@v2",
+  "scenario": "locking/record_lock",
+  "group": "locking",
+  "version": "v2",
+  "fresh": true,
+  "title": "Record in use (301) while another session holds the record open",
+  "rows": ["E3", "DL4", "EC13"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login-b",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:admin}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "b",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "edit-while-uploading",
+      "rows": ["E3", "EC13"],
+      "note": "A 300 MB upload by session A holds the record open; session B's edit is retried until FileMaker answers 301.",
+      "concurrent": {
+        "background": {
+          "id": "large-upload",
+          "rows": ["U1"],
+          "request": {
+            "method": "POST",
+            "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/5/containers/Photo",
+            "headers": [
+              ["Authorization", "Bearer {{token:rw}}"]
+            ],
+            "multipart": [
+              {
+                "name": "upload",
+                "filename": "large.bin",
+                "content_type": "application/octet-stream",
+                "repeat": {
+                  "text": "F4B lock probe payload. ",
+                  "count": 12500000
+                }
+              }
+            ]
+          },
+          "response": {
+            "status": 200,
+            "headers": [
+              ["Content-Type", "application/json; charset=utf-8"],
+              ["Cache-Control", "no-cache"]
+            ],
+            "body": {
+              "response": {
+                "modId": "4"
+              },
+              "messages": [
+                {
+                  "code": "0",
+                  "message": "OK"
+                }
+              ]
+            }
+          }
+        },
+        "probe": {
+          "id": "edit-probe",
+          "rows": ["E3"],
+          "request": {
+            "method": "PATCH",
+            "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/5",
+            "headers": [
+              ["Authorization", "Bearer {{token:b}}"],
+              ["Content-Type", "application/json"]
+            ],
+            "body": "{\"fieldData\":{\"Notes\":\"lock probe\"}}"
+          },
+          "response": {
+            "status": 500,
+            "headers": [
+              ["Content-Type", "application/json; charset=utf-8"]
+            ],
+            "body": {
+              "messages": [
+                {
+                  "code": "301",
+                  "message": "Record is in use by another user"
+                }
+              ],
+              "response": {}
+            }
+          }
+        },
+        "until_code": "301",
+        "start_delay": 0.15,
+        "interval": 0.05,
+        "max_tries": 400
+      }
+    },
+    {
+      "id": "delete-while-uploading",
+      "rows": ["DL4", "EC13"],
+      "note": "The probe starts 0.6 s after the upload so that it cannot delete the record before the upload holds it.",
+      "concurrent": {
+        "background": {
+          "id": "large-upload",
+          "rows": ["U1"],
+          "request": {
+            "method": "POST",
+            "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/6/containers/Photo",
+            "headers": [
+              ["Authorization", "Bearer {{token:rw}}"]
+            ],
+            "multipart": [
+              {
+                "name": "upload",
+                "filename": "large.bin",
+                "content_type": "application/octet-stream",
+                "repeat": {
+                  "text": "F4B lock probe payload. ",
+                  "count": 12500000
+                }
+              }
+            ]
+          },
+          "response": {
+            "status": 200,
+            "headers": [
+              ["Content-Type", "application/json; charset=utf-8"],
+              ["Cache-Control", "no-cache"]
+            ],
+            "body": {
+              "response": {
+                "modId": "1"
+              },
+              "messages": [
+                {
+                  "code": "0",
+                  "message": "OK"
+                }
+              ]
+            }
+          }
+        },
+        "probe": {
+          "id": "delete-probe",
+          "rows": ["DL4"],
+          "request": {
+            "method": "DELETE",
+            "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/6",
+            "headers": [
+              ["Authorization", "Bearer {{token:b}}"]
+            ]
+          },
+          "response": {
+            "status": 500,
+            "headers": [
+              ["Content-Type", "application/json; charset=utf-8"]
+            ],
+            "body": {
+              "messages": [
+                {
+                  "code": "301",
+                  "message": "Record is in use by another user"
+                }
+              ],
+              "response": {}
+            }
+          }
+        },
+        "until_code": "301",
+        "start_delay": 0.6,
+        "interval": 0.05,
+        "max_tries": 400
+      }
+    },
+    {
+      "id": "upload-while-uploading",
+      "rows": ["U1", "EC13"],
+      "concurrent": {
+        "background": {
+          "id": "large-upload",
+          "rows": ["U1"],
+          "request": {
+            "method": "POST",
+            "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/7/containers/Photo",
+            "headers": [
+              ["Authorization", "Bearer {{token:rw}}"]
+            ],
+            "multipart": [
+              {
+                "name": "upload",
+                "filename": "large.bin",
+                "content_type": "application/octet-stream",
+                "repeat": {
+                  "text": "F4B lock probe payload. ",
+                  "count": 12500000
+                }
+              }
+            ]
+          },
+          "response": {
+            "status": 200,
+            "headers": [
+              ["Content-Type", "application/json; charset=utf-8"],
+              ["Cache-Control", "no-cache"]
+            ],
+            "body": {
+              "response": {
+                "modId": "3"
+              },
+              "messages": [
+                {
+                  "code": "0",
+                  "message": "OK"
+                }
+              ]
+            }
+          }
+        },
+        "probe": {
+          "id": "upload-probe",
+          "rows": ["U1"],
+          "request": {
+            "method": "POST",
+            "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/7/containers/Photo",
+            "headers": [
+              ["Authorization", "Bearer {{token:b}}"]
+            ],
+            "multipart": [
+              {
+                "name": "upload",
+                "filename": "pixel.png",
+                "content_type": "image/png",
+                "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+              }
+            ]
+          },
+          "response": {
+            "status": 500,
+            "headers": [
+              ["Content-Type", "application/json; charset=utf-8"]
+            ],
+            "body": {
+              "messages": [
+                {
+                  "code": "301",
+                  "message": "Record is in use by another user"
+                }
+              ],
+              "response": {}
+            }
+          }
+        },
+        "until_code": "301",
+        "start_delay": 0.15,
+        "interval": 0.05,
+        "max_tries": 400
+      }
+    },
+    {
+      "id": "read-after",
+      "rows": ["E3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/5?layout.response=API_Customers_Restricted",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Restricted",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 5,
+                  "Code": "C005",
+                  "Name": "ООО «Ромашка»",
+                  "SecretNote": "<No Access>",
+                  "Rating": 1
+                },
+                "portalData": {},
+                "recordId": "5",
+                "modId": "4"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-b",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:b}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
