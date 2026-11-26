@@ -798,6 +798,9 @@ func TestNativeLayoutButtonStepsKeepTheirTargets(t *testing.T) {
 		button("a3", `<ScriptReference id="5" name="Report" UUID="r"><FileReference id="1" name="Reporting"/></ScriptReference><Options>4</Options>`) +
 		button("a4", `<Step enable="True" id="144" name="Save Records as PDF"><ParameterValues>
                   <Parameter type="Options"><Options type="Records being browsed" value="1"><Security><Open value="True"/><Control value="False"/></Security></Options></Parameter>
+                </ParameterValues></Step>`) +
+		button("a5", `<Step enable="True" id="1" name="Perform Script"><ParameterValues>
+                  <Parameter type="List"><List><ScriptReference id="5" name="Report"><FileReference id="1" name="Reporting"/></ScriptReference></List></Parameter>
                 </ParameterValues></Step>`)
 	design := strings.Replace(layoutObjectsFixture, `<Field id="5" name="Archived" datatype="number" fieldtype="normal"/>`,
 		`<Field id="5" name="Archived" datatype="number" fieldtype="normal"/>
@@ -843,6 +846,9 @@ func TestNativeLayoutButtonStepsKeepTheirTargets(t *testing.T) {
 	}
 	if a := actions["Ba4"]; a == nil || params(a)["pdf_security"] != true {
 		t.Fatalf("a protected PDF must carry pdf_security: %v", a)
+	}
+	if a := actions["Ba5"]; a == nil || params(a)["file_reference"] != "Reporting" {
+		t.Fatalf("a Perform Script step naming another file's script must keep that file: %v", a)
 	}
 	external := false
 	for _, it := range got.Report.ManualActionRequired {
@@ -1076,5 +1082,20 @@ func TestNativeLayoutPopoversOpenOverTheLayout(t *testing.T) {
 	}
 	if c := got.Report.Counts.LayoutObjects["Popover Button"]; c.Source != 1 || c.Migrated != 1 {
 		t.Fatalf("popover counts: %+v", c)
+	}
+}
+
+func TestNativeLayoutButtonStepFieldOfAnotherFile(t *testing.T) {
+	l := &nativeLayout{occName: "Orders", ctx: &layoutObjectContext{binding: formulaBinding{
+		occByName: map[string]boundOccurrence{"stock": {name: "Stock", external: true}},
+	}}}
+	// The decoder keeps the source name's sanitised form, which for "ID"
+	// is the other file's primary key: its migration names that field id_2.
+	entry := map[string]interface{}{"field": "id", "field_label": "ID", "field_table": "Stock"}
+	if !l.bindStepFields(map[string]interface{}{"target": entry}) {
+		t.Fatal("a field of another file cannot be checked here and must not switch the button off")
+	}
+	if entry["field"] != "id_2" {
+		t.Fatalf("field = %v, want the other file's column id_2", entry["field"])
 	}
 }

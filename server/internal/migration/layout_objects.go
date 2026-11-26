@@ -1271,8 +1271,8 @@ func (l *nativeLayout) buttonAction(action *xmlNode) map[string]interface{} {
 // sanitised alike (Unit Price, Unit_Price) are imported as two columns
 // (unit_price, unit_price_2): only the table's field map tells which one is
 // meant. It answers false when a field of an imported table cannot be
-// placed. A field of an occurrence that is not known here, or of another
-// file's table, is left as the decoder wrote it.
+// placed. A field of an occurrence that is not known here is left as the
+// decoder wrote it; one of another file's table gets that file's name for it.
 func (l *nativeLayout) bindStepFields(v interface{}) bool {
 	ok := true
 	switch t := v.(type) {
@@ -1329,6 +1329,9 @@ func (l *nativeLayout) bindStepField(entry map[string]interface{}, label string)
 		}
 	}
 	if o.external {
+		// Named as the other file's migration names its columns, as a
+		// field object of that occurrence is (see column).
+		entry["field"] = externalFieldName(label)
 		return true
 	}
 	names := l.ctx.binding.fields[o.table]

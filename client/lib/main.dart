@@ -944,16 +944,17 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
     final toName = layoutModel.definition['table_occurrence']?.toString().toLowerCase();
     TableModel? matchTable;
-    if (toName != null) {
-      matchTable = tables.where((t) =>
-          t.displayName.toLowerCase() == toName ||
-          t.name.toLowerCase() == toName).firstOrNull;
-    }
-    // The layout's occurrence says which table it shows.
+    // The layout's occurrence says which table it shows, before a name in
+    // its definition: an occurrence may be named like another table.
     final occurrence = _occurrences.where((o) => o.id == layoutModel.tableOccurrenceId).firstOrNull;
     final baseTableId = occurrence?.baseTableId;
     if (baseTableId != null && baseTableId.isNotEmpty) {
-      matchTable ??= tables.where((t) => t.id == baseTableId).firstOrNull;
+      matchTable = tables.where((t) => t.id == baseTableId).firstOrNull;
+    }
+    if (toName != null) {
+      matchTable ??= tables.where((t) =>
+          t.displayName.toLowerCase() == toName ||
+          t.name.toLowerCase() == toName).firstOrNull;
     }
     matchTable ??= tables.where((t) => t.id == layoutModel.tableOccurrenceId).firstOrNull;
     matchTable ??= tables.where((t) =>
@@ -967,9 +968,15 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     if (matchTable?.name != _savedFindsTable) unawaited(_loadSavedFinds());
 
     try {
-      _activeLayout = LayoutDefinitionModel.fromJson(layoutModel.definition).copyWith(
+      final definition = LayoutDefinitionModel.fromJson(layoutModel.definition);
+      _activeLayout = definition.copyWith(
         id: layoutModel.id,
         name: layoutModel.name,
+        // A migrated layout names its occurrence beside its definition only.
+        // Fields along a path, and related fields, are read from it: from
+        // the table's first occurrence, a layout on another occurrence of
+        // the same table would show the records that one reaches.
+        tableOccurrence: definition.tableOccurrence.trim().isEmpty ? occurrence?.name : null,
       );
     } catch (_) {
       if (matchTable != null) {

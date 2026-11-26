@@ -492,12 +492,20 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
   String _editShown = '';
   bool _saving = false;
 
+  /// The record shown when the field was entered: what is typed is meant
+  /// for it, even if the field reads another one meanwhile.
+  String? _editTarget;
+
   @override
   void initState() {
     super.initState();
     _access.addListener(_reload);
     _editFocus.addListener(() {
-      if (!_editFocus.hasFocus) unawaited(_saveAlongPath());
+      if (_editFocus.hasFocus) {
+        _editTarget = _row?['id']?.toString();
+      } else {
+        unawaited(_saveAlongPath());
+      }
     });
     unawaited(_load());
   }
@@ -519,8 +527,10 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
     final row = _row;
     final end = binding == null ? null : widget.related.endOfPath(binding.occurrencePath);
     final col = end?.table.columns.where((c) => c.name.toLowerCase() == binding!.fieldName.toLowerCase()).firstOrNull;
-    final id = row?['id']?.toString();
-    if (_saving || end == null || col == null || id == null || _edit.text == _editShown) return;
+    final id = _editTarget ?? row?['id']?.toString();
+    // What was typed, before anything is awaited: the box may be redrawn.
+    final value = _edit.text;
+    if (_saving || end == null || col == null || id == null || value == _editShown) return;
     _saving = true;
     final messenger = ScaffoldMessenger.maybeOf(context);
     try {
@@ -529,6 +539,8 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
       if (current?['id']?.toString() != id) {
         final text = current == null ? '' : widget.related.formatValue(col, current[col.name]);
         _generation++; // a read still running is of the record left
+        final currentId = current?['id']?.toString();
+        _editTarget = _editFocus.hasFocus ? currentId : null;
         setState(() {
           _row = current;
           _edit.text = text;
@@ -538,11 +550,13 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
             content: Text('${binding.qualifiedName} was not saved: the related record changed since it was shown.')));
         return;
       }
-      final saved = await widget.related.apiClient.updateRow(end.table.name, id, {col.name: _edit.text});
+      final saved = await widget.related.apiClient.updateRow(end.table.name, id, {col.name: value});
       if (!mounted) return;
+      if (!_editFocus.hasFocus) _editTarget = null;
       setState(() {
-        _row = {...row!, ...saved};
-        _editShown = _edit.text;
+        _row = {...current!, ...saved};
+        _editShown = value;
+        if (!_editFocus.hasFocus) _edit.text = value;
       });
     } on Exception catch (e) {
       if (!mounted) return;
@@ -704,7 +718,7 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
         // file is still changed on a layout of its own table.
         !const {'DATE', 'TIME', 'TIMESTAMP', 'CONTAINER', 'BOOLEAN'}.contains(col.storageType.toUpperCase());
     if (editable) {
-      if (!_editFocus.hasFocus && _edit.text != text) {
+      if (!_editFocus.hasFocus && !_saving && _edit.text != text) {
         _edit.text = text;
         _editShown = text;
       }
@@ -805,11 +819,17 @@ class PortalRowController extends ChangeNotifier {
   RelatedTarget? _target;
   String? _parentId;
   bool _truncated = false;
+  bool _unordered = false;
   Completer<void> _loaded = Completer<void>();
 
   /// Whether the portal has more related records than [rows]: it read at
   /// most a page of them. Its last row is then not the last record.
   bool get truncated => _truncated;
+
+  /// Whether the rows read are not the first ones in the portal's order:
+  /// a portal along a path reads its first page in the path's order, then
+  /// sorts that page. No row is then at its place.
+  bool get unordered => _unordered;
 
   /// The related records the portal shows, its first row first (past the
   /// rows its "initial row" skips).
@@ -847,11 +867,13 @@ class PortalRowController extends ChangeNotifier {
 
   /// Called by the view with the rows it shows. The active row stays the
   /// same record's while it is still in the portal.
-  void showRows(List<Map<String, dynamic>> rows, {RelatedTarget? target, String? parentId, bool truncated = false}) {
+  void showRows(List<Map<String, dynamic>> rows,
+      {RelatedTarget? target, String? parentId, bool truncated = false, bool unordered = false}) {
     final activeId = activeRecord?['id']?.toString();
     final sameParent = parentId == _parentId;
     _rows = rows;
     _truncated = truncated;
+    _unordered = unordered;
     _target = target;
     _parentId = parentId;
     if (_active > 0) {
@@ -1000,8 +1022,11 @@ class _PortalViewState extends State<PortalView> {
     return _rows.skip(skip).toList();
   }
 
-  void _publishRows() => widget.rowController
-      ?.showRows(_visibleRows, target: _target, parentId: widget.related.recordId, truncated: _truncated);
+  void _publishRows() => widget.rowController?.showRows(_visibleRows,
+      target: _target,
+      parentId: widget.related.recordId,
+      truncated: _truncated,
+      unordered: _truncated && _config.isAlongPath && _config.sortFields.isNotEmpty);
 
   void _reload() => unawaited(_load());
 
@@ -1012,6 +1037,9 @@ class _PortalViewState extends State<PortalView> {
         old.related.fromTable != widget.related.fromTable ||
         old.object.id != widget.object.id ||
         old.refreshGeneration != widget.refreshGeneration ||
+        // The record in hand was written: a changed match field relates
+        // other records.
+        old.related.revision != widget.related.revision ||
         old.object.portalConfig.toString() != widget.object.portalConfig.toString()) {
       unawaited(_load());
     }

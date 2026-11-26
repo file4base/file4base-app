@@ -2777,8 +2777,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// refused (a commit trigger, a validation): the button would otherwise
   /// act on the record left.
   Future<void> _clickRowButton(int recordIndex, LayoutObjectModel obj, String label) async {
+    final clicked = _records.elementAtOrNull(recordIndex)?['id']?.toString();
     if (recordIndex != _currentIndex && !await _goToRecordIndex(recordIndex)) return;
-    if (!mounted || recordIndex != _currentIndex) return;
+    // The record clicked, not whatever is at its place now (a commit
+    // trigger may have sorted or reloaded the list).
+    if (!mounted || recordIndex != _currentIndex || currentRecord?['id']?.toString() != clicked) return;
     await _handleLayoutButtonClick(obj, label);
   }
 
@@ -5780,11 +5783,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         row = n;
     }
     // A portal that read only its first related records does not have its
-    // last one: a row past those it has, or the last one, is refused, and
+    // last one: a row past those it has, or the last one, is refused (any
+    // row when the page read is not in the portal's order), and
     // no row is left active, so a step after it (Delete Portal Row) never
     // acts on another row than the one asked for. Next past them ends a
     // loop like the last row does.
-    if (rows.truncated && (t == 'last' || row > count)) {
+    if (rows.unordered || (rows.truncated && (t == 'last' || row > count))) {
       _deactivatePortal();
       return GoToRecordOutcome(moved: false, atBoundary: t == 'next', errorCode: 3);
     }

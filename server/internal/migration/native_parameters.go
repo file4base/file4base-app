@@ -135,8 +135,8 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 			} else if script := findFirstChild(child, "ScriptReference"); script != nil && canonical == "Perform Script" {
 				out["script_name"] = firstAttr(script, "name", "Name")
 				out["filemaker_script_id"] = firstAttr(script, "id", "ID")
-				if external := findFirstChild(script, "DataSourceReference"); external != nil {
-					out["file_reference"] = firstAttr(external, "name", "Name")
+				if external := findFirstChild(script, "DataSourceReference", "FileReference"); external != nil {
+					out["file_reference"] = externalScriptFile(external)
 				}
 			} else {
 				unknown = append(unknown, "Parameter.LayoutReferenceContainer")
@@ -170,8 +170,8 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 					// for a script it cannot name: one that was deleted, or
 					// one of another file that was not open as the design
 					// was saved, which it then names by its file only.
-					if external := findFirstChild(child, "DataSourceReference"); external != nil {
-						out["file_reference"] = firstAttr(external, "name", "Name")
+					if external := findFirstChild(child, "DataSourceReference", "FileReference"); external != nil {
+						out["file_reference"] = externalScriptFile(external)
 						out["script_unresolved"] = true
 					} else {
 						out["script_missing"] = true
@@ -180,8 +180,8 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 				}
 				out["script_name"] = firstAttr(ref, "name", "Name")
 				out["filemaker_script_id"] = firstAttr(ref, "id", "ID")
-				if external := findFirstChild(ref, "DataSourceReference"); external != nil {
-					out["file_reference"] = firstAttr(external, "name", "Name")
+				if external := findFirstChild(ref, "DataSourceReference", "FileReference"); external != nil {
+					out["file_reference"] = externalScriptFile(external)
 				}
 				continue
 			}
@@ -583,4 +583,15 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 		out["input_fields"] = inputFields
 	}
 	return out, unknown
+}
+
+// externalScriptFile names the file a script reference points to, from its
+// DataSourceReference (Save a Copy as XML) or FileReference (Save as XML)
+// child. A reference without a name still says the script is another
+// file's: the step must not run a local script that shares its name.
+func externalScriptFile(external *xmlNode) string {
+	if name := firstAttr(external, "name", "Name"); name != "" {
+		return name
+	}
+	return "another file"
 }

@@ -196,6 +196,15 @@ void main() {
     expect((next.moved, next.atBoundary, next.errorCode), (false, true, 3), reason: 'Next past the rows read ends a loop');
     expect((await _settled(tester, state.actionGoToPortalRow('7'))).errorCode, 3);
 
+    // A sorted portal of more records than were read: the server pages them
+    // before the portal's sort, so no row read is known to be the first.
+    final sorted = await _pump(tester, api, layout: _layout(portal: along.copyWith(sort: 'label')));
+    final first = await _settled(tester, sorted.actionGoToPortalRow('first'));
+    expect((first.moved, first.errorCode), (false, 3), reason: 'the first row read may not be the first by the sort');
+    expect((await _settled(tester, sorted.actionGoToPortalRow('1'))).errorCode, 3);
+    expect(await _settled(tester, sorted.actionDeletePortalRow(confirm: false)), 101);
+    expect(api.deletes, isEmpty);
+
     // All the related records: the last row is the last one.
     api.alongMore = false;
     final whole = await _pump(tester, api, layout: _layout(portal: along.copyWith(sort: 'label')));
