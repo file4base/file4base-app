@@ -188,6 +188,13 @@ func (r *relatedReader) fill(ctx context.Context, tableName string, rows []map[s
 	}
 	r.depth++
 	defer func() { r.depth-- }()
+	// The identities of the rows, read at once for formulas that read them.
+	if slices.ContainsFunc(calculations, func(c calculation) bool { return needed[c.field] && readsIdentity(c.expr) }) {
+		ctx, _ = withIdentityScope(ctx)
+		if err := r.s.prefetchIdentities(ctx, tableName, rows); err != nil {
+			return err
+		}
+	}
 	if r.depth <= maxRelatedDepth {
 		r.prefetch(ctx, tableName, calculations, needed, rows, r.depth)
 	}

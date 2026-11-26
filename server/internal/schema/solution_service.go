@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/containermeta"
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/msgpackguard"
 	"github.com/file4base/file4base-app/server/internal/repetition"
@@ -2008,10 +2008,22 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 		// and so keeps: by id in a table not yet numbered in creation order,
 		// as its records are read.
 		order := " ORDER BY " + dialect.QuoteIdentifier("id")
-		if has, err := data.HasCreationOrder(ctx, s.driver, tbl.Name); err != nil {
+		hasRecordIDs, err := data.HasCreationOrder(ctx, s.driver, tbl.Name)
+		if err != nil {
 			return nil, err
-		} else if has {
+		}
+		hasModCount, err := data.HasModCount(ctx, s.driver, tbl.Name)
+		if err != nil {
+			return nil, err
+		}
+		if hasRecordIDs {
 			order = " ORDER BY " + dialect.QuoteIdentifier(dbal.CreationOrderColumn)
+			// Each record's identity travels with it, under
+			// RecordIdentityKey (#208).
+			names = append(names, dialect.QuoteIdentifier(dbal.CreationOrderColumn))
+			if hasModCount {
+				names = append(names, dialect.QuoteIdentifier(dbal.ModCountColumn))
+			}
 		}
 		rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT %s FROM %s%s`, strings.Join(names, ", "), dialect.QuoteIdentifier(tbl.Name), order))
 		if err != nil {
@@ -2034,7 +2046,22 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 				return nil, fmt.Errorf("failed reading a record of %s: %w", tbl.Name, err)
 			}
 			row := make(map[string]interface{}, len(cols))
+			var identity data.Identity
 			for i, name := range cols {
+				switch name {
+				case dbal.CreationOrderColumn, dbal.ModCountColumn:
+					n, ok := wholeNumber(vals[i])
+					if !ok {
+						rows.Close()
+						return nil, fmt.Errorf("failed reading the identity of a record of %s", tbl.Name)
+					}
+					if name == dbal.CreationOrderColumn {
+						identity.RecordID = n
+					} else {
+						identity.ModID = n
+					}
+					continue
+				}
 				if c, ok := repeats[name]; ok {
 					if err := exportRepetitions(row, c, StorageType(c.FieldType, c.CalculationFormula), vals[i]); err != nil {
 						rows.Close()
@@ -2051,6 +2078,9 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 				} else {
 					row[name] = vals[i]
 				}
+			}
+			if hasRecordIDs {
+				SetRecordIdentity(row, identity.RecordID, identity.ModID)
 			}
 			tableRows = append(tableRows, row)
 		}
@@ -2086,18 +2116,22 @@ type DataImportReport struct {
 	RecordsInserted int      `json:"records_inserted"`
 	RecordsSkipped  int      `json:"records_skipped"`
 	SkippedTables   []string `json:"skipped_tables"`
+	// RecordIDsRenumbered counts the records that carried a record ID the
+	// table had given already, or another record carried too, and were
+	// given a new one (#208).
+	RecordIDsRenumbered int `json:"record_ids_renumbered"`
 }
 
 // ImportDatabaseData restores records in one transaction. Tables and fields
 // are validated first; the first failing record rolls everything back. A
 // record whose id already exists is skipped, not overwritten.
-func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImportReport, error) {
+func (s *Service) ImportDatabaseData(ctx context.Context, file []byte) (*DataImportReport, error) {
 	// Check declared sizes before the decoder allocates from them (#13).
-	if err := msgpackguard.Check(data, msgpackguard.Limits{}); err != nil {
+	if err := msgpackguard.Check(file, msgpackguard.Limits{}); err != nil {
 		return nil, fmt.Errorf("invalid MessagePack database data file: %w", err)
 	}
 	var bundle DatabaseDataBundle
-	if err := msgpack.Unmarshal(data, &bundle); err != nil {
+	if err := msgpack.Unmarshal(file, &bundle); err != nil {
 		return nil, fmt.Errorf("invalid MessagePack database data file: %w", err)
 	}
 	if bundle.Format != DataFormat {
@@ -2148,6 +2182,8 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 	originals := map[string]map[int]map[string]string{}
 	// Container file metadata carried with records (#125), by table and index.
 	containerMetas := map[string]map[int]map[string]containermeta.Entry{}
+	// The identity each record carries (#208), by table and index.
+	identities := map[string][]data.Identity{}
 	for tableName, rows := range bundle.TablesData {
 		cols, ok := userTables[tableName]
 		if !ok {
@@ -2155,7 +2191,13 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 			continue
 		}
 		tableNames = append(tableNames, tableName)
+		identities[tableName] = make([]data.Identity, len(rows))
 		for i, row := range rows {
+			identity, err := recordIdentityFromRecord(row)
+			if err != nil {
+				return nil, fmt.Errorf("record %d of table %s: %w", i+1, tableName, err)
+			}
+			identities[tableName][i] = identity
 			texts, err := sourcetext.FromRecord(row, cols)
 			if err != nil {
 				return nil, fmt.Errorf("record %d of table %s: %w", i+1, tableName, err)
@@ -2215,6 +2257,23 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 		}
 	}
 
+	// The record IDs the records are written with are decided, and taken
+	// from each table's allocator, before the transaction: an allocator is
+	// not held for as long as it lasts.
+	recordIDs := map[string][]int64{}
+	modCounts := map[string]bool{}
+	for _, tableName := range tableNames {
+		ids, renumbered, err := s.restoredRecordIDs(ctx, tableName, identities[tableName])
+		if err != nil {
+			return nil, err
+		}
+		recordIDs[tableName] = ids
+		report.RecordIDsRenumbered += renumbered
+		if modCounts[tableName], err = data.HasModCount(ctx, s.driver, tableName); err != nil {
+			return nil, err
+		}
+	}
+
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -2267,8 +2326,24 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 				vals = append(vals, v)
 				idx++
 			}
-			insert := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s)`,
-				dialect.QuoteIdentifier(tableName), strings.Join(colNames, ", "), strings.Join(placeholders, ", "))
+			// The record's identity: its record ID, and the modifications
+			// it counts.
+			overriding := ""
+			if ids := recordIDs[tableName]; ids != nil {
+				colNames = append(colNames, dialect.QuoteIdentifier(dbal.CreationOrderColumn))
+				placeholders = append(placeholders, dialect.Placeholder(idx))
+				vals = append(vals, ids[i])
+				idx++
+				overriding = dbal.OverridingSystemValue(dialect.Engine())
+			}
+			if modCounts[tableName] {
+				colNames = append(colNames, dialect.QuoteIdentifier(dbal.ModCountColumn))
+				placeholders = append(placeholders, dialect.Placeholder(idx))
+				vals = append(vals, identities[tableName][i].ModID)
+				idx++
+			}
+			insert := fmt.Sprintf(`INSERT INTO %s (%s)%s VALUES (%s)`,
+				dialect.QuoteIdentifier(tableName), strings.Join(colNames, ", "), overriding, strings.Join(placeholders, ", "))
 			if dialect.Engine() == dbal.EnginePostgres {
 				// A record whose id is already there is skipped, not replaced.
 				insert += ` ON CONFLICT (id) DO NOTHING`
@@ -2278,7 +2353,8 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 				// MariaDB has no ON CONFLICT: an existing id comes back as a
 				// duplicate key, which is this record being skipped. Any other
 				// error still fails the whole import.
-				if dialect.Engine() != dbal.EnginePostgres && dbal.IsDuplicateKey(err) {
+				if dialect.Engine() != dbal.EnginePostgres && dbal.IsDuplicateKey(err) &&
+					!strings.Contains(err.Error(), dbal.CreationOrderColumn) {
 					report.RecordsSkipped++
 					continue
 				}

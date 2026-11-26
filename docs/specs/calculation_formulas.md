@@ -31,6 +31,13 @@ value the field then keeps as data; [Auto-Enter Field Options](auto_enter_option
 says when it is evaluated. There, and in unstored calculations,
 `Get ( AccountName )` and `Get ( UserName )` answer the account writing.
 
+`Get ( RecordID )` and `Get ( RecordModificationCount )` answer the record's
+[record ID and modification count](relationships_and_portals.md#record-id-and-modification-count)
+in a stored or unstored calculation, an auto-enter calculation and a
+validation formula alike. A record being created already has its record ID
+there, so a calculation stored with it, or a value auto-entered with it, reads
+it. A write reads the modification count the record had before it.
+
 ## Unstored calculations and related fields
 
 A calculation saved with `"stored": false` (Field Options: *Store the result*

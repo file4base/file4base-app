@@ -267,6 +267,7 @@ func parseFMPXMLResult(root *node, opts Options) (*Table, bool) {
 	}
 
 	rows := make([][]string, 0, 64)
+	var recordIDs, modIDs []string
 	truncated := false
 	for _, child := range result.Children {
 		if child.Name != "RESULTSET" {
@@ -302,11 +303,13 @@ func parseFMPXMLResult(root *node, opts Options) (*Table, bool) {
 				values = append(values, strings.Join(parts, "\x1d"))
 			}
 			rows = append(rows, values)
+			recordIDs = append(recordIDs, strings.TrimSpace(row.Attrs["RECORDID"]))
+			modIDs = append(modIDs, strings.TrimSpace(row.Attrs["MODID"]))
 		}
 	}
 
 	if len(columns) == 0 && len(rows) == 0 {
 		return nil, false
 	}
-	return &Table{Columns: columns, Rows: rows, Truncated: truncated}, true
+	return &Table{Columns: columns, Rows: rows, Truncated: truncated, RecordIDs: recordIDs, ModIDs: modIDs}, true
 }

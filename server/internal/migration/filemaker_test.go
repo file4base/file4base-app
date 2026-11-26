@@ -600,6 +600,7 @@ func TestAnalyzeAndConvert_ConvertsRecordExportExactly(t *testing.T) {
 	if got := fmt.Sprint(rows[0]["amount"]); got != "9007199254740993" {
 		t.Fatalf("the number lost precision: %q", got)
 	}
+	delete(rows[1], schema.RecordIdentityKey) // its record ID, not a value
 	if len(rows[1]) != 0 {
 		t.Fatalf("the blank record carries no values of its own: %v", rows[1])
 	}

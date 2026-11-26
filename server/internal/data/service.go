@@ -292,6 +292,25 @@ func (s *Service) insertRow(ctx context.Context, tableName string, record map[st
 	if err != nil {
 		return nil, err
 	}
+	// The record's ID is taken first, so that a create that fails from here
+	// on has spent it, as in FileMaker, and the formulas computed for the
+	// record know it (Get ( RecordID )).
+	recordIDs, err := ReserveRecordIDs(ctx, s.driver, tableName, 1)
+	if err != nil {
+		return nil, err
+	}
+	id, given := record["id"], true
+	if id == nil || id == "" {
+		id, given = uuid.NewString(), false
+	}
+	ctx, scope := withIdentityScope(ctx)
+	if len(recordIDs) == 1 {
+		scope.put(tableName, fmt.Sprint(id), Identity{RecordID: recordIDs[0]})
+		if !given {
+			// What the auto-enter options compute sees no id yet.
+			scope.put(tableName, "", Identity{RecordID: recordIDs[0]})
+		}
+	}
 	if err := normalizeRepetitionKeys(fields, tableName, record); err != nil {
 		return nil, err
 	}
@@ -305,10 +324,10 @@ func (s *Service) insertRow(ctx context.Context, tableName string, record map[st
 	if err := decodeContainerValues(fields, tableName, record); err != nil {
 		return nil, err
 	}
-
-	// Ensure id exists
-	if _, ok := record["id"]; !ok || record["id"] == nil || record["id"] == "" {
-		record["id"] = uuid.NewString()
+	if v := record["id"]; v == nil || v == "" {
+		record["id"] = id
+	} else if len(recordIDs) == 1 && fmt.Sprint(v) != fmt.Sprint(id) {
+		scope.put(tableName, fmt.Sprint(v), Identity{RecordID: recordIDs[0]}) // an id an option entered
 	}
 
 	// Calculation fields are filled from their formulas (#30). They are
@@ -348,11 +367,19 @@ func (s *Service) insertRow(ctx context.Context, tableName string, record map[st
 		values = append(values, val)
 		idx++
 	}
+	overriding := ""
+	if len(recordIDs) == 1 {
+		columns = append(columns, dialect.QuoteIdentifier(dbal.CreationOrderColumn))
+		placeholders = append(placeholders, dialect.Placeholder(idx))
+		values = append(values, recordIDs[0])
+		overriding = dbal.OverridingSystemValue(dialect.Engine())
+	}
 
 	sqlQuery := fmt.Sprintf(
-		"INSERT INTO %s (%s) VALUES (%s)",
+		"INSERT INTO %s (%s)%s VALUES (%s)",
 		dialect.QuoteIdentifier(tableName),
 		strings.Join(columns, ", "),
+		overriding,
 		strings.Join(placeholders, ", "),
 	)
 
@@ -406,6 +433,14 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 }
 
 func (s *Service) updateRow(ctx context.Context, tableName string, id string, updates map[string]interface{}, mode autoMode) (map[string]interface{}, error) {
+	return s.updateRowIf(ctx, tableName, id, updates, mode, nil)
+}
+
+// updateRowIf updates a record, provided it has the modification count
+// modID when modID is not nil (see UpdateRowIfModID).
+func (s *Service) updateRowIf(
+	ctx context.Context, tableName string, id string, updates map[string]interface{}, mode autoMode, modID *int64,
+) (map[string]interface{}, error) {
 	fields, err := s.tableFields(ctx, tableName)
 	if err != nil {
 		return nil, err
@@ -426,8 +461,20 @@ func (s *Service) updateRow(ctx context.Context, tableName string, id string, up
 	if err := s.dropSummaryValues(ctx, tableName, updates); err != nil {
 		return nil, err
 	}
+	if modID != nil {
+		if err := s.checkModID(ctx, tableName, id, *modID); err != nil {
+			return nil, err
+		}
+	}
 	if len(updates) == 0 {
 		return s.GetRow(ctx, tableName, id)
+	}
+	// Whether the write modifies the record, which counts it (see
+	// record_identity.go), is decided on what the caller gives, before any
+	// option enters a value as a consequence.
+	countsModification, err := s.countsModification(ctx, tableName, id, fields, updates)
+	if err != nil {
+		return nil, err
 	}
 	// Modification stamps, and the calculated and looked-up values the
 	// change reaches (see autoenter.go).
@@ -473,14 +520,22 @@ func (s *Service) updateRow(ctx context.Context, tableName string, id string, up
 		values = append(values, val)
 		idx++
 	}
+	modCount := dialect.QuoteIdentifier(dbal.ModCountColumn)
+	if countsModification.modifies {
+		setClauses = append(setClauses, modCount+" = "+modCount+" + 1")
+	}
 	values = append(values, id)
+	where := fmt.Sprintf("%s = %s", dialect.QuoteIdentifier("id"), dialect.Placeholder(idx))
+	if modID != nil && countsModification.counted {
+		values = append(values, *modID)
+		where += fmt.Sprintf(" AND %s = %s", modCount, dialect.Placeholder(idx+1))
+	}
 
 	sqlQuery := fmt.Sprintf(
-		"UPDATE %s SET %s WHERE %s = %s",
+		"UPDATE %s SET %s WHERE %s",
 		dialect.QuoteIdentifier(tableName),
 		strings.Join(setClauses, ", "),
-		dialect.QuoteIdentifier("id"),
-		dialect.Placeholder(idx),
+		where,
 	)
 
 	db := s.driver.DB()
@@ -494,6 +549,13 @@ func (s *Service) updateRow(ctx context.Context, tableName string, id string, up
 
 	affected, _ := res.RowsAffected()
 	if affected == 0 {
+		if modID != nil {
+			// Modified since it was checked, or deleted.
+			if err := s.checkModID(ctx, tableName, id, *modID); err != nil {
+				return nil, err
+			}
+			return nil, ErrModIDMismatch
+		}
 		return nil, fmt.Errorf("record not found to update with id: %s", id)
 	}
 

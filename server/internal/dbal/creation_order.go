@@ -9,9 +9,10 @@ import "fmt"
 // UUID, which says nothing of when it was created.
 //
 // It is the engine's own sequence (an identity on PostgreSQL, AUTO_INCREMENT
-// on MariaDB), never a field: it is not in the catalog, no client reads or
-// writes it, and "$" is in no field name (see CheckIdentifier), so no field
-// can take its name.
+// on MariaDB), and it is each record's record ID (see record_identity.go),
+// never a field: it is not in the catalog, a client reads it only as the
+// record's ID, and "$" is in no field name (see CheckIdentifier), so no
+// field can take its name.
 const CreationOrderColumn = "f4b$creation_order"
 
 // CreationOrderType is the definition of the creation order column, unique

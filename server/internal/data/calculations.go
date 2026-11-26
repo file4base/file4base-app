@@ -34,6 +34,9 @@ type calculation struct {
 	// formula reads the name or type of.
 	table    string
 	describe func(*calc.Container)
+	// identify is the identity of the record the formula is computed for,
+	// for one that reads it (Get ( RecordID )); nil otherwise.
+	identify func(record map[string]interface{}) (*Identity, error)
 }
 
 // typedRecord is the record as the formula sees it.
@@ -57,7 +60,10 @@ func (c calculation) recordContext(record map[string]interface{}) calc.RecordCon
 // calculation, computed on read.
 func (c calculation) evaluate(record map[string]interface{}) (map[string]interface{}, error) {
 	env := c.recordContext(record)
-	return c.evaluateIn(&env)
+	if c.identify == nil {
+		return c.evaluateIn(&env)
+	}
+	return c.evaluateIn(&storedContext{RecordContext: &env, identity: func() (*Identity, error) { return c.identify(record) }})
 }
 
 // evaluateIn computes every repetition of the calculation in a context.
@@ -178,9 +184,13 @@ func (s *Service) tableCalculations(ctx context.Context, tableName string) ([]ca
 		if err != nil {
 			continue
 		}
-		parsed[name] = calculation{field: name, expr: expr, result: calc.ParseResultType(stored.ResultType),
+		c := calculation{field: name, expr: expr, result: calc.ParseResultType(stored.ResultType),
 			types: types, unstored: !stored.IsStored(), occurrence: stored.Context, reps: types.maxRepetitions(name),
 			table: tableName, describe: s.describeContainer(ctx)}
+		if readsIdentity(expr) {
+			c.identify = func(record map[string]interface{}) (*Identity, error) { return s.identityOf(ctx, tableName, record) }
+		}
+		parsed[name] = c
 		reads[name] = expr.Fields()
 	}
 	if err := rows.Err(); err != nil {
@@ -287,6 +297,9 @@ func (s *Service) recalculateForUpdate(ctx context.Context, tableName, id string
 //
 // It reports how many records it wrote.
 func (s *Service) RecalculateTable(ctx context.Context, tableName string) (int, error) {
+	// The identities of each page are read at once for the formulas that
+	// read them.
+	ctx, _ = withIdentityScope(ctx)
 	calculations, err := s.tableCalculations(ctx, tableName)
 	if err != nil {
 		return 0, err
@@ -312,6 +325,11 @@ func (s *Service) RecalculateTable(ctx context.Context, tableName string) (int, 
 		// once for each formula that names one.
 		if err := containermeta.AttachFromDB(ctx, s.driver.DB(), s.driver.Dialect(), tableName, page); err != nil {
 			return written, err
+		}
+		if slices.ContainsFunc(calculations, func(c calculation) bool { return c.identify != nil }) {
+			if err := s.prefetchIdentities(ctx, tableName, page); err != nil {
+				return written, err
+			}
 		}
 		for _, row := range page {
 			id, _ := row["id"].(string)

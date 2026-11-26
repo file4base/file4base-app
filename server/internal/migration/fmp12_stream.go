@@ -18,6 +18,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/repetition"
+	"github.com/file4base/file4base-app/server/internal/schema"
 )
 
 var reSourceNumericLiteral = regexp.MustCompile(`^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$`)
@@ -299,6 +300,25 @@ type nativeReadOptions struct {
 	externalResolver externalContainerResolver
 	// containers, when non-nil, receives container detection/reconstruction counts (#125).
 	containers *containerStats
+	// recordIDs, when non-nil, gives each record the record ID FileMaker
+	// numbered it with (schema.RecordIdentityKey) and counts, by table, the
+	// records whose ID could not be read (#208).
+	recordIDs map[string]int
+}
+
+// nativeRecordID is the record ID a record's token in the page tree says:
+// the token is the record's path integer, as table and field ids are
+// (hbamPathInt), in one byte up to 127 and two up to 32,895. Tokens of
+// three bytes or more are not read: their encoding is not known well enough
+// (see readHBAM7RecordsWith).
+func nativeRecordID(token string) (int64, bool) {
+	switch {
+	case len(token) == 1 && token[0] >= 1 && token[0] < 0x80:
+		return int64(token[0]), true
+	case len(token) == 2 && token[0]&0x80 != 0:
+		return int64(hbamPathInt([]byte(token))), true
+	}
+	return 0, false
 }
 
 func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]map[int]htmlFieldMeta, types map[string]string, opts nativeReadOptions) (map[string][]map[string]interface{}, map[string]int, error) {
@@ -439,8 +459,20 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 			ids = append(ids, row)
 		}
 		sort.Strings(ids)
+		numbered := map[int64]bool{}
 		for rowIdx, rowID := range ids {
 			row := map[string]interface{}{}
+			if opts.recordIDs != nil {
+				// A migrated record has no modification counted, as in
+				// FileMaker; a record whose ID is not read is given a new
+				// one, after the others.
+				if id, ok := nativeRecordID(rowID); ok && !numbered[id] {
+					numbered[id] = true
+					schema.SetRecordIdentity(row, id, 0)
+				} else {
+					opts.recordIDs[tables[table]]++
+				}
+			}
 			for _, fid := range fieldIDs {
 				meta := fields[table][fid]
 				if meta.cachedOnly() {
