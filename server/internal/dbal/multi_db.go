@@ -74,7 +74,7 @@ func NewMultiDatabaseManager(engine EngineType, baseDSN string) (*MultiDatabaseM
 	// creating and dropping databases). It is an engine-internal database, so
 	// it can never be used as a solution database nor dropped.
 	initialDB := parsed.database()
-	if initialDB == "" {
+	if initialDB == "" && engine != EngineSQLite {
 		initialDB = defaultAdminDatabase(engine)
 	}
 
@@ -115,9 +115,19 @@ func (m *MultiDatabaseManager) Engine() EngineType {
 	return m.baseEngine
 }
 
+// sqliteDir is the data directory of a SQLite manager, nil on a server.
+func (m *MultiDatabaseManager) sqliteDir() *sqliteDir {
+	dir, _ := m.dsn.(*sqliteDir)
+	return dir
+}
+
 // Dialect returns the dialect of the default (administrative) database engine
 func (m *MultiDatabaseManager) Dialect() Dialect {
 	active := m.defaultDBName
+	if m.sqliteDir() != nil {
+		d, _ := NewDialect(m.baseEngine)
+		return d
+	}
 
 	driver, _ := m.GetDriver(context.Background(), active)
 	if driver != nil {
@@ -128,8 +138,12 @@ func (m *MultiDatabaseManager) Dialect() Dialect {
 }
 
 // DB returns the *sql.DB connection pool of the default (administrative) database
+// SQLite has no administrative database, so it is nil there.
 func (m *MultiDatabaseManager) DB() *sql.DB {
 	active := m.defaultDBName
+	if m.sqliteDir() != nil {
+		return nil
+	}
 
 	driver, err := m.GetDriver(context.Background(), active)
 	if err != nil {
@@ -139,8 +153,12 @@ func (m *MultiDatabaseManager) DB() *sql.DB {
 }
 
 // Ping checks connectivity to the default (administrative) database
+// On SQLite it checks the data directory instead (see checkSQLiteDir).
 func (m *MultiDatabaseManager) Ping(ctx context.Context) error {
 	active := m.defaultDBName
+	if dir := m.sqliteDir(); dir != nil {
+		return checkSQLiteDir(dir.dir)
+	}
 
 	driver, err := m.GetDriver(ctx, active)
 	if err != nil {
@@ -153,6 +171,10 @@ func (m *MultiDatabaseManager) Ping(ctx context.Context) error {
 func (m *MultiDatabaseManager) GetDriver(ctx context.Context, dbName string) (DatabaseDriver, error) {
 	if dbName == "" {
 		dbName = m.defaultDBName
+	}
+	if m.sqliteDir() != nil && !validDatabaseName.MatchString(dbName) {
+		// A name is a file name there: nothing but a valid name may reach it.
+		return nil, fmt.Errorf("invalid database name: %q", dbName)
 	}
 
 	m.mu.RLock()
@@ -248,6 +270,9 @@ func (m *MultiDatabaseManager) LookupDatabase(ctx context.Context, dbName string
 
 // ListDatabases returns all non-template databases available on the PostgreSQL server
 func (m *MultiDatabaseManager) ListDatabases(ctx context.Context) ([]string, error) {
+	if dir := m.sqliteDir(); dir != nil {
+		return listSQLiteDatabases(dir.dir)
+	}
 	driver, err := m.GetDriver(ctx, m.defaultDBName)
 	if err != nil {
 		return nil, fmt.Errorf("unable to reach database server to list databases: %w", err)
@@ -296,6 +321,13 @@ func (m *MultiDatabaseManager) CreateDatabase(ctx context.Context, dbName string
 
 	if IsProtectedDatabase(dbName) {
 		return fmt.Errorf("'%s' is a protected system database name", dbName)
+	}
+
+	if dir := m.sqliteDir(); dir != nil {
+		if err := checkSQLiteDir(dir.dir); err != nil {
+			return err
+		}
+		return CreateSQLiteDatabase(ctx, dir.forDatabase(dbName))
 	}
 
 	// CREATE DATABASE runs through the administrative connection
@@ -361,6 +393,15 @@ func (m *MultiDatabaseManager) DropDatabase(ctx context.Context, dbName string) 
 	}
 	m.mu.Unlock()
 
+	if dir := m.sqliteDir(); dir != nil {
+		// Like DROP DATABASE IF EXISTS. A connection another manager still
+		// holds keeps reading the deleted file until it is closed.
+		if err := removeSQLiteFiles(dir.forDatabase(dbName)); err != nil {
+			return fmt.Errorf("failed dropping database %s: %w", dbName, err)
+		}
+		return syncDir(dir.dir)
+	}
+
 	// Connect through the administrative database to execute DROP DATABASE
 	adminDriver, err := m.GetDriver(ctx, m.defaultDBName)
 	if err != nil {
@@ -385,6 +426,24 @@ func (m *MultiDatabaseManager) DropDatabase(ctx context.Context, dbName string) 
 	}
 
 	return nil
+}
+
+// DiagnoseSQLite reads the connection contract of a solution database on
+// SQLite (see DiagnoseSQLite); it is nil on a server engine.
+func (m *MultiDatabaseManager) DiagnoseSQLite(ctx context.Context, dbName string) (*SQLiteDiagnostics, error) {
+	dir := m.sqliteDir()
+	if dir == nil {
+		return nil, nil
+	}
+	driver, err := m.DriverFor(ctx, dbName)
+	if err != nil {
+		return nil, err
+	}
+	diag, err := DiagnoseSQLite(ctx, driver.DB(), dir.forDatabase(dbName))
+	if err != nil {
+		return nil, err
+	}
+	return &diag, nil
 }
 
 // Close closes all open database connection pools

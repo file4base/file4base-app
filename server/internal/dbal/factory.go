@@ -1,14 +1,18 @@
 package dbal
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // DriverConfig holds parameters for database connection
@@ -39,6 +43,20 @@ func Connect(cfg DriverConfig) (DatabaseDriver, error) {
 	dialect, err := NewDialect(cfg.EngineType)
 	if err != nil {
 		return nil, err
+	}
+
+	if cfg.EngineType == EngineSQLite {
+		path, err := SQLitePath(cfg.DSN)
+		if err != nil {
+			return nil, err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), SQLiteBusyTimeout()+5*time.Second)
+		defer cancel()
+		db, err := openSQLite(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		return NewGenericDriver(dialect, db), nil
 	}
 
 	var driverName string
@@ -79,7 +97,7 @@ func ParseEngineType(val string) (EngineType, error) {
 }
 
 // IsUndefinedTable reports whether err is the engine saying a table does not
-// exist (PostgreSQL 42P01, MariaDB 1146).
+// exist (PostgreSQL 42P01, MariaDB 1146, SQLite "no such table").
 func IsUndefinedTable(err error) bool {
 	if err == nil {
 		return false
@@ -91,6 +109,10 @@ func IsUndefinedTable(err error) bool {
 	var pg *pgconn.PgError
 	if errors.As(err, &pg) {
 		return pg.Code == "42P01"
+	}
+	var lite *sqlite.Error
+	if errors.As(err, &lite) {
+		return lite.Code() == sqlite3.SQLITE_ERROR && strings.Contains(lite.Error(), "no such table")
 	}
 	return false
 }
@@ -108,6 +130,10 @@ func IsDuplicateKey(err error) bool {
 	var pg *pgconn.PgError
 	if errors.As(err, &pg) {
 		return pg.Code == "23505"
+	}
+	var lite *sqlite.Error
+	if errors.As(err, &lite) {
+		return lite.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE || lite.Code() == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY
 	}
 	return false
 }

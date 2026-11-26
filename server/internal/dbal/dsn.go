@@ -24,6 +24,12 @@ type dsnTemplate interface {
 // parseDSN reads a base DSN for an engine.
 func parseDSN(engine EngineType, dsn string) (dsnTemplate, error) {
 	switch engine {
+	case EngineSQLite:
+		dir, err := SQLiteDataDir(dsn)
+		if err != nil {
+			return nil, err
+		}
+		return &sqliteDir{dir: dir}, nil
 	case EngineMariaDB:
 		cfg, err := mysql.ParseDSN(dsn)
 		if err != nil {

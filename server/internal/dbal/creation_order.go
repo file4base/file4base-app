@@ -9,7 +9,7 @@ import "fmt"
 // UUID, which says nothing of when it was created.
 //
 // It is the engine's own sequence (an identity on PostgreSQL, AUTO_INCREMENT
-// on MariaDB), never a field: it is not in the catalog, no client reads or
+// on MariaDB, the AUTOINCREMENT rowid on SQLite), never a field: it is not in the catalog, no client reads or
 // writes it, and "$" is in no field name (see CheckIdentifier), so no field
 // can take its name.
 const CreationOrderColumn = "f4b$creation_order"
@@ -20,9 +20,16 @@ const CreationOrderColumn = "f4b$creation_order"
 // them: their physical order on PostgreSQL, close to the order they were
 // inserted in, and their primary key's on MariaDB, whose InnoDB tables are
 // stored in key order.
+//
+// On SQLite it is the table's INTEGER PRIMARY KEY, the only column SQLite
+// numbers by itself, so it can only be declared with the table: SQLite
+// support starts after the upgrade that added the column to older tables.
 func CreationOrderType(engine EngineType) string {
-	if engine == EngineMariaDB {
+	switch engine {
+	case EngineMariaDB:
 		return "BIGINT NOT NULL AUTO_INCREMENT UNIQUE"
+	case EngineSQLite:
+		return "INTEGER PRIMARY KEY AUTOINCREMENT"
 	}
 	return "BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE"
 }
