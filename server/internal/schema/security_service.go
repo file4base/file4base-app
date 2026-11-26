@@ -320,8 +320,11 @@ func (s *Service) TablePermissionFor(ctx context.Context, userID, tableName stri
 		return nil, nil
 	}
 	if err != nil {
-		// If the table does not exist yet on an older catalog before migration, treat as no explicit row.
-		return nil, nil
+		// A permission that cannot be read is not "no explicit permission":
+		// that would fall back to the layout-derived default, which is
+		// read-write. EnsureSystemTables creates the table, so this is a
+		// real failure and access is refused.
+		return nil, fmt.Errorf("failed reading table permission: %w", err)
 	}
 	return &p, nil
 }
@@ -331,7 +334,11 @@ func (s *Service) TablePermissionFor(ctx context.Context, userID, tableName stri
 // it takes precedence; otherwise access is derived from the most permissive
 // layout built on the table (defaulting to read_write).
 func (s *Service) TableAccess(ctx context.Context, userID, tableName string) (string, error) {
-	if tp, err := s.TablePermissionFor(ctx, userID, tableName); err == nil && tp != nil {
+	tp, err := s.TablePermissionFor(ctx, userID, tableName)
+	if err != nil {
+		return AccessNone, err
+	}
+	if tp != nil {
 		if !isValidAccessLevel(tp.AccessLevel) {
 			return AccessNone, nil
 		}
