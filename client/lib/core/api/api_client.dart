@@ -3277,7 +3277,10 @@ class ApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> createDatabase(String name, {String? user, String? password}) async {
+  /// Creates a database and its first owner. [setupCode] is the code the
+  /// server prints at startup, needed for a database reserved for its
+  /// administrators when the caller is not a super-owner (#236).
+  Future<Map<String, dynamic>> createDatabase(String name, {String? user, String? password, String? setupCode}) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/databases'),
       headers: _headers(contentType: 'application/json'),
@@ -3285,6 +3288,7 @@ class ApiClient {
         'database': name,
         if (user != null && user.isNotEmpty) 'user': user,
         if (password != null && password.isNotEmpty) 'password': password,
+        if (setupCode != null && setupCode.trim().isNotEmpty) 'setup_code': setupCode.trim(),
       }),
     );
     _checkResponse(response);

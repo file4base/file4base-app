@@ -58,6 +58,9 @@ type SolutionHandler struct {
 	// honouring forwarding headers only from trusted proxies. A nil resolver
 	// falls back to the direct peer.
 	clientIP *clientip.Resolver
+	// bootstrap reserves the databases whose owners become server
+	// administrators (#236).
+	bootstrap *bootstrapReservation
 }
 
 func NewSolutionHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store, opts SolutionHandlerOptions) *SolutionHandler {
@@ -211,6 +214,8 @@ type CreateDatabaseRequest struct {
 	Password     string                 `json:"password,omitempty"`
 	FileOptions  map[string]interface{} `json:"file_options,omitempty"`
 	PageSetup    map[string]interface{} `json:"page_setup,omitempty"`
+	// SetupCode lets the operator create a reserved bootstrap database (#236).
+	SetupCode string `json:"setup_code,omitempty"`
 }
 
 // CreateDatabase creates a new database and provisions its first owner account
@@ -249,6 +254,9 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 	}
 	if len(invalid) > 0 {
 		telemetry.WriteValidationProblem(w, r, "A database name and the credentials of its first owner are required", invalid)
+		return
+	}
+	if !h.bootstrap.allow(w, r, dbName, req.SetupCode, true) {
 		return
 	}
 
@@ -813,6 +821,10 @@ func (h *SolutionHandler) CloneSolution(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	if !h.bootstrap.allow(w, r, targetDB, "", false) {
+		return
+	}
+
 	solutionName := strings.TrimSpace(req.SolutionName)
 	if solutionName == "" {
 		solutionName = targetDB
@@ -1144,6 +1156,10 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		telemetry.WriteValidationProblem(w, r, "Creating a migrated database without an active session requires target_database, owner_user, and owner_password", []telemetry.InvalidParam{
 			{Name: "target_database", Reason: "target_database is required when not signed in"},
 		})
+		return
+	}
+	if targetDB != "" && (!hasSession || !strings.EqualFold(targetDB, sess.Database)) &&
+		!h.bootstrap.allow(w, r, targetDB, req.SetupCode, true) {
 		return
 	}
 

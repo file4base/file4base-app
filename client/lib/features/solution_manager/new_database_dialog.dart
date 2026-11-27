@@ -67,11 +67,16 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
   final _portController = TextEditingController(text: '5432');
   final _userController = TextEditingController(text: 'admin');
   final _passwordController = TextEditingController();
+  final _setupCodeController = TextEditingController();
   StorageDirectoryRef? _selectedDirectory = SolutionStorageService.defaultDirectory;
   bool _autoCreateDb = true;
   bool _isCreating = false;
   bool _obscurePassword = true;
   String? _errorMessage;
+
+  /// The server reserves this database for its administrators and asks for
+  /// the setup code it printed at startup (#236).
+  bool _needsSetupCode = false;
 
   @override
   void dispose() {
@@ -82,6 +87,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
     _portController.dispose();
     _userController.dispose();
     _passwordController.dispose();
+    _setupCodeController.dispose();
     super.dispose();
   }
 
@@ -121,7 +127,8 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
 
       // 1. Create database in PostgreSQL if requested
       if (_autoCreateDb) {
-        await widget.apiClient.createDatabase(dbName, user: user, password: password);
+        await widget.apiClient.createDatabase(dbName, user: user, password: password,
+            setupCode: _needsSetupCode ? _setupCodeController.text : null);
       } else {
         await widget.apiClient.switchDatabase(dbName);
       }
@@ -171,7 +178,12 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
       if (mounted) {
         setState(() {
           _isCreating = false;
-          _errorMessage = e.toString().replaceFirst('Exception: ', '');
+          if (e is ApiException && e.statusCode == 403 && e.raw['setup_code_required'] == true) {
+            _needsSetupCode = true;
+            _errorMessage = '${e.detail[0].toUpperCase()}${e.detail.substring(1)}.';
+          } else {
+            _errorMessage = e.toString().replaceFirst('Exception: ', '');
+          }
         });
       }
     }
@@ -416,6 +428,23 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
                   value: _autoCreateDb,
                   onChanged: (val) => setState(() => _autoCreateDb = val ?? true),
                 ),
+                if (_needsSetupCode) ...[
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    key: const Key('new-database-setup-code'),
+                    controller: _setupCodeController,
+                    autofocus: true,
+                    validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter the setup code' : null,
+                    decoration: const InputDecoration(
+                      labelText: 'Setup code',
+                      hintText: 'XXXX-XXXX-XXXX-XXXX',
+                      helperText: 'Printed in the server log at startup (docker logs file4base-api)',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                      prefixIcon: Icon(Icons.vpn_key_outlined, size: 18),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

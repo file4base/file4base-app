@@ -133,6 +133,7 @@ Permissions are granted per layout (`read_write`, `read_only`, `none`), while th
 | `MIGRATION_UPLOAD_DIR` | system temporary directory | Where an uploaded native database copy is written while it is received. It needs free space for the largest upload; the file is private (`0600`) and removed as soon as it has been read. |
 | `FILE4BASE_ADMIN_DATABASE` | *(empty)* | Database whose owners are the server administrators (server-wide Server Tools). Empty disables the server-wide tools unless a super-owner exists (see `FILE4BASE_SUPER_OWNER`). |
 | `FILE4BASE_SUPER_OWNER` | *(empty)* | Bootstrap super-owners as `database:username` (comma-separated for several). These owner accounts sign in with full, server-wide control even before a `super_owner` flag is stored; they can then grant the privilege to other owners via `PUT /api/v1/security/users/{id}/super-owner`. |
+| `FILE4BASE_SETUP_CODE` | *(random)* | Setup code that lets a caller without a super-owner session create the reserved databases (`FILE4BASE_ADMIN_DATABASE` and the databases of `FILE4BASE_SUPER_OWNER`) through `POST /api/v1/databases` or `POST /api/v1/solutions/migrate/apply` (`setup_code`; case, spaces and dashes are ignored). When empty, the server draws a random one at each start and prints it in its log, grouped as `XXXX-XXXX-XXXX-XXXX`, while a reserved database is missing; a code set here is never logged. See *Reserved databases* under `POST /api/v1/databases` (#236). |
 | `FILE4BASE_LOGIN_MAX_ATTEMPTS` | `10` | Failed password checks in a row (per database + username + client) before a lockout. `0` disables the limit. |
 | `FILE4BASE_LOGIN_WINDOW_SECONDS` | `900` | A gap this long with no failure forgets the earlier ones. |
 | `FILE4BASE_LOGIN_LOCKOUT_SECONDS` | `900` | How long a tripped lockout lasts. |
@@ -1435,14 +1436,19 @@ Creates a new physical database, initializes the system catalog tables (`sys_*`)
 
 An existing database is never modified: if the name is taken the response is `409 Conflict`.
 
+**Reserved databases (#236).** The owners of `FILE4BASE_ADMIN_DATABASE` and the accounts seeded by `FILE4BASE_SUPER_OWNER` are server administrators, so whoever created those databases first would administer the server. Their names are reserved: only a super-owner session can create them, or a caller who sends the server's setup code in `setup_code` (printed in the server log at startup while a reserved database is missing, or set with `FILE4BASE_SETUP_CODE`). This is how a fresh install creates its admin database: the New Database dialog asks for the code when the server requires it. Otherwise the response is `403` with `title` *Reserved Database*, `reserved_database` and `setup_code_required: true`. The same rule applies to `POST /api/v1/solutions/migrate/apply` into a new `target_database`, and `POST /api/v1/solutions/clone` into a reserved name requires a super-owner.
+
 #### Request Body
 ```json
 {
   "database": "invoices_db",
   "user": "alice",
-  "password": "a-strong-password"
+  "password": "a-strong-password",
+  "setup_code": "ABCD-EFGH-IJKL-MNOP"
 }
 ```
+
+`setup_code` is only needed (and only read) for a reserved database.
 
 #### Response `201 Created`
 ```json
@@ -1455,6 +1461,7 @@ An existing database is never modified: if the name is taken the response is `40
 ```
 
 #### Errors
+- `403 Forbidden` (*Reserved Database*): a reserved database without a super-owner session or a valid `setup_code`; the detail says when the code is wrong.
 - `409 Conflict`: a database with that name already exists.
 - `422 Unprocessable Entity`: missing database name or owner user, or an owner password that is missing, shorter than 8 characters, or equal to the username or the database name.
 
@@ -2122,7 +2129,7 @@ Returns the active database name, the solution's logical name (`solution_name`),
 ```
 
 ### `POST /api/v1/solutions/clone`
-*Requires `owner` role.* Creates a new physical database on the server (`target_database`), copies the caller's owner account (or provisions `owner_user` / `owner_password` when supplied), imports the entire design of the active solution (tables, fields, occurrences, relationships, layouts, scripts, value lists, accounts, role privileges, saved finds, data sources, and custom menu sets) with **zero user records**, sets `solution_name`, and optionally locks the clone's design permanently (`lock_design: true`).
+*Requires `owner` role.* Creates a new physical database on the server (`target_database`), copies the caller's owner account (or provisions `owner_user` / `owner_password` when supplied), imports the entire design of the active solution (tables, fields, occurrences, relationships, layouts, scripts, value lists, accounts, role privileges, saved finds, data sources, and custom menu sets) with **zero user records**, sets `solution_name`, and optionally locks the clone's design permanently (`lock_design: true`). Cloning into a reserved database (`FILE4BASE_ADMIN_DATABASE` or a database of `FILE4BASE_SUPER_OWNER`) requires a super-owner; anyone else gets `403` *Reserved Database* (#236).
 
 #### Request Body
 ```json
@@ -2454,6 +2461,8 @@ described above.
 
 ### `POST /api/v1/solutions/migrate/apply`
 *Requires `owner` role and unlocked design.* Converts and atomically imports the FileMaker design XML and optional `FMPXMLRESULT` record datasets into either the active session database or a newly created isolated `target_database` (when `target_database`, `owner_user`, and `owner_password` are supplied). Returns `201 Created` with `status: "migrated"`, `records_inserted`, `import_report` (the solution import's report: created/updated counts, `accounts_pending_password` and `warnings`, as for `POST /api/v1/solutions/import`), and the full `ConversionReport`. The accounts named in `accounts_pending_password` are created inactive with `password_pending: true` (see `GET /api/v1/security/users`). Accepts the same JSON body as preflight, or the same `multipart/form-data` upload for a native copy above 64 MiB (see preflight).
+
+A new `target_database` that is reserved (`FILE4BASE_ADMIN_DATABASE` or a database of `FILE4BASE_SUPER_OWNER`) needs a super-owner session or the server's `setup_code` in the body, as for `POST /api/v1/databases`; otherwise `403` *Reserved Database* (#236).
 
 An explicitly attached native dataset that cannot be read or represented is
 refused with `422 Native Data Import Blocked` before any target write. Apply does
