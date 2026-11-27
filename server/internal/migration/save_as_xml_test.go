@@ -2,6 +2,7 @@ package migration
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -274,6 +275,7 @@ func TestAnalyzeAndConvert_SaveAsXMLCarriesFMRestToRoles(t *testing.T) {
   <Account id="4" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>desk</AccountName></Authentication><PrivilegeSetReference id="6" name="Desk"/></Account>
   <Account id="5" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>boss</AccountName></Authentication><PrivilegeSetReference id="7" name="Administrator"/></Account>
  </ObjectList></AccountsCatalog>
+ <PrivilegeSetsCatalog><ObjectList>` + fullAccessSet(8, "Owner") + fullAccessSet(7, "Administrator") + `</ObjectList></PrivilegeSetsCatalog>
  </AddAction></Structure></FMSaveAsXML>`
 	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
 	if err != nil {
@@ -389,4 +391,12 @@ func TestAnalyzeAndConvert_FMRestUnknownGrantsNothing(t *testing.T) {
 	if !found {
 		t.Fatalf("no manual action item says fmrest was not carried over: %+v", got.Report.ManualActionRequired)
 	}
+}
+
+// fullAccessSet is a privilege set granting what [Full Access] does.
+func fullAccessSet(id int, name string) string {
+	return fmt.Sprintf(`<PrivilegeSet id="%d" name="%s"><access>`+
+		`<Records Create="True" Edit="True" Delete="True"></Records><Layouts Create="True" Edit="True" Delete="True"></Layouts>`+
+		`<ValueLists Create="True" Edit="True" Delete="True"></ValueLists><Scripts Create="True" Edit="True" Delete="True"></Scripts>`+
+		`<Other manageDatabase="True" manageAccounts="True" manageExtPrivs="True"></Other></access></PrivilegeSet>`, id, name)
 }

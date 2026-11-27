@@ -139,14 +139,18 @@ func CompileLayoutContract(definition []byte) (*LayoutContract, error) {
 }
 
 type contractObject struct {
-	ID           string          `json:"id"`
-	Type         string          `json:"type"`
-	Name         string          `json:"name"`
-	X            float64         `json:"x"`
-	Y            float64         `json:"y"`
-	Width        float64         `json:"width"`
-	Height       float64         `json:"height"`
-	Portal       *string         `json:"portal"`
+	ID     string  `json:"id"`
+	Type   string  `json:"type"`
+	Name   string  `json:"name"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+	Portal *string `json:"portal"`
+	Panel  *struct {
+		Control string `json:"control"`
+		Index   int    `json:"index"`
+	} `json:"panel"`
 	FieldBinding *contractField  `json:"field_binding"`
 	PortalConfig *contractPortal `json:"portal_config"`
 }
@@ -174,6 +178,14 @@ type contractPortal struct {
 	} `json:"sort_fields"`
 }
 
+// panel is the tab or slide control panel the object is drawn on, if any.
+func (o contractObject) panel() string {
+	if o.Panel == nil || o.Panel.Control == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s#%d", o.Panel.Control, o.Panel.Index)
+}
+
 func compileLayoutContract(definition []byte) (*LayoutContract, error) {
 	var def struct {
 		Objects []contractObject `json:"objects"`
@@ -185,13 +197,7 @@ func compileLayoutContract(definition []byte) (*LayoutContract, error) {
 	}
 	c := &LayoutContract{}
 	portalAt := map[string]int{}
-	// A layout saved before row objects said their portal has none that
-	// does: a field then belongs to the portal whose bounds hold it.
-	marked := false
 	for _, o := range def.Objects {
-		if o.Portal != nil {
-			marked = true
-		}
 		if o.Type != "portal" || o.PortalConfig == nil {
 			continue
 		}
@@ -232,16 +238,17 @@ func compileLayoutContract(definition []byte) (*LayoutContract, error) {
 			Occurrence: b.Occurrence, Field: b.FieldName, ControlStyle: b.ControlStyle, Concealed: b.Concealed,
 			ValueListID: b.ValueListID, RepetitionStart: max(b.FirstRepetition, 1), RepetitionsShown: max(b.Shown, 0),
 		}
+		// A field that says its portal ("" for none) is where it says, as a
+		// migrated one is; any other is where the client draws it: in the
+		// first portal of its panel whose bounds wholly hold it.
 		in := -1
-		switch {
-		case o.Portal != nil:
+		if o.Portal != nil {
 			if i, ok := portalAt[*o.Portal]; ok {
 				in = i
 			}
-		case !marked:
-			// As the client draws it: an object wholly inside a portal.
+		} else {
 			for i, p := range portals {
-				if o.X >= p.X && o.Y >= p.Y && o.X+o.Width <= p.X+p.Width && o.Y+o.Height <= p.Y+p.Height {
+				if o.panel() == p.panel() && o.X >= p.X && o.Y >= p.Y && o.X+o.Width <= p.X+p.Width && o.Y+o.Height <= p.Y+p.Height {
 					in = i
 					break
 				}

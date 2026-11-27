@@ -244,7 +244,7 @@
         },
         "portal": {
           "type": "string",
-          "description": "The portal this object is a row object of, by id, as FileMaker nests it there. A layout without it on any object places a field in the portal whose bounds hold its centre."
+          "description": "The portal this object is a row object of, by id, as FileMaker nests it there; an empty string says it is in no portal although it lies within one. An object without it is in the first portal on its panel whose bounds wholly hold it, as the client draws it. Moving or resizing the object in the designer removes it."
         },
         "is_locked": { "type": "boolean" },
         "tab_order": {
@@ -372,7 +372,7 @@
             },
             "sort_fields": {
               "type": "array",
-              "description": "FileMaker's whole sort order of the portal, as a migration keeps it; sort is the part of it applied here. A field of another occurrence, or one in a value list's order (custom, with that list), is kept here only.",
+              "description": "FileMaker's whole sort order of the portal, as a migration keeps it; sort is the part of it applied here. A field of another occurrence, or one in a value list's order (custom, with that list), is kept here only. The designer removes it when the portal's sort or the records it shows change.",
               "items": {
                 "type": "object",
                 "required": ["field_name", "order"],
@@ -390,7 +390,7 @@
             },
             "filter_problem": {
               "type": "boolean",
-              "description": "Set by a migration when the source filter could not be bound; the filter is then '0' and the portal shows no record until it is set again."
+              "description": "Set by a migration when the source filter could not be bound; the filter is then '0' and the portal shows no record until it is set again, which removes it."
             },
             "occurrence_path": {
               "type": "array",

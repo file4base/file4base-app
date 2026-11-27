@@ -1,6 +1,15 @@
 import 'dart:math' as math;
 
 import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
+
+/// The keys of [json] a model does not read, kept as they were so that saving
+/// a layout never drops what the server, a migration or another version of
+/// File4Base stored in it.
+Map<String, dynamic> unknownKeys(Map<String, dynamic> json, Set<String> known) => {
+      for (final e in json.entries)
+        if (!known.contains(e.key)) e.key: e.value,
+    };
+
 /// The kinds of band a layout is divided into (#32).
 ///
 /// A report is these parts in order: the header, a leading grand summary, then
@@ -56,6 +65,7 @@ class LayoutPartModel {
     required this.height,
     this.breakField,
     this.fillColor,
+    this.extra = const {},
   });
 
   factory LayoutPartModel.fromJson(Map<String, dynamic> json) {
@@ -65,8 +75,15 @@ class LayoutPartModel {
       height: (json['height'] as num?)?.toDouble() ?? 120.0,
       breakField: json['break_field'] as String?,
       fillColor: json['fill_color'] as String?,
+      extra: unknownKeys(json, _knownKeys),
     );
   }
+
+  static const _knownKeys = {'id', 'type', 'height', 'break_field', 'fill_color'};
+
+  /// Every other key of the stored part, kept as it was read.
+  final Map<String, dynamic> extra;
+
   final String id;
 
   /// One of [LayoutPartType]. Older layouts may also hold `top_navigation` or
@@ -84,6 +101,7 @@ class LayoutPartModel {
   final String? fillColor;
 
   Map<String, dynamic> toJson() => {
+        ...extra,
         'id': id,
         'type': type,
         'height': height,
@@ -106,6 +124,7 @@ class LayoutPartModel {
       height: height ?? this.height,
       breakField: clearBreakField ? null : (breakField ?? this.breakField),
       fillColor: clearFillColor ? null : (fillColor ?? this.fillColor),
+      extra: extra,
     );
   }
 
@@ -173,6 +192,7 @@ class FieldBindingModel {
     this.unresolvedRelationship = false,
     this.missing = false,
     this.occurrencePath = const [],
+    this.extra = const {},
   });
 
   factory FieldBindingModel.fromJson(Map<String, dynamic> json) {
@@ -196,8 +216,23 @@ class FieldBindingModel {
       occurrencePath: json['occurrence_path'] is List
           ? [for (final o in json['occurrence_path'] as List) if (o is String && o.isNotEmpty) o]
           : const [],
+      extra: unknownKeys(json, _knownKeys),
     );
   }
+
+  static const _knownKeys = {
+    'table_occurrence', 'relationship_id', 'relationship_side', 'field_name', 'control_style',
+    'value_list_id', 'allow_browse_entry', 'allow_find_entry', 'repetitions_shown', 'first_repetition',
+    'repetition_orientation', 'placeholder', 'unresolved_relationship', 'missing', 'occurrence_path',
+  };
+
+  /// Every other key of the stored binding, kept as it was read, such as
+  /// `concealed` (the field shows its value masked, as a password).
+  final Map<String, dynamic> extra;
+
+  /// True when the field's value is shown masked, as FileMaker's "Conceal".
+  bool get concealed => extra['concealed'] == true;
+
   /// The table occurrence the field is read from. Null, or the layout's own
   /// occurrence, means the record in hand; any other occurrence makes this a
   /// **related field**, read through [relationshipId] (#36).
@@ -324,9 +359,11 @@ class FieldBindingModel {
         unresolvedRelationship: fieldName == null && relationshipId == null && !clearRelationship && unresolvedRelationship,
         missing: fieldName == null && missing,
         occurrencePath: clearRelationship || relationshipId != null ? const [] : occurrencePath,
+        extra: extra,
       );
 
   Map<String, dynamic> toJson() => {
+        ...extra,
         if (tableOccurrence != null) 'table_occurrence': tableOccurrence,
         if (relationshipId != null) 'relationship_id': relationshipId,
         if (relationshipSide != null) 'relationship_side': relationshipSide,
@@ -378,6 +415,7 @@ class ConditionalFormatRule {
     this.bold = false,
     this.italic = false,
     this.underline = false,
+    this.extra = const {},
   });
 
   factory ConditionalFormatRule.fromJson(Map<String, dynamic> json) {
@@ -389,8 +427,15 @@ class ConditionalFormatRule {
       bold: json['bold'] as bool? ?? false,
       italic: json['italic'] as bool? ?? false,
       underline: json['underline'] as bool? ?? false,
+      extra: unknownKeys(json, _knownKeys),
     );
   }
+
+  static const _knownKeys = {'operator', 'value', 'text_color', 'fill_color', 'bold', 'italic', 'underline'};
+
+  /// Every other key of the stored rule, kept as it was read.
+  final Map<String, dynamic> extra;
+
   /// One of `<`, `<=`, `=`, `!=`, `>=`, `>`, `contains`, `is_empty`,
   /// `is_not_empty`, or `formula`: [value] is then a calculation, evaluated
   /// by the server against the record shown, and the rule applies while it
@@ -468,10 +513,12 @@ class ConditionalFormatRule {
       bold: bold ?? this.bold,
       italic: italic ?? this.italic,
       underline: underline ?? this.underline,
+      extra: extra,
     );
   }
 
   Map<String, dynamic> toJson() => {
+        ...extra,
         'operator': operator,
         'value': value,
         if (textColor != null) 'text_color': textColor,
@@ -510,6 +557,7 @@ class LayoutObjectStyle {
     this.dateFormat,
     this.timeFormat,
     this.conditionalRules = const [],
+    this.extra = const {},
   });
 
   factory LayoutObjectStyle.fromJson(Map<String, dynamic> json) {
@@ -551,8 +599,21 @@ class LayoutObjectStyle {
       dateFormat: json['date_format'] as String?,
       timeFormat: json['time_format'] as String?,
       conditionalRules: rules,
+      extra: unknownKeys(json, _knownKeys),
     );
   }
+
+  static const _knownKeys = {
+    'fill_color', 'border_color', 'border_width', 'corner_radius', 'font_family', 'font_size',
+    'font_weight', 'font_style', 'underline', 'strikethrough', 'text_case', 'text_color', 'text_align',
+    'line_spacing', 'indent_left', 'indent_right', 'first_line_indent', 'tab_stops_pt', 'number_format',
+    'decimal_places', 'currency_symbol', 'use_thousands_separator', 'date_format', 'time_format',
+    'conditional_rules',
+  };
+
+  /// Every other key of the stored style, kept as it was read.
+  final Map<String, dynamic> extra;
+
   final String? fillColor;
   final String? borderColor;
   final double borderWidth;
@@ -616,6 +677,7 @@ class LayoutObjectStyle {
   }
 
   Map<String, dynamic> toJson() => {
+        ...extra,
         if (fillColor != null) 'fill_color': fillColor,
         if (borderColor != null) 'border_color': borderColor,
         'border_width': borderWidth,
@@ -707,6 +769,7 @@ class LayoutObjectStyle {
       dateFormat: clearDateFormat ? null : (dateFormat ?? this.dateFormat),
       timeFormat: clearTimeFormat ? null : (timeFormat ?? this.timeFormat),
       conditionalRules: conditionalRules ?? this.conditionalRules,
+      extra: extra,
     );
   }
 }
@@ -848,6 +911,7 @@ class LayoutMediaModel {
     this.data,
     this.url,
     this.fit = 'contain',
+    this.extra = const {},
   });
 
   factory LayoutMediaModel.fromJson(Map<String, dynamic> json) {
@@ -858,8 +922,15 @@ class LayoutMediaModel {
       data: json['data'] as String?,
       url: json['url'] as String?,
       fit: json['fit'] as String? ?? 'contain',
+      extra: unknownKeys(json, _knownKeys),
     );
   }
+
+  static const _knownKeys = {'kind', 'name', 'mime_type', 'data', 'url', 'fit'};
+
+  /// Every other key of the stored media, kept as it was read.
+  final Map<String, dynamic> extra;
+
   final String kind; // 'image', 'pdf', 'video', 'audio', 'file'
   final String name;
   final String? mimeType;
@@ -870,6 +941,7 @@ class LayoutMediaModel {
   bool get isImage => kind == 'image';
 
   Map<String, dynamic> toJson() => {
+        ...extra,
         'kind': kind,
         'name': name,
         if (mimeType != null) 'mime_type': mimeType,
@@ -885,6 +957,7 @@ class LayoutMediaModel {
         data: data,
         url: url,
         fit: fit ?? this.fit,
+        extra: extra,
       );
 }
 
@@ -909,6 +982,7 @@ class PortalConfigModel {
     this.sort = '',
     this.filter = '',
     this.occurrencePath = const [],
+    this.extra = const {},
   });
 
   factory PortalConfigModel.fromJson(Map<String, dynamic> json) {
@@ -927,8 +1001,20 @@ class PortalConfigModel {
       occurrencePath: json['occurrence_path'] is List
           ? [for (final o in json['occurrence_path'] as List) o.toString()]
           : const [],
+      extra: unknownKeys(json, _knownKeys),
     );
   }
+
+  static const _knownKeys = {
+    'relationship_id', 'occurrence', 'relationship_side', 'initial_row', 'row_count', 'row_height',
+    'show_scroll_bar', 'allow_creation', 'allow_deletion', 'sort', 'filter', 'occurrence_path',
+  };
+
+  /// Every other key of the stored portal, kept as it was read: a migrated
+  /// portal's `sort_fields` (FileMaker's whole sort order, which [sort] can
+  /// only partly say) and `filter_problem` among them.
+  final Map<String, dynamic> extra;
+
   /// The relationship followed to reach the records the rows show.
   final String? relationshipId;
 
@@ -994,6 +1080,7 @@ class PortalConfigModel {
   }
 
   Map<String, dynamic> toJson() => {
+        ...extra,
         if (relationshipId != null) 'relationship_id': relationshipId,
         if (occurrence != null) 'occurrence': occurrence,
         if (relationshipSide != null) 'relationship_side': relationshipSide,
@@ -1023,6 +1110,14 @@ class PortalConfigModel {
     String? sort,
     String? filter,
   }) {
+    // FileMaker's sort order no longer holds once the rows' records or their
+    // sort change, nor does a filter's problem once the filter does.
+    final rowsChanged = clearRelationship ||
+        (relationshipId != null && relationshipId != this.relationshipId) ||
+        (occurrence != null && occurrence != this.occurrence) ||
+        (relationshipSide != null && relationshipSide != this.relationshipSide);
+    final sortChanged = rowsChanged || (sort != null && sort != this.sort);
+    final filterChanged = rowsChanged || (filter != null && filter != this.filter);
     return PortalConfigModel(
       relationshipId: clearRelationship ? null : (relationshipId ?? this.relationshipId),
       occurrence: clearRelationship ? null : (occurrence ?? this.occurrence),
@@ -1037,6 +1132,11 @@ class PortalConfigModel {
       filter: filter ?? this.filter,
       // Choosing a relationship, or none, replaces the path.
       occurrencePath: clearRelationship || relationshipId != null ? const [] : occurrencePath,
+      extra: {
+        for (final e in extra.entries)
+          if (!(sortChanged && e.key == 'sort_fields') && !(filterChanged && e.key == 'filter_problem'))
+            e.key: e.value,
+      },
     );
   }
 }
@@ -1069,6 +1169,7 @@ class LayoutObjectModel { // picture / document shown inside the object
     this.tabHeight,
     this.panelControl,
     this.panelIndex = 0,
+    this.extra = const {},
   });
 
   factory LayoutObjectModel.fromJson(Map<String, dynamic> json) {
@@ -1110,8 +1211,22 @@ class LayoutObjectModel { // picture / document shown inside the object
       tabHeight: (json['tab_height'] as num?)?.toDouble(),
       panelControl: json['panel'] is Map ? (json['panel'] as Map)['control']?.toString() : null,
       panelIndex: json['panel'] is Map ? ((json['panel'] as Map)['index'] as num?)?.toInt() ?? 0 : 0,
+      extra: unknownKeys(json, _knownKeys),
     );
   }
+
+  static const _knownKeys = {
+    'id', 'type', 'x', 'y', 'width', 'height', 'text', 'name', 'tooltip', 'field_binding', 'style',
+    'anchors', 'is_locked', 'portal_config', 'chart_config', 'action', 'tab_order', 'media', 'hide_when',
+    'hide_in_find', 'tabs', 'default_panel', 'tab_height', 'panel',
+  };
+
+  /// Every other key of the stored object, kept as it was read, such as
+  /// `portal`: the id of the portal whose rows the object is drawn in, or
+  /// `""` for none, which a migrated layout says because FileMaker nests a
+  /// portal's row objects in it rather than telling them by their bounds.
+  final Map<String, dynamic> extra;
+
   final String id;
   final String type; // 'field', 'label', 'button', 'button_bar', 'portal', 'tab_control', 'slide_control', 'popover_button', 'chart', 'web_viewer', 'rect', 'rounded_rect', 'oval', 'line', 'media'
   final double x;
@@ -1182,6 +1297,22 @@ class LayoutObjectModel { // picture / document shown inside the object
       other.right <= right &&
       other.bottom <= bottom;
 
+  /// The portal this object says it is a row object of, `""` for none, or
+  /// null when it does not say.
+  String? get portalId => extra['portal'] is String ? extra['portal'] as String : null;
+
+  /// True when this object is drawn in the rows of [portal]: it lies wholly
+  /// inside it, on the same panel, and does not say it is in another
+  /// portal or in none, as a migrated object lying over a portal it is not
+  /// part of does.
+  bool isRowObjectOf(LayoutObjectModel portal) =>
+      type != 'portal' &&
+      portal.contains(this) &&
+      // An object of another panel only overlaps the portal.
+      panelControl == portal.panelControl &&
+      panelIndex == portal.panelIndex &&
+      (portalId == null || portalId == portal.id);
+
   /// Objects that display their `text` (labels, buttons and drawn shapes).
   bool get hasEditableText =>
       type == 'label' || type == 'button' || type == 'popover_button' || isShape;
@@ -1189,6 +1320,7 @@ class LayoutObjectModel { // picture / document shown inside the object
   bool get isShape => type == 'rect' || type == 'rounded_rect' || type == 'oval';
 
   Map<String, dynamic> toJson() => {
+        ...extra,
         'id': id,
         'type': type,
         'x': x,
@@ -1246,6 +1378,12 @@ class LayoutObjectModel { // picture / document shown inside the object
     List<String>? tabs,
     int? defaultPanel,
   }) {
+    // An object moved or resized is in the portal its new bounds put it in,
+    // as an object drawn in the designer is: what it said no longer holds.
+    final moved = (x != null && x != this.x) ||
+        (y != null && y != this.y) ||
+        (width != null && width != this.width) ||
+        (height != null && height != this.height);
     return LayoutObjectModel(
       id: id ?? this.id,
       type: type ?? this.type,
@@ -1272,6 +1410,7 @@ class LayoutObjectModel { // picture / document shown inside the object
       tabHeight: tabHeight,
       panelControl: panelControl,
       panelIndex: panelIndex,
+      extra: moved ? {for (final e in extra.entries) if (e.key != 'portal') e.key: e.value} : extra,
     );
   }
 }
@@ -1333,6 +1472,7 @@ class LayoutDefinitionModel {
     this.scriptTriggers = const [],
     this.transition = 'none',
     this.labelStock,
+    this.extra = const {},
   });
 
   /// First layout of a table: one row per field, labelled with the field's
@@ -1442,8 +1582,19 @@ class LayoutDefinitionModel {
       labelStock: json['label_stock'] is Map
           ? Map<String, dynamic>.from(json['label_stock'] as Map)
           : null,
+      extra: unknownKeys(json, _knownKeys),
     );
   }
+
+  static const _knownKeys = {
+    'id', 'name', 'table_occurrence', 'width', 'theme', 'default_view', 'date_order', 'parts', 'objects',
+    'background_color', 'background_image', 'on_layout_enter', 'on_layout_exit', 'script_triggers',
+    'transition', 'label_stock',
+  };
+
+  /// Every other key of the stored definition, kept as it was read.
+  final Map<String, dynamic> extra;
+
   final String id;
   final String name;
   final String tableOccurrence;
@@ -1706,6 +1857,7 @@ class LayoutDefinitionModel {
   List<String> get requiredSortOrder => breakFields;
 
   Map<String, dynamic> toJson() => {
+        ...extra,
         'id': id,
         'name': name,
         'table_occurrence': tableOccurrence,
@@ -1763,6 +1915,7 @@ class LayoutDefinitionModel {
       scriptTriggers: scriptTriggers ?? this.scriptTriggers,
       transition: transition ?? this.transition,
       labelStock: clearLabelStock ? null : (labelStock ?? this.labelStock),
+      extra: extra,
     );
   }
 }

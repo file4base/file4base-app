@@ -1257,31 +1257,29 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	// keep their active status and password while restoring any layout/table
 	// permissions carried by the bundle.
 	//
-	// The file's layout permissions are those of the file's layouts: an
-	// existing account keeps its permissions on this database's other
-	// layouts, and gets its previous ones back if the import fails.
-	imported := make(map[string]bool, len(layoutIDs))
-	for _, id := range layoutIDs {
-		imported[id] = true
-	}
+	// An existing account's layout permissions are never widened: on each
+	// of the file's layouts it keeps the stricter of its own access and the
+	// file's, on the others its own; if the import fails, it gets back
+	// exactly the permissions it had, none included.
 	restoreAccountPermissions := func(userID, username string, a BundleAccount, existing bool) error {
 		perms := make([]UserLayoutPermission, 0, len(a.Permissions))
 		for _, p := range a.Permissions {
 			perms = append(perms, UserLayoutPermission{LayoutID: layoutIDs[p.LayoutID], AccessLevel: p.AccessLevel})
 		}
-		if len(perms) > 0 {
-			if existing {
-				previous, err := s.GetUserPermissions(ctx, userID)
-				if err != nil {
-					return fmt.Errorf("reading permissions of %q: %w", username, err)
-				}
-				for _, p := range previous {
-					if !imported[p.LayoutID] {
-						perms = append(perms, UserLayoutPermission{LayoutID: p.LayoutID, AccessLevel: p.AccessLevel})
-					}
-				}
+		if len(perms) > 0 && existing {
+			previous, err := s.GetUserPermissions(ctx, userID)
+			if err != nil {
+				return fmt.Errorf("reading permissions of %q: %w", username, err)
+			}
+			merged, changed := stricterPermissions(previous, perms)
+			if !changed {
+				perms = nil
+			} else {
+				perms = merged
 				undo = append(undo, func() { _ = s.SetUserPermissions(bg, userID, previous) })
 			}
+		}
+		if len(perms) > 0 {
 			if err := s.SetUserPermissions(ctx, userID, perms); err != nil {
 				return fmt.Errorf("restoring permissions of %q: %w", username, err)
 			}
@@ -1296,6 +1294,22 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 				CanDelete:       tp.CanDelete,
 				CanModifySchema: tp.CanModifySchema,
 			})
+		}
+		if len(tablePerms) > 0 && existing {
+			previous, err := s.GetUserTablePermissions(ctx, userID)
+			if err != nil {
+				return fmt.Errorf("reading table permissions of %q: %w", username, err)
+			}
+			merged, changed, err := s.stricterTablePermissions(ctx, userID, previous, tablePerms)
+			if err != nil {
+				return fmt.Errorf("reading table access of %q: %w", username, err)
+			}
+			if !changed {
+				tablePerms = nil
+			} else {
+				tablePerms = merged
+				undo = append(undo, func() { _ = s.SetUserTablePermissions(bg, userID, previous) })
+			}
 		}
 		if len(tablePerms) > 0 {
 			if err := s.SetUserTablePermissions(ctx, userID, tablePerms); err != nil {
@@ -2536,4 +2550,106 @@ func (s *Service) importRelationshipOptions(ctx context.Context, cur Relationshi
 		return false, err
 	}
 	return true, nil
+}
+
+// accessRank orders the layout access levels from the most restrictive; an
+// unknown level ranks as none.
+var accessRank = map[string]int{AccessNone: 0, AccessReadOnly: 1, AccessReadWrite: 2}
+
+// stricterPermissions merges the layout permissions a file gives an existing
+// account into the ones it has: each layout keeps the stricter of the two,
+// a layout without a row being read_write. changed tells whether anything
+// is stricter than before.
+func stricterPermissions(current, file []UserLayoutPermission) ([]UserLayoutPermission, bool) {
+	levels := map[string]string{}
+	order := []string{}
+	for _, p := range current {
+		if p.LayoutID == "" {
+			continue
+		}
+		if _, seen := levels[p.LayoutID]; !seen {
+			order = append(order, p.LayoutID)
+		}
+		levels[p.LayoutID] = p.AccessLevel
+	}
+	changed := false
+	for _, p := range file {
+		if p.LayoutID == "" {
+			continue
+		}
+		have, ok := levels[p.LayoutID]
+		if !ok {
+			have = AccessReadWrite
+		}
+		if accessRank[p.AccessLevel] < accessRank[have] {
+			if !ok {
+				order = append(order, p.LayoutID)
+			}
+			levels[p.LayoutID] = p.AccessLevel
+			changed = true
+		}
+	}
+	out := make([]UserLayoutPermission, 0, len(order))
+	for _, id := range order {
+		out = append(out, UserLayoutPermission{LayoutID: id, AccessLevel: levels[id]})
+	}
+	return out, changed
+}
+
+// stricterTablePermissions merges the table permissions a file gives an
+// existing account into the ones it has, as stricterPermissions does for
+// layouts: on each table the stricter level and only the record privileges
+// both grant. A table without a row has the access its layouts give it
+// (TableAccess), with every record privilege; the file's row is added only
+// where it restricts that.
+func (s *Service) stricterTablePermissions(ctx context.Context, userID string, current, file []UserTablePermission) ([]UserTablePermission, bool, error) {
+	rows := map[string]UserTablePermission{}
+	order := []string{}
+	for _, p := range current {
+		name := dbal.NormalizeIdentifier(p.TableName)
+		if name == "" {
+			continue
+		}
+		if _, seen := rows[name]; !seen {
+			order = append(order, name)
+		}
+		p.ID, p.UserID = "", ""
+		rows[name] = p
+	}
+	changed := false
+	for _, p := range file {
+		name := dbal.NormalizeIdentifier(p.TableName)
+		if name == "" {
+			continue
+		}
+		have, explicit := rows[name]
+		if !explicit {
+			level, err := s.TableAccess(ctx, userID, name)
+			if err != nil {
+				return nil, false, err
+			}
+			have = UserTablePermission{TableName: name, AccessLevel: level, CanCreate: true, CanEdit: true, CanDelete: true, CanModifySchema: true}
+		}
+		next := have
+		if accessRank[p.AccessLevel] < accessRank[have.AccessLevel] {
+			next.AccessLevel = p.AccessLevel
+		}
+		next.CanCreate = have.CanCreate && p.CanCreate
+		next.CanEdit = have.CanEdit && p.CanEdit
+		next.CanDelete = have.CanDelete && p.CanDelete
+		next.CanModifySchema = have.CanModifySchema && p.CanModifySchema
+		if next == have {
+			continue
+		}
+		if !explicit {
+			order = append(order, name)
+		}
+		rows[name] = next
+		changed = true
+	}
+	out := make([]UserTablePermission, 0, len(order))
+	for _, name := range order {
+		out = append(out, rows[name])
+	}
+	return out, changed, nil
 }

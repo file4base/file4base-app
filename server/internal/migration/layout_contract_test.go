@@ -3,6 +3,7 @@ package migration
 import (
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -255,5 +256,78 @@ func TestPrivilegeLayoutAccessKeepsDenials(t *testing.T) {
 	w, _ := json.Marshal(want)
 	if string(g) != string(w) {
 		t.Errorf("layout access\n got %s\nwant %s", g, w)
+	}
+}
+
+// A privilege set is an owner's or an administrator's by its name only when
+// it grants full access; a restricted one named so is a user's, with its
+// layout privileges, and the report says so.
+func TestPrivilegeSetNamedAdminIsNotFullAccessByName(t *testing.T) {
+	doc := `<FMSaveAsXML><Structure><AddAction>
+ <LayoutCatalog><Layout id="1" name="Secret"></Layout></LayoutCatalog>
+ <AccountsCatalog><ObjectList>
+  <Account id="1"><Authentication><AccountName>boss</AccountName></Authentication><PrivilegeSetReference id="7" name="Admin"/></Account>
+  <Account id="2"><Authentication><AccountName>chief</AccountName></Authentication><PrivilegeSetReference id="8" name="Administrator"/></Account>
+  <Account id="3"><Authentication><AccountName>nobody</AccountName></Authentication><PrivilegeSetReference id="9" name="Owner"/></Account>
+ </ObjectList></AccountsCatalog>
+ <PrivilegeSetsCatalog><ObjectList>
+  <PrivilegeSet id="7" name="Admin"><access><Records Create="True" Edit="True" Delete="True"></Records>
+   <Layouts Custom="True"><Custom><ObjectList><Layout type="existing" access="NoAccess" records="NoAccess"><LayoutReference id="1" name="Secret"></LayoutReference></Layout></ObjectList></Custom></Layouts>
+   <ValueLists Create="True" Edit="True" Delete="True"></ValueLists><Scripts Create="True" Edit="True" Delete="True"></Scripts>
+   <Other manageDatabase="False" manageAccounts="False" manageExtPrivs="False"></Other></access></PrivilegeSet>
+  ` + fullAccessSet(8, "Administrator") + `
+ </ObjectList></PrivilegeSetsCatalog>
+ </AddAction></Structure></FMSaveAsXML>`
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := map[string]string{}
+	perms := map[string]int{}
+	for _, u := range got.Bundle.Users {
+		roles[u.Username], perms[u.Username] = u.Role, len(u.Permissions)
+	}
+	if roles["boss"] != "user" || perms["boss"] != 1 {
+		t.Errorf("boss: role %q with %d layout permission(s), want user with the set's one", roles["boss"], perms["boss"])
+	}
+	if roles["chief"] != "admin" {
+		t.Errorf("chief: role %q, want admin: its set grants full access", roles["chief"])
+	}
+	if roles["nobody"] != "user" {
+		t.Errorf("nobody: role %q, want user: the file does not define its set", roles["nobody"])
+	}
+	flagged := map[string]bool{}
+	for _, it := range got.Report.ManualActionRequired {
+		if it.Domain == "account" && strings.Contains(it.Detail, "named like a full-access set") {
+			flagged[it.SourceName] = true
+		}
+	}
+	if !flagged["boss"] || !flagged["nobody"] || flagged["chief"] {
+		t.Errorf("accounts reported = %v, want boss and nobody", flagged)
+	}
+}
+
+// An object lying within a portal's bounds without being one of its row
+// objects says it is in no portal, so a client taking membership from the
+// bounds does not draw it in the rows; an object on another panel, a row
+// object and one only overlapping the portal are left as they are.
+func TestObjectsWithinAPortalButNotItsRowsSaySo(t *testing.T) {
+	objects := []map[string]interface{}{
+		{"id": "p", "type": "portal", "x": 0.0, "y": 100.0, "width": 300.0, "height": 100.0},
+		{"id": "row", "type": "field", "x": 10.0, "y": 110.0, "width": 50.0, "height": 20.0, "portal": "p"},
+		{"id": "over", "type": "text", "x": 100.0, "y": 110.0, "width": 50.0, "height": 20.0},
+		{"id": "tab", "type": "field", "x": 100.0, "y": 150.0, "width": 50.0, "height": 20.0, "panel": map[string]interface{}{"control": "t", "index": 1}},
+		{"id": "edge", "type": "field", "x": 280.0, "y": 150.0, "width": 50.0, "height": 20.0},
+	}
+	markOutsidePortals(objects)
+	got := map[string]interface{}{}
+	for _, o := range objects {
+		if v, ok := o["portal"]; ok {
+			got[o["id"].(string)] = v
+		}
+	}
+	want := map[string]interface{}{"row": "p", "over": ""}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("portal keys %v, want %v", got, want)
 	}
 }

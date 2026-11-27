@@ -236,7 +236,7 @@ func TestFieldKindTakesAnAgreeingSourceTypeOnly(t *testing.T) {
 // A layout's contract places a field in the portal its object names; a
 // layout saved before objects named their portal places it by its bounds.
 func TestCompileLayoutContract(t *testing.T) {
-	marked := `{"objects":[
+	def := `{"objects":[
 		{"id":"p1","type":"portal","name":"Lines","x":0,"y":100,"width":300,"height":100,
 		 "portal_config":{"occurrence":"Lines","sort":"-qty,code"}},
 		{"id":"f1","type":"field","x":10,"y":110,"width":50,"height":20,"portal":"p1",
@@ -245,10 +245,16 @@ func TestCompileLayoutContract(t *testing.T) {
 		 "field_binding":{"field_name":"name","control_style":"pop_up_menu","value_list_id":"vl","first_repetition":2,"repetitions_shown":3}},
 		{"id":"f3","type":"field","x":10,"y":150,"width":50,"height":20,
 		 "field_binding":{"field_name":"gone","missing":true}},
-		{"id":"f4","type":"field","x":20,"y":150,"width":50,"height":20,
-		 "field_binding":{"field_name":"note","table_occurrence":"Lines"}}
+		{"id":"f4","type":"field","x":20,"y":150,"width":50,"height":20,"portal":"",
+		 "field_binding":{"field_name":"note","table_occurrence":"Lines"}},
+		{"id":"f5","type":"field","x":80,"y":150,"width":50,"height":20,
+		 "field_binding":{"field_name":"price","table_occurrence":"Lines"}},
+		{"id":"f6","type":"field","x":150,"y":150,"width":50,"height":20,"panel":{"control":"tabs","index":1},
+		 "field_binding":{"field_name":"memo"}},
+		{"id":"f7","type":"field","x":250,"y":190,"width":80,"height":20,
+		 "field_binding":{"field_name":"total"}}
 	]}`
-	c, err := schema.CompileLayoutContract([]byte(marked))
+	c, err := schema.CompileLayoutContract([]byte(def))
 	require.NoError(t, err)
 	require.Len(t, c.Portals, 1)
 	p := c.Portals[0]
@@ -257,21 +263,21 @@ func TestCompileLayoutContract(t *testing.T) {
 		{Occurrence: "Lines", Field: "qty", Order: "descending"},
 		{Occurrence: "Lines", Field: "code", Order: "ascending"},
 	}, p.Sort)
-	require.Len(t, p.Fields, 1, "only the object naming the portal is in it")
-	assert.Equal(t, "qty", p.Fields[0].Field)
-	require.Len(t, c.Fields, 2, "a missing field is left out")
+	fields := func(list []schema.ContractField) []string {
+		out := []string{}
+		for _, f := range list {
+			out = append(out, f.Field)
+		}
+		return out
+	}
+	// f1 names the portal; f5 says nothing and lies wholly inside it on
+	// its panel; f4 says it is in none; f6 is on a panel of another
+	// control; f7 overlaps the portal's edge; f3's field is missing.
+	assert.Equal(t, []string{"qty", "price"}, fields(p.Fields))
+	assert.Equal(t, []string{"name", "note", "memo", "total"}, fields(c.Fields))
 	assert.Equal(t, schema.ContractField{
 		Field: "name", ControlStyle: "pop_up_menu", ValueListID: "vl", RepetitionStart: 2, RepetitionsShown: 3,
 	}, c.Fields[0])
-	assert.Equal(t, "note", c.Fields[1].Field, "inside the portal's bounds, but the layout names portals")
-
-	unmarked := strings.ReplaceAll(marked, `"portal":"p1",`, ``)
-	c, err = schema.CompileLayoutContract([]byte(unmarked))
-	require.NoError(t, err)
-	require.Len(t, c.Portals[0].Fields, 2, "the objects within the portal's bounds are its own")
-	assert.Equal(t, []string{"qty", "note"}, []string{c.Portals[0].Fields[0].Field, c.Portals[0].Fields[1].Field})
-	require.Len(t, c.Fields, 1)
-	assert.Equal(t, "name", c.Fields[0].Field)
 }
 
 // Layouts sharing a name, as FileMaker allows, stay two when a file is
@@ -307,4 +313,138 @@ func TestLayoutsSharingANameStayApartOnImport(t *testing.T) {
 	}
 	sort.Strings(widths)
 	assert.Equal(t, []string{"101", "202"}, widths)
+}
+
+// A solution file never widens what an existing account may do: on each
+// layout and table it names, the account keeps the stricter of its own
+// access and the file's. An import that fails gives every account back
+// exactly the permissions it had, "no rows" included.
+func TestImportNeverWidensAnExistingAccount(t *testing.T) {
+	mgr, ctx := externalTestManager(t)
+	if mgr == nil {
+		return
+	}
+	src := newExternalSolution(t, ctx, mgr, "acc_src")
+	tbl, _ := src.table(t, ctx, "items", "code")
+	occ := src.occurrenceOf(t, ctx, tbl.ID)
+	fileIDs := map[string]string{}
+	for _, name := range []string{"Main", "Other"} {
+		l, err := src.svc.CreateLayout(ctx, name, occ, []byte(`{"objects":[]}`))
+		require.NoError(t, err)
+		fileIDs[name] = l.ID
+	}
+	plain, err := src.svc.ExportSolution(ctx, schema.ExportOptions{SolutionName: "Accounts"})
+	require.NoError(t, err)
+	bundle, err := schema.DecodeSolutionBundle(plain)
+	require.NoError(t, err)
+	bundle.Users = []schema.BundleAccount{
+		{Username: "dana", Role: "user",
+			Permissions: []schema.BundlePermission{
+				{LayoutID: fileIDs["Main"], AccessLevel: schema.AccessReadWrite},
+				{LayoutID: fileIDs["Other"], AccessLevel: schema.AccessReadOnly},
+			},
+			TablePermissions: []schema.BundleTablePermission{
+				{TableName: "items", AccessLevel: schema.AccessReadWrite, CanCreate: true, CanDelete: true},
+			}},
+		{Username: "eve", Role: "user",
+			Permissions: []schema.BundlePermission{{LayoutID: fileIDs["Main"], AccessLevel: schema.AccessReadOnly}}},
+	}
+	withAccounts, err := msgpack.Marshal(bundle)
+	require.NoError(t, err)
+
+	dst := newExternalSolution(t, ctx, mgr, "acc_dst")
+	_, err = dst.svc.ImportSolution(ctx, plain)
+	require.NoError(t, err)
+	dstIDs := map[string]string{}
+	layouts, err := dst.svc.ListLayouts(ctx)
+	require.NoError(t, err)
+	for _, l := range layouts {
+		dstIDs[l.ID] = l.Name
+	}
+	users := map[string]string{}
+	for _, name := range []string{"dana", "eve"} {
+		u, err := dst.svc.CreateUser(ctx, name, "Secret-pass-1", "user")
+		require.NoError(t, err)
+		users[name] = u.ID
+	}
+	reset := func() {
+		t.Helper()
+		var mainID string
+		for id, name := range dstIDs {
+			if name == "Main" {
+				mainID = id
+			}
+		}
+		require.NoError(t, dst.svc.SetUserPermissions(ctx, users["dana"], []schema.UserLayoutPermission{{LayoutID: mainID, AccessLevel: schema.AccessNone}}))
+		require.NoError(t, dst.svc.SetUserTablePermissions(ctx, users["dana"], []schema.UserTablePermission{
+			{TableName: "items", AccessLevel: schema.AccessReadWrite, CanCreate: true, CanEdit: true, CanDelete: true},
+		}))
+		require.NoError(t, dst.svc.SetUserPermissions(ctx, users["eve"], nil))
+	}
+	layoutPerms := func(user string) map[string]string {
+		t.Helper()
+		perms, err := dst.svc.GetUserPermissions(ctx, users[user])
+		require.NoError(t, err)
+		out := map[string]string{}
+		for _, p := range perms {
+			out[dstIDs[p.LayoutID]] = p.AccessLevel
+		}
+		return out
+	}
+	tablePerms := func(user string) []schema.UserTablePermission {
+		t.Helper()
+		perms, err := dst.svc.GetUserTablePermissions(ctx, users[user])
+		require.NoError(t, err)
+		for i := range perms {
+			perms[i].ID, perms[i].UserID = "", ""
+		}
+		return perms
+	}
+
+	reset()
+	_, err = dst.svc.ImportSolution(ctx, withAccounts)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"Main": schema.AccessNone, "Other": schema.AccessReadOnly}, layoutPerms("dana"),
+		"a layout the account may not see stays hidden; one the file restricts is restricted")
+	assert.Equal(t, []schema.UserTablePermission{
+		{TableName: "items", AccessLevel: schema.AccessReadWrite, CanCreate: true, CanDelete: true},
+	}, tablePerms("dana"), "a record privilege the file withholds is withdrawn")
+	assert.Equal(t, map[string]string{"Main": schema.AccessReadOnly}, layoutPerms("eve"))
+	assert.Empty(t, tablePerms("eve"))
+
+	// The import fails after the accounts (the saved finds can no longer
+	// be read): the accounts are back as they were.
+	reset()
+	_, err = dst.driver.DB().ExecContext(ctx, `ALTER TABLE sys_saved_finds RENAME TO sys_saved_finds_off`)
+	require.NoError(t, err)
+	bundle.SavedFinds = []schema.BundleSavedFind{{Name: "Recent", TableName: "items"}}
+	failing, err := msgpack.Marshal(bundle)
+	require.NoError(t, err)
+	_, err = dst.svc.ImportSolution(ctx, failing)
+	require.Error(t, err)
+	assert.Equal(t, map[string]string{"Main": schema.AccessNone}, layoutPerms("dana"))
+	assert.Equal(t, []schema.UserTablePermission{
+		{TableName: "items", AccessLevel: schema.AccessReadWrite, CanCreate: true, CanEdit: true, CanDelete: true},
+	}, tablePerms("dana"))
+	assert.Empty(t, layoutPerms("eve"), "an account that had no rows has none again")
+
+	// Undoing a migration puts the accounts' permissions back as the
+	// snapshot found them, although importing its file only restricts.
+	// A failed import may have created the table again (MariaDB).
+	_, err = dst.driver.DB().ExecContext(ctx, `DROP TABLE IF EXISTS sys_saved_finds`)
+	require.NoError(t, err)
+	_, err = dst.driver.DB().ExecContext(ctx, `ALTER TABLE sys_saved_finds_off RENAME TO sys_saved_finds`)
+	require.NoError(t, err)
+	reset()
+	snap, err := dst.svc.SnapshotDesign(ctx, "Accounts")
+	require.NoError(t, err)
+	_, err = dst.svc.ImportSolution(ctx, withAccounts)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"Main": schema.AccessReadOnly}, layoutPerms("eve"))
+	require.NoError(t, dst.svc.RestoreDesign(ctx, snap))
+	assert.Equal(t, map[string]string{"Main": schema.AccessNone}, layoutPerms("dana"))
+	assert.Equal(t, []schema.UserTablePermission{
+		{TableName: "items", AccessLevel: schema.AccessReadWrite, CanCreate: true, CanEdit: true, CanDelete: true},
+	}, tablePerms("dana"))
+	assert.Empty(t, layoutPerms("eve"))
 }

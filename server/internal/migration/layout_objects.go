@@ -294,8 +294,42 @@ func convertNativeLayout(ln *xmlNode, ctx *layoutObjectContext, def map[string]i
 		}
 		l.objects = append(under, over...)
 	}
+	markOutsidePortals(l.objects)
 	def["objects"] = l.objects
 	return l.report()
+}
+
+// markOutsidePortals says `"portal": ""` on each object that lies within a
+// portal's bounds, on its panel, without being one of its row objects: a
+// client would otherwise take it for one, as an object's bounds are all
+// that tell where a layout drawn in the designer puts it.
+func markOutsidePortals(objects []map[string]interface{}) {
+	num := func(o map[string]interface{}, k string) float64 { f, _ := o[k].(float64); return f }
+	panel := func(o map[string]interface{}) string {
+		if p, _ := o["panel"].(map[string]interface{}); p != nil {
+			return fmt.Sprint(p["control"], "#", p["index"])
+		}
+		return ""
+	}
+	var portals []map[string]interface{}
+	for _, o := range objects {
+		if o["type"] == "portal" {
+			portals = append(portals, o)
+		}
+	}
+	for _, o := range objects {
+		if _, said := o["portal"]; said || o["type"] == "portal" {
+			continue
+		}
+		for _, p := range portals {
+			if panel(o) == panel(p) && num(o, "x") >= num(p, "x") && num(o, "y") >= num(p, "y") &&
+				num(o, "x")+num(o, "width") <= num(p, "x")+num(p, "width") &&
+				num(o, "y")+num(o, "height") <= num(p, "y")+num(p, "height") {
+				o["portal"] = ""
+				break
+			}
+		}
+	}
 }
 
 // nativeLayoutView reads the view a layout opens in from its options.
