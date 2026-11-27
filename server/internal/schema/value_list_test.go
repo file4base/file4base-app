@@ -34,7 +34,7 @@ func TestValueLists(t *testing.T) {
 		DSN:        testdb.DevDSN(),
 	})
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 		return
 	}
 	defer driver.Close()
@@ -43,7 +43,7 @@ func TestValueLists(t *testing.T) {
 	defer cancel()
 
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 		return
 	}
 
@@ -174,7 +174,7 @@ func TestValueLists(t *testing.T) {
 func TestValueListsRoundTripThroughASolutionFile(t *testing.T) {
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 		return
 	}
 	defer driver.Close()
@@ -182,7 +182,7 @@ func TestValueListsRoundTripThroughASolutionFile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 		return
 	}
 
@@ -259,7 +259,7 @@ func TestValueListsRoundTripThroughASolutionFile(t *testing.T) {
 func TestValueListFieldOptions(t *testing.T) {
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 		return
 	}
 	defer driver.Close()
@@ -267,7 +267,7 @@ func TestValueListFieldOptions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 		return
 	}
 
@@ -531,14 +531,14 @@ func TestValueListFieldOptions(t *testing.T) {
 func TestValueListEntries(t *testing.T) {
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database unavailable:", err)
+		testdb.Unavailable(t, "database unavailable:", err)
 		return
 	}
 	defer driver.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 		return
 	}
 	svc := schema.NewService(driver)
@@ -667,14 +667,14 @@ func TestValueListEntries(t *testing.T) {
 func TestValueListEntriesOfBooleansAndContainers(t *testing.T) {
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database unavailable:", err)
+		testdb.Unavailable(t, "database unavailable:", err)
 		return
 	}
 	defer driver.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 		return
 	}
 	svc := schema.NewService(driver)
@@ -828,14 +828,14 @@ func TestValueListEntriesOfBooleansAndContainers(t *testing.T) {
 func TestValueListRefusesAFieldThatCannotBeIndexed(t *testing.T) {
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database unavailable:", err)
+		testdb.Unavailable(t, "database unavailable:", err)
 		return
 	}
 	defer driver.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 		return
 	}
 	svc := schema.NewService(driver)
@@ -906,14 +906,14 @@ func TestValueListRefusesAFieldThatCannotBeIndexed(t *testing.T) {
 func TestARestoredValueListOfAnUnindexableFieldIsKeptWithAWarning(t *testing.T) {
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database unavailable:", err)
+		testdb.Unavailable(t, "database unavailable:", err)
 		return
 	}
 	defer driver.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 		return
 	}
 	svc := schema.NewService(driver)

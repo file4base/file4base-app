@@ -12,6 +12,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/autoenter"
 	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/containermeta"
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/repetition"
 	"github.com/file4base/file4base-app/server/internal/sourcetext"
@@ -298,7 +299,7 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		);`,
 		// The match criteria of a relationship after its first.
 		relationshipPredicatesSQL(ts),
-		// Deleted FileMaker fields (see migrations/010_deleted_source_fields.sql).
+		// Deleted FileMaker fields (see migrations/011_deleted_source_fields.sql).
 		deletedSourceFieldsSQL,
 		relationshipColumnNamesSQL[0],
 		relationshipColumnNamesSQL[1],
@@ -523,6 +524,10 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 	// older one end up with the same columns and foreign keys.
 	queries = append(queries, valueListOptionsSQL(s.driver.Dialect().Engine())...)
 	queries = append(queries, customFunctionNameIndexSQL(s.driver.Dialect().Engine())...)
+	// MariaDB's record ID allocators (see dbal.RecordIDsTable).
+	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
+		queries = append(queries, dbal.RecordIDsTableSQL)
+	}
 
 	db := s.driver.DB()
 	for _, q := range queries {
@@ -536,8 +541,9 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		return err
 	}
 	upgradedCatalogs.Store(db, true)
-	// Every user table numbers its records in creation order.
-	if err := s.ensureCreationOrder(ctx); err != nil {
+	// Every user table numbers its records in creation order and counts
+	// their modifications.
+	if err := s.ensureRecordIdentity(ctx); err != nil {
 		return err
 	}
 
@@ -1321,6 +1327,9 @@ func (s *Service) DeleteTable(ctx context.Context, tableID string) error {
 	}
 	if err := containermeta.DeleteTable(ctx, tx, dialect, tableName); err != nil {
 		return err
+	}
+	if err := data.ForgetRecordIDs(ctx, tx, dialect, tableName); err != nil {
+		return fmt.Errorf("failed dropping the record ID allocator of %s: %w", tableName, err)
 	}
 
 	// 3. Delete from sys_tables (cascades to sys_columns and sys_table_occurrences via FK)

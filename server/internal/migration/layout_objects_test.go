@@ -483,13 +483,13 @@ func TestFMCSSColor(t *testing.T) {
 func TestNativeLayoutValueListSurvivesImport(t *testing.T) {
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 	}
 	t.Cleanup(func() { _ = driver.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 	}
 
 	stamp := time.Now().UnixNano()
@@ -1078,8 +1078,9 @@ func TestNativeLayoutConditionalFormats(t *testing.T) {
 	// cannot be read.
 	design = replace(design, "000000000007", strings.Replace(fmCondition(13, "IsEmpty(Self)", "-", ""), "<Options>7</Options>", "<Options>6</Options>", 1)+
 		fmCondition(14, "GetAsDate(Self) = Get(CurrentDate)", "-", ""))
-	// A text has no field.
-	design = replace(design, "000000000001", fmCondition(0, "Recipes::Price > 1", "-", ""))
+	// A text's Self is the text it shows, which one merging fields
+	// changes on each record.
+	design = replace(design, "000000000001", fmCondition(0, "Recipes::Price > 1", "-", "")+fmCondition(0, `Self = "Recipe"`, "-", ""))
 	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design, SourceLocale: "fr-FR"})
 	if err != nil {
 		t.Fatal(err)
@@ -1093,8 +1094,11 @@ func TestNativeLayoutConditionalFormats(t *testing.T) {
 	for _, raw := range def["objects"].([]interface{}) {
 		o := raw.(map[string]interface{})
 		if rules, _ := o["style"].(map[string]interface{})["conditional_rules"].([]interface{}); rules != nil {
-			b := o["field_binding"].(map[string]interface{})
-			rulesOf[fmt.Sprint(b["table_occurrence"], "::", b["field_name"])] = rules
+			if b, ok := o["field_binding"].(map[string]interface{}); ok {
+				rulesOf[fmt.Sprint(b["table_occurrence"], "::", b["field_name"])] = rules
+			} else {
+				rulesOf[fmt.Sprint(o["type"])] = rules
+			}
 		}
 	}
 	formulas := func(key string) []string {
@@ -1122,6 +1126,7 @@ func TestNativeLayoutConditionalFormats(t *testing.T) {
 		"Ingredient Recipes::price": {"Self>5"},
 		// Browse mode answers Self in each repetition the box shows.
 		"Ingredients::quantity": {"IsEmpty(Self)", "Recipes::price > 1"},
+		"label":                 {"Recipes::price > 1"},
 	}
 	if len(rulesOf) != len(want) {
 		t.Fatalf("objects with rules: %v", rulesOf)
@@ -1138,7 +1143,7 @@ func TestNativeLayoutConditionalFormats(t *testing.T) {
 		}
 	}
 	// Not kept: a formula that cannot be bound, an unknown condition, a
-	// Self that cannot be read and the text's format.
+	// Self that cannot be read and the merging text's Self.
 	for _, w := range []string{"4 conditional formats not kept", "1 conditional format switched off in FileMaker, left out",
 		`1 conditional format whose "Value is" condition shows other values than the calculation FileMaker keeps for it`} {
 		if !strings.Contains(review, w) {
@@ -1184,6 +1189,143 @@ func TestNativeLayoutConditionalFormatInAPortalRow(t *testing.T) {
 	for _, it := range got.Report.ManualActionRequired {
 		if strings.Contains(it.Detail, "conditional format") {
 			t.Errorf("reported: %s", it.Detail)
+		}
+	}
+}
+
+// Texts and buttons keep their conditional formats, with Self as the text
+// they show: a button bar's segments and a popover button too. A grouped
+// button's, a calculated label's Self and a merging text's Self are not
+// kept. In a portal row, a hide condition is the row's, as its formats
+// are.
+func TestNativeLayoutConditionalFormatsOfTextsAndButtons(t *testing.T) {
+	formats := func(formulas ...string) string {
+		var b strings.Builder
+		for _, f := range formulas {
+			b.WriteString(fmCondition(0, f, "-", ""))
+		}
+		return "<Conditions><Formatting>" + b.String() + "</Formatting></Conditions>"
+	}
+	// formats with a hide condition.
+	hidden := func(hide string, formulas ...string) string {
+		return strings.Replace(formats(formulas...), "<Conditions>",
+			"<Conditions><Hide><Calculation><Text><![CDATA["+hide+"]]></Text></Calculation></Hide>", 1)
+	}
+	objects := `<LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000070</UUID><Bounds top="240" left="20" bottom="255" right="100"/>
+                ` + hidden(`Self = "Shut"`, `Self = "Open"`, "Price > 1") + `
+                <Text><StyledText><Data><![CDATA[Open]]></Data></StyledText></Text>
+              </LayoutObject>
+              <LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000071</UUID><Bounds top="240" left="100" bottom="255" right="200"/>
+                ` + hidden(`Self = "x"`, `Self = "x"`) + `
+                <Text><StyledText><Data><![CDATA[Price <<Price>>]]></Data></StyledText></Text>
+              </LayoutObject>
+              <LayoutObject type="Button"><UUID>00000000-0000-0000-0000-000000000072</UUID><Bounds top="260" left="20" bottom="275" right="100"/>
+                ` + formats(`Self = "Go"`) + `
+                <Button><Label><Text><StyledText><Data><![CDATA[Go]]></Data></StyledText></Text></Label></Button>
+              </LayoutObject>
+              <LayoutObject type="Button"><UUID>00000000-0000-0000-0000-000000000073</UUID><Bounds top="260" left="100" bottom="275" right="200"/>
+                ` + hidden("IsEmpty(Self)", `Self = "x"`, "Price = 2") + `
+                <Button><Label><Calculation><Text><![CDATA[Title & "!"]]></Text></Calculation></Label></Button>
+              </LayoutObject>
+              <LayoutObject type="Button Bar"><UUID>00000000-0000-0000-0000-000000000074</UUID><Bounds top="280" left="20" bottom="295" right="220"/>
+                <ButtonBar><ObjectList membercount="1">
+                  <LayoutObject type="Button"><UUID>00000000-0000-0000-0000-000000000075</UUID><Bounds top="280" left="20" bottom="295" right="120"/>
+                    ` + formats(`Self = "Seg"`) + `
+                    <Button><Label><Text><StyledText><Data><![CDATA[Seg]]></Data></StyledText></Text></Label></Button>
+                  </LayoutObject>
+                  <LayoutObject type="Popover Button"><UUID>00000000-0000-0000-0000-00000000007a</UUID><Bounds top="280" left="120" bottom="295" right="220"/>
+                    ` + formats(`Self = "Pop"`) + `
+                    <PopoverButton><Label><Text><StyledText><Data><![CDATA[Pop]]></Data></StyledText></Text></Label></PopoverButton>
+                  </LayoutObject>
+                </ObjectList></ButtonBar>
+              </LayoutObject>
+              <LayoutObject type="Popover Button"><UUID>00000000-0000-0000-0000-000000000076</UUID><Bounds top="300" left="20" bottom="315" right="100"/>
+                ` + formats(`Self = "More"`) + `
+                <PopoverButton><Label><Text><StyledText><Data><![CDATA[More]]></Data></StyledText></Text></Label></PopoverButton>
+              </LayoutObject>
+              <LayoutObject type="Grouped Button"><UUID>00000000-0000-0000-0000-000000000077</UUID><Bounds top="320" left="20" bottom="335" right="200"/>
+                ` + formats("Price > 3") + `
+                <GroupedButton><ObjectList membercount="0"></ObjectList></GroupedButton>
+              </LayoutObject>
+              <LayoutObject type="Portal"><UUID>00000000-0000-0000-0000-000000000078</UUID><Bounds top="340" left="20" bottom="400" right="300"/>
+                <Portal><TableOccurrenceReference id="2" name="Ingredients"/><ObjectList>
+                  <LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000079</UUID><Bounds top="340" left="20" bottom="355" right="120"/>
+                    <Conditions><Hide><Calculation><Text><![CDATA[Ingredients::Quantity > Price]]></Text></Calculation></Hide>
+                    <Formatting>` + fmCondition(0, `Self = "Row"`, "-", "") + `</Formatting></Conditions>
+                    <Text><StyledText><Data><![CDATA[Row]]></Data></StyledText></Text>
+                  </LayoutObject>
+                </ObjectList></Portal>
+              </LayoutObject>`
+	design := strings.Replace(layoutObjectsFixture, `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+              </LayoutObject>`, objects, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	formulasOf := map[string][]string{}
+	hideOf := map[string]interface{}{}
+	for _, raw := range def["objects"].([]interface{}) {
+		o := raw.(map[string]interface{})
+		key := fmt.Sprint(o["type"], ":", o["text"])
+		hideOf[key] = o["hide_when"]
+		rules, _ := o["style"].(map[string]interface{})["conditional_rules"].([]interface{})
+		for _, r := range rules {
+			rule := r.(map[string]interface{})
+			if rule["text_color"] != "#FF0000" || rule["fill_color"] != "#0000FF" || rule["bold"] != true {
+				t.Fatalf("%s: rule %v", key, rule)
+			}
+			formulasOf[key] = append(formulasOf[key], rule["value"].(string))
+		}
+	}
+	want := map[string][]string{
+		"label:Open":          {`Self = "Open"`, "price > 1"},
+		"button:Go":           {`Self = "Go"`},
+		"button:":             {"price = 2"}, // the calculated label's
+		"button:Seg":          {`Self = "Seg"`},
+		"popover_button:More": {`Self = "More"`},
+		"popover_button:Pop":  {`Self = "Pop"`}, // a button bar's segment
+		"label:Row":           {`Self = "Row"`},
+	}
+	if len(formulasOf) != len(want) {
+		t.Fatalf("objects with formats: %v", formulasOf)
+	}
+	for key, w := range want {
+		if g := formulasOf[key]; !slices.Equal(g, w) {
+			t.Errorf("%s:\n got %q\nwant %q", key, g, w)
+		}
+	}
+	// The row evaluates its hide condition from the portal's occurrence:
+	// the layout's field is written qualified.
+	if h := hideOf["label:Row"]; h != "Ingredients::quantity > Recipes::price" {
+		t.Errorf("hide condition in a portal row: %v", h)
+	}
+	// A hide condition reads the text's Self as its formats do: not kept
+	// where Browse mode does not know it.
+	if h := hideOf["label:Open"]; h != `Self = "Shut"` {
+		t.Errorf("hide condition of a text: %v", h)
+	}
+	for _, key := range []string{"button:", "label:Price {{price}}"} {
+		if h, seen := hideOf[key]; !seen || h != nil {
+			t.Errorf("hide condition reading an unknown Self (%s): %v, %v", key, seen, h)
+		}
+	}
+	var review string
+	for _, it := range got.Report.ManualActionRequired {
+		if it.Domain == "layout" {
+			review += it.Detail
+		}
+	}
+	for _, w := range []string{"3 conditional formats not kept (a condition that could not be bound, or on an object other than a field, a text or a button)",
+		`2 objects with a "Hide object when" calculation that could not be bound`} {
+		if !strings.Contains(review, w) {
+			t.Errorf("review %q lacks %q", review, w)
 		}
 	}
 }

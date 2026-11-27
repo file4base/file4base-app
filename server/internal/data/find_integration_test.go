@@ -22,7 +22,7 @@ func TestExecuteFind_MultipleRequests(t *testing.T) {
 		DSN:        testdb.DevDSN(),
 	})
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 		return
 	}
 	defer driver.Close()
@@ -31,7 +31,7 @@ func TestExecuteFind_MultipleRequests(t *testing.T) {
 	defer cancel()
 
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 		return
 	}
 

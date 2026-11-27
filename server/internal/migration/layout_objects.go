@@ -425,6 +425,7 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 	if ok {
 		base["id"] = l.objectID(obj)
 		l.conditionalFormats(obj, base)
+		l.textHideSelf(obj, base)
 		l.objects = append(l.objects, base)
 		l.ctx.count(kind).Migrated++
 	}
@@ -443,14 +444,15 @@ var fmConditionOperands = map[string]int{
 	"11": 1, "12": 1, "13": 0, "14": 0, "15": 0, "16": 0, "17": 1, "18": 1, "19": 1, "20": 1,
 }
 
-// conditionalFormats keeps a field's conditional formatting, bound from the
+// conditionalFormats keeps an object's conditional formatting, bound from the
 // layout's occurrence, with the text colour, fill, bold, italic and
 // underline it gives. FileMaker writes every condition as the calculation it
 // evaluates, a "Value is" condition too (greater than 0 as Self>0, a date
 // as Date(3;15;1990)): each is kept as that calculation, Self included,
-// which Browse mode answers as the object's value, so it compares as the
-// field's type does. Formats that cannot be bound, and formats of other
-// objects, are reported.
+// which Browse mode answers as the object's value (a field's, so it
+// compares as the field's type does, or the text a text or a button
+// shows). Formats that cannot be bound, and formats of other objects, are
+// reported.
 func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface{}) {
 	f := childPath(obj, "Conditions", "Formatting")
 	if f == nil {
@@ -472,12 +474,12 @@ func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface
 		}
 		operands, known := fmConditionOperands[firstAttr(c, "type")]
 		formula := calculationText(c)
-		if out["type"] != "field" || style == nil || !known || formula == "" {
+		if !formattedKinds[out["type"]] || style == nil || !known || formula == "" {
 			l.formatsLeft++
 			continue
 		}
 		bound, ok := l.bindCondition(formula)
-		if !ok || !l.selfReadable(obj, formula) {
+		if !ok || !l.selfReadable(obj, out, formula) {
 			l.formatsLeft++
 			continue
 		}
@@ -509,13 +511,30 @@ func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface
 	}
 }
 
-// selfReadable reports whether the Self of a condition of the field object
-// obj reads a field the import has. The condition keeps its Self, which
-// Browse mode answers as the value the object shows (in each repetition and
-// each portal row it shows); it is bound once more with Self written as the
-// object's field, Occurrence::Field as FileMaker names them, to tell.
-func (l *nativeLayout) selfReadable(obj *xmlNode, formula string) bool {
+// formattedKinds are the objects whose conditional formatting is kept:
+// fields, texts and buttons (a popover's and a button bar's segments too),
+// the objects FileMaker's dialog formats. A grouped button's formats, which
+// FileMaker applies to the objects it groups, are not kept.
+var formattedKinds = map[interface{}]bool{"field": true, "label": true, "button": true, "popover_button": true}
+
+// selfReadable reports whether the Self of a condition of the object obj,
+// converted as out, can be answered. In a text's and a button's conditions
+// Self is the text they show, which Browse mode sends: one that merges
+// fields shows another text on each record, and one FileMaker computes
+// (a button's calculated label) is not known, so a condition reading those
+// is not kept. In a field's, Self is the value the object shows (in each
+// repetition and each portal row it shows), and the condition is kept when
+// that field is one the import has: it is bound once more with Self written
+// as the object's field, Occurrence::Field as FileMaker names them, to tell.
+func (l *nativeLayout) selfReadable(obj *xmlNode, out map[string]interface{}, formula string) bool {
 	opts, _ := l.ctx.binding.options(l.table)
+	if out["type"] != "field" {
+		if textSelfKnown(obj, out) {
+			return true
+		}
+		replaced, err := calc.ReplaceSelf(formula, opts, "")
+		return err == nil && replaced == formula
+	}
 	ref := childPath(obj, "Field", "FieldReference")
 	name, occName := "", l.occName
 	if ref != nil {
@@ -538,11 +557,53 @@ func (l *nativeLayout) selfReadable(obj *xmlNode, formula string) bool {
 	return ok
 }
 
-// bindCondition binds a conditional format's calculation from the layout's
-// occurrence, as FileMaker reads it. Browse mode evaluates a portal row's
-// from the portal's occurrence, against the row's record, as it does the
-// portal filter: the layout's own fields are then written qualified, for
-// them to read the layout's record still.
+// textSelfKnown reports whether Browse mode knows the Self of the text or
+// button obj, converted as out: the text it shows, unless it merges a
+// field or FileMaker computes it (see selfReadable).
+func textSelfKnown(obj *xmlNode, out map[string]interface{}) bool {
+	text, _ := out["text"].(string)
+	return !strings.Contains(text, "{{") && !fmMergeField.MatchString(text) && !calculatedLabel(obj)
+}
+
+// textHideSelf drops the hide condition of a text or a button that reads a
+// Self Browse mode does not know (see textSelfKnown), which it would
+// answer with another text: it is reported as a hide condition that could
+// not be bound, as FileMaker's would show the object otherwise.
+func (l *nativeLayout) textHideSelf(obj *xmlNode, out map[string]interface{}) {
+	hide, _ := out["hide_when"].(string)
+	if hide == "" || !formattedKinds[out["type"]] || out["type"] == "field" || textSelfKnown(obj, out) {
+		return
+	}
+	// The bound formula reads the imported names.
+	if replaced, err := calc.ReplaceSelf(hide, calc.Options{Library: l.ctx.binding.stored}, ""); err == nil && replaced == hide {
+		return
+	}
+	delete(out, "hide_when")
+	delete(out, "hide_in_find")
+	l.hideUnbound++
+}
+
+// calculatedLabel reports whether the button obj (a popover button, a
+// segment of a button bar) shows a label FileMaker computes, which the
+// migration keeps only when it is a constant.
+func calculatedLabel(obj *xmlNode) bool {
+	for _, holder := range []string{"Button", "PopoverButton"} {
+		lb := childPath(obj, holder, "Label")
+		if lb == nil || findFirstChild(lb, "Text") != nil || findFirstChild(lb, "Calculation") == nil {
+			continue
+		}
+		if _, ok := calcLiteral(calculationText(lb)); !ok {
+			return true
+		}
+	}
+	return false
+}
+
+// bindCondition binds a conditional format's or a hide condition's
+// calculation from the layout's occurrence, as FileMaker reads it. Browse
+// mode evaluates a portal row's from the portal's occurrence, against the
+// row's record, as it does the portal filter: the layout's own fields are
+// then written qualified, for them to read the layout's record still.
 func (l *nativeLayout) bindCondition(formula string) (string, bool) {
 	bound, ok := l.bindFormula(formula)
 	if !ok || !l.inPortal {
@@ -749,7 +810,7 @@ func (l *nativeLayout) baseObject(obj *xmlNode) map[string]interface{} {
 		if hide := findFirstChild(cond, "Hide"); hide != nil {
 			formula := calculationText(hide)
 			if formula != "" {
-				if bound, ok := l.bindFormula(formula); ok {
+				if bound, ok := l.bindCondition(formula); ok {
 					out["hide_when"] = bound
 					if parseBoolAttr(hide, "findMode") {
 						out["hide_in_find"] = true
@@ -1275,7 +1336,7 @@ func (l *nativeLayout) report() []ReportItem {
 		review = append(review, plural(l.portalSort, "portal sort field")+" of another occurrence, left out of the portal's sort")
 	}
 	if l.formatsLeft > 0 {
-		review = append(review, plural(l.formatsLeft, "conditional format")+" not kept (a condition that could not be bound, or on an object other than a field)")
+		review = append(review, plural(l.formatsLeft, "conditional format")+" not kept (a condition that could not be bound, or on an object other than a field, a text or a button)")
 	}
 	if l.formatsOff > 0 {
 		review = append(review, plural(l.formatsOff, "conditional format")+" switched off in FileMaker, left out")
@@ -1652,6 +1713,8 @@ func (l *nativeLayout) popover(obj *xmlNode) {
 	base["default_panel"] = -1
 	id := l.objectID(obj)
 	base["id"] = id
+	l.conditionalFormats(obj, base)
+	l.textHideSelf(obj, base)
 	l.objects = append(l.objects, base)
 	l.ctx.count("Popover Button").Migrated++
 	if l.popovers == nil {
@@ -1714,6 +1777,8 @@ func (l *nativeLayout) groupedButton(obj *xmlNode) {
 		base["action"] = action
 	}
 	base["id"] = l.objectID(obj)
+	// Its formats are reported, not kept (see formattedKinds).
+	l.conditionalFormats(obj, map[string]interface{}{"type": "grouped_button"})
 	l.objects = append(l.objects, base)
 	l.ctx.count("Grouped Button").Migrated++
 }
@@ -1728,12 +1793,18 @@ func (l *nativeLayout) buttonBar(obj *xmlNode) {
 		if seg.Name != "LayoutObject" {
 			continue
 		}
+		if firstAttr(seg, "type") == "Popover Button" {
+			l.popover(seg) // a segment opening a popover
+			continue
+		}
 		base := l.baseObject(seg)
 		if base == nil {
 			continue
 		}
 		if l.button(seg, findFirstChild(seg, "Button"), base) {
 			base["id"] = l.objectID(seg)
+			l.conditionalFormats(seg, base)
+			l.textHideSelf(seg, base)
 			l.objects = append(l.objects, base)
 			l.ctx.count("Button").Migrated++
 		}

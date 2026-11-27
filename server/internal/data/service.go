@@ -292,10 +292,30 @@ func (s *Service) insertRow(ctx context.Context, tableName string, record map[st
 	if err != nil {
 		return nil, err
 	}
+	// The record's ID is taken first, so that a create that fails from here
+	// on has spent it, as in FileMaker, and the formulas computed for the
+	// record know it (Get ( RecordID )).
+	recordIDs, err := ReserveRecordIDs(ctx, s.driver, tableName, 1)
+	if err != nil {
+		return nil, err
+	}
 	if err := normalizeRepetitionKeys(fields, tableName, record); err != nil {
 		return nil, err
 	}
 	normalizeTemporalValues(fields, record)
+	id, given := record["id"], true
+	if id == nil || id == "" {
+		id, given = uuid.NewString(), false
+	}
+	db := s.driver.DB()
+	ctx, scope := withIdentityScope(ctx)
+	if len(recordIDs) == 1 {
+		scope.put(db, tableName, fmt.Sprint(id), Identity{RecordID: recordIDs[0]})
+		if !given {
+			// What the auto-enter options compute sees no id yet.
+			scope.put(db, tableName, "", Identity{RecordID: recordIDs[0]})
+		}
+	}
 
 	// The auto-enter options (Fields dialog) enter what the caller did not
 	// give: a value given wins.
@@ -305,10 +325,10 @@ func (s *Service) insertRow(ctx context.Context, tableName string, record map[st
 	if err := decodeContainerValues(fields, tableName, record); err != nil {
 		return nil, err
 	}
-
-	// Ensure id exists
-	if _, ok := record["id"]; !ok || record["id"] == nil || record["id"] == "" {
-		record["id"] = uuid.NewString()
+	if v := record["id"]; v == nil || v == "" {
+		record["id"] = id
+	} else if len(recordIDs) == 1 && fmt.Sprint(v) != fmt.Sprint(id) {
+		scope.put(db, tableName, fmt.Sprint(v), Identity{RecordID: recordIDs[0]}) // an id an option entered
 	}
 
 	// Calculation fields are filled from their formulas (#30). They are
@@ -348,18 +368,28 @@ func (s *Service) insertRow(ctx context.Context, tableName string, record map[st
 		values = append(values, val)
 		idx++
 	}
+	overriding := ""
+	if len(recordIDs) == 1 {
+		columns = append(columns, dialect.QuoteIdentifier(dbal.CreationOrderColumn))
+		placeholders = append(placeholders, dialect.Placeholder(idx))
+		values = append(values, recordIDs[0])
+		overriding = dbal.OverridingSystemValue(dialect.Engine())
+	}
 
 	sqlQuery := fmt.Sprintf(
-		"INSERT INTO %s (%s) VALUES (%s)",
+		"INSERT INTO %s (%s)%s VALUES (%s)",
 		dialect.QuoteIdentifier(tableName),
 		strings.Join(columns, ", "),
+		overriding,
 		strings.Join(placeholders, ", "),
 	)
 
-	db := s.driver.DB()
 	if _, err := db.ExecContext(ctx, sqlQuery, values...); err != nil {
 		if f, ok := validation.IsUniqueIndexViolation(err, tableName, checker.Fields); ok {
 			return nil, validation.UniqueViolation(tableName, f)
+		}
+		if dbal.IsRecordIDConflict(err) {
+			recoverRecordIDs(ctx, s.driver, tableName) // the next create gets a free ID
 		}
 		return nil, fmt.Errorf("failed inserting into %s: %w", tableName, err)
 	}
@@ -406,6 +436,19 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 }
 
 func (s *Service) updateRow(ctx context.Context, tableName string, id string, updates map[string]interface{}, mode autoMode) (map[string]interface{}, error) {
+	return s.updateRowIf(ctx, tableName, id, updates, mode, nil)
+}
+
+// beforeUpdate is for tests only: nil outside them, and when a test sets it
+// (SetBeforeUpdate) it runs just before updateRowIf writes, as another write
+// would.
+var beforeUpdate func()
+
+// updateRowIf updates a record, provided it has the modification count
+// modID when modID is not nil (see UpdateRowIfModID).
+func (s *Service) updateRowIf(
+	ctx context.Context, tableName string, id string, updates map[string]interface{}, mode autoMode, modID *int64,
+) (map[string]interface{}, error) {
 	fields, err := s.tableFields(ctx, tableName)
 	if err != nil {
 		return nil, err
@@ -426,14 +469,27 @@ func (s *Service) updateRow(ctx context.Context, tableName string, id string, up
 	if err := s.dropSummaryValues(ctx, tableName, updates); err != nil {
 		return nil, err
 	}
+	if modID != nil {
+		if err := s.checkModID(ctx, tableName, id, *modID); err != nil {
+			return nil, err
+		}
+	}
 	if len(updates) == 0 {
 		return s.GetRow(ctx, tableName, id)
+	}
+	// Whether the write modifies the record, which counts it (see
+	// record_identity.go), is decided on what the caller gives, and then on
+	// what the options enter as a consequence.
+	countsModification, err := s.countsModification(ctx, tableName, fields, updates)
+	if err != nil {
+		return nil, err
 	}
 	// Modification stamps, and the calculated and looked-up values the
 	// change reaches (see autoenter.go).
 	if err := s.applyAutoEnter(ctx, tableName, fields, mode, updates, id); err != nil {
 		return nil, err
 	}
+	countsModification.alsoModifiedBy(fields, updates)
 	if err := decodeContainerValues(fields, tableName, updates); err != nil {
 		return nil, err
 	}
@@ -473,17 +529,28 @@ func (s *Service) updateRow(ctx context.Context, tableName string, id string, up
 		values = append(values, val)
 		idx++
 	}
+	if count := countsModification.countSQL(dialect); count != "" {
+		setClauses = append(setClauses, count)
+	}
+	modCount := dialect.QuoteIdentifier(dbal.ModCountColumn)
 	values = append(values, id)
+	where := fmt.Sprintf("%s = %s", dialect.QuoteIdentifier("id"), dialect.Placeholder(idx))
+	if modID != nil && countsModification.counted {
+		values = append(values, *modID)
+		where += fmt.Sprintf(" AND %s = %s", modCount, dialect.Placeholder(idx+1))
+	}
 
 	sqlQuery := fmt.Sprintf(
-		"UPDATE %s SET %s WHERE %s = %s",
+		"UPDATE %s SET %s WHERE %s",
 		dialect.QuoteIdentifier(tableName),
 		strings.Join(setClauses, ", "),
-		dialect.QuoteIdentifier("id"),
-		dialect.Placeholder(idx),
+		where,
 	)
 
 	db := s.driver.DB()
+	if beforeUpdate != nil {
+		beforeUpdate()
+	}
 	res, err := db.ExecContext(ctx, sqlQuery, values...)
 	if err != nil {
 		if f, ok := validation.IsUniqueIndexViolation(err, tableName, checker.Fields); ok {
@@ -494,7 +561,19 @@ func (s *Service) updateRow(ctx context.Context, tableName string, id string, up
 
 	affected, _ := res.RowsAffected()
 	if affected == 0 {
+		if modID != nil {
+			// Modified since it was checked, or deleted.
+			if err := s.checkModID(ctx, tableName, id, *modID); err != nil {
+				return nil, err
+			}
+			return nil, ErrModIDMismatch
+		}
 		return nil, fmt.Errorf("record not found to update with id: %s", id)
+	}
+	// What a formula of the write read of the record's identity is the
+	// count before it: the record returned is read again.
+	if scope := identityScopeOf(ctx); scope != nil {
+		scope.drop(db, tableName, id)
 	}
 
 	// A field given a value now holds exactly what it says: whatever text a

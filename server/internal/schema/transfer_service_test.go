@@ -34,7 +34,7 @@ func transferTestService(t *testing.T) (*schema.Service, context.Context) {
 	t.Helper()
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 		return nil, nil
 	}
 	t.Cleanup(func() { _ = driver.Close() })
@@ -42,7 +42,7 @@ func transferTestService(t *testing.T) (*schema.Service, context.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 		return nil, nil
 	}
 

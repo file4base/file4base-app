@@ -256,10 +256,10 @@ type EvaluateExpressionBody struct {
 	// yet, by name: the expressions read them in place of what is stored.
 	Values map[string]any `json:"values,omitempty"`
 
-	// Self is, for the expression at the same index, the field Self reads:
-	// the field a layout object shows, whose conditions FileMaker evaluates
-	// with Self as the object's value. A null entry, or none, leaves Self
-	// unknown.
+	// Self is, for the expression at the same index, what Self reads: the
+	// field a layout object shows, or the text a text or a button shows,
+	// whose conditions FileMaker evaluates with Self as the object's value.
+	// A null entry, or none, leaves Self unknown.
 	Self []*data.SelfField `json:"self,omitempty"`
 }
 

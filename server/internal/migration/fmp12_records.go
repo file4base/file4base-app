@@ -13,6 +13,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dataio"
+	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/repetition"
 	"github.com/file4base/file4base-app/server/internal/schema"
 )
@@ -78,8 +79,24 @@ func populateDataRows(
 			}
 			rows := make([]map[string]interface{}, 0, len(parsed.Rows))
 			rejectedCells := 0
+			unnumbered := 0
+			seen := map[int64]bool{}
 			for rowIdx, rawRow := range parsed.Rows {
 				rec := make(map[string]interface{})
+				// The record keeps the record ID and modification count
+				// FileMaker gave it (RECORDID, MODID); one the file does
+				// not give, or gives another record too, is given a new ID,
+				// after the others (#208).
+				recordID, hasID := xmlRecordNumber(parsed.RecordIDs, rowIdx)
+				if !hasID || recordID == 0 || seen[recordID] {
+					recordID, hasID = 0, false
+					unnumbered++
+				}
+				seen[recordID] = true
+				modID, hasModID := xmlRecordNumber(parsed.ModIDs, rowIdx)
+				if hasID || hasModID {
+					schema.SetRecordIdentity(rec, recordID, modID)
+				}
 				for colIdx, colHeader := range parsed.Columns {
 					if colIdx >= len(rawRow) {
 						continue
@@ -171,6 +188,7 @@ func populateDataRows(
 				TargetName: sqlTable,
 				Detail:     detail,
 			})
+			reportUnnumberedRecords(report, rawTableKey, sqlTable, unnumbered)
 			reportSourceTexts(report, rawTableKey, sqlTable, rows, locale)
 		}
 	}
@@ -217,6 +235,7 @@ func populateDataRows(
 		}
 		cStats := &containerStats{ReconstructedByTbl: map[string]int{}}
 		nulStripped := 0
+		unnumbered := map[string]int{}
 		extracted, containersCount, err := extractFMP12Records(rawBytes, fmpTableMeta, fmpFieldMeta, colTypeByTableCol,
 			nativeReadOptions{
 				dateOrder:        req.NativeDateOrder,
@@ -227,6 +246,7 @@ func populateDataRows(
 				nativeFileName:   req.NativeFileName,
 				externalResolver: extResolver,
 				containers:       cStats,
+				recordIDs:        unnumbered,
 			})
 		if err == nil && nulStripped > 0 {
 			addReportItem(report, ReportItem{
@@ -314,6 +334,9 @@ func populateDataRows(
 					Detail:     detail,
 				})
 				reportSourceTexts(report, tbl+" (.fmp12)", tbl, rows, locale)
+				// Counted on the rows, as a page tree read the older way
+				// (HBAM2) gives none its record ID.
+				reportUnnumberedRecords(report, tbl+" (.fmp12)", tbl, unnumberedRows(rows))
 			}
 		}
 	}
@@ -322,6 +345,46 @@ func populateDataRows(
 	precomputeExtractedCalculations(tableRows, fmpTableMeta, fmpFieldMeta, colTypeByTableCol)
 
 	return nil
+}
+
+// xmlRecordNumber reads the RECORDID or MODID of an FMPXMLRESULT row.
+func xmlRecordNumber(values []string, row int) (int64, bool) {
+	if row >= len(values) {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(values[row], 10, 64)
+	if err != nil || n < 0 || n > dbal.MaxRecordIdentity {
+		return 0, false
+	}
+	return n, true
+}
+
+// unnumberedRows counts the rows that carry no record ID of their own.
+func unnumberedRows(rows []map[string]interface{}) int {
+	n := 0
+	for _, row := range rows {
+		identity, _ := row[schema.RecordIdentityKey].(map[string]interface{})
+		if _, ok := identity["record_id"]; !ok {
+			n++
+		}
+	}
+	return n
+}
+
+// reportUnnumberedRecords says that records of a table could not keep the
+// record ID FileMaker gave them, and were given new ones.
+func reportUnnumberedRecords(report *ConversionReport, source, table string, n int) {
+	if n == 0 {
+		return
+	}
+	addReportItem(report, ReportItem{
+		Category:   CategoryTranslated,
+		Domain:     "data",
+		SourceName: source,
+		TargetName: table,
+		Detail: fmt.Sprintf("%d record(s) did not say a record ID FileMaker gave them alone; they were given new ones, "+
+			"after the records that did, so their Get ( RecordID ) and Data API recordId differ from FileMaker's", n),
+	})
 }
 
 // extractFMP12Records walks the HBAM2 leaf B-tree pages of a FileMaker 12+

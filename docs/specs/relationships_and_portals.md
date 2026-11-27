@@ -288,6 +288,57 @@ ordered by id, as before, and an export lists them by id too. A server finds
 out a table has the column again at most 30 seconds after it was found
 without it, so one that did not run the upgrade itself picks the column up.
 
+### Record ID and modification count
+
+That number is also the record's **record ID**, FileMaker's `Get ( RecordID )`
+and the Data API's `recordId` (#208): unique in its table, ascending and never
+given twice, not even after the record holding it is deleted. The server
+takes it from the table's allocator before writing any new record (on
+PostgreSQL the column's identity sequence, on MariaDB a row of
+`sys_record_ids`), whatever creates it: data entry, a script, a portal row, a
+duplicate, an import, a related record, a restore. A create that fails, being
+refused by validation for instance, spends its ID, as in FileMaker.
+
+The **modification count** (`Get ( RecordModificationCount )`, the Data API's
+`modId`) is a column of its own, `f4b$mod_count`, not a field either. A record
+is created with 0, and every write that sets a field stored with the record
+raises it by one, in the same statement, even when it sets the value the
+field holds: FileMaker Server counts an edit sending the same value again
+(recorded on 26.0.2). A write that sets no such field counts none: an empty
+one, a recalculation, one of global fields or of calculations only, and a
+write to a related record, which counts on that record. A value an
+auto-enter option enters as a consequence counts as the write's. This rule
+is not the modification stamps', which a value sent back as it is leaves
+alone. The data service can write a record on condition that its
+modification count is still the one a client read; otherwise it changes
+nothing and says so (the Data API's error 306). A table not given both its
+record IDs and its count yet refuses such a write rather than take the
+condition as met; it is written and counted otherwise as any.
+
+A migration keeps both. A record of a `.fmp12` file keeps the record ID the
+file gives it and counts no modification, as FileMaker Server answers for a
+record it hosts after a migration; a Save as XML (`FMPXMLRESULT`) export keeps
+its `RECORDID` and `MODID`. A record whose ID the file does not give, or gives
+to another record too, is given a new one after the table's others, and the
+migration report says how many were. Tables migrated before this release keep
+the numbering they were given then.
+
+A solution export (`.f4data`) carries each record's identity, and restoring it
+keeps both unless the table has given that record ID already, in which case
+the record is given a new one and the import's `record_ids_renumbered` counts
+it: a backup restored into the database it was taken from, its records still
+there, keeps none of their IDs. The stored calculations that read the record
+ID are computed again for the records given a new one. A restore that fails
+gives back the record IDs it took unless another write has been given one
+since, so restoring the file again keeps them. A file carries no
+table's allocator: restored into a new database, the IDs of records deleted
+before the export can be given again there.
+
+A table created before the modification count existed is given its column
+with the creation order's, at sign-in or on restore, counting no modification
+for its records (`server/migrations/010` does the same by hand). Adding it
+does not rewrite the table.
+
 ## Sorting by an unstored calculation
 
 A portal, or any read of one record's related records, may be sorted by an

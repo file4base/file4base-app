@@ -186,6 +186,10 @@ func TestEvaluateExpressions_SelfIsTheObjectsField(t *testing.T) {
 		// Self is the field's value: a Let variable of the field's name does
 		// not change it.
 		{"Let(score = 0; Self > 5)", &data.SelfField{Field: "score"}, "1"},
+		// A text's or a button's Self is the text it shows.
+		{`Self = "open" and Length(Self) = 4`, &data.SelfField{Text: strPtr("Open")}, "1"},
+		{"IsEmpty(Self)", &data.SelfField{Text: strPtr("")}, "1"},
+		{`Self = "Open"`, &data.SelfField{Field: "code", Text: strPtr("Open")}, "1"}, // the text, not the field
 	}
 	expressions := make([]string, 0, len(cases)+1)
 	self := make([]*data.SelfField, 0, len(cases))

@@ -1267,25 +1267,35 @@ class FormulaCheckModel {
   final List<String> unknownFields;
 }
 
-/// What one watched expression came to (#50): a value, or the reason it has
-/// none.
-/// The field Self reads in a condition of a layout object: the field the
-/// object shows, of the record evaluated ([occurrence] null) or of a
-/// related occurrence, by name, in the repetition the object shows.
+/// What Self reads in a condition of a layout object: the field the object
+/// shows, of the record evaluated ([occurrence] null) or of a related
+/// occurrence, by name, in the repetition the object shows; or, for a text
+/// or a button, the [text] it shows, which is its Self in FileMaker.
 class ConditionSelf {
-  const ConditionSelf(this.field, {this.occurrence, this.repetition = 1});
+  const ConditionSelf(this.field, {this.occurrence, this.repetition = 1}) : text = null;
+
+  /// The Self of a text or a button: the text it shows.
+  const ConditionSelf.text(String this.text)
+      : field = '',
+        occurrence = null,
+        repetition = 1;
 
   final String field;
   final String? occurrence;
   final int repetition;
+  final String? text;
 
-  Map<String, dynamic> toJson() => {
-        'field': field,
-        if (occurrence != null && occurrence!.isNotEmpty) 'occurrence': occurrence,
-        if (repetition > 1) 'repetition': repetition,
-      };
+  Map<String, dynamic> toJson() => text != null
+      ? {'text': text}
+      : {
+          'field': field,
+          if (occurrence != null && occurrence!.isNotEmpty) 'occurrence': occurrence,
+          if (repetition > 1) 'repetition': repetition,
+        };
 }
 
+/// What one watched expression came to (#50): a value, or the reason it has
+/// none.
 class EvaluationModel {
 
   const EvaluationModel({

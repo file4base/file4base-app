@@ -32,29 +32,32 @@ import (
 // no field has that name.
 const createdKey = "f4b$created"
 
-// knownCreationOrder keeps, by connection pool and table, what was found of
-// the table's creation order column: true once the table has it, which it
-// keeps, or the time it was found without it. That is only believed for
-// missingCreationOrderTTL, as the column may be added at any
-// time: by this server's next catalog upgrade, which forgets what it knew
-// (ForgetCreationOrder), or by another server sharing the database.
-var knownCreationOrder sync.Map
+// knownColumns keeps, by connection pool, table and column, what was found
+// of a table's creation order and modification count columns: true once the
+// table has the column, which it keeps, or the time it was found without it.
+// That is only believed for missingCreationOrderTTL, as the column may be
+// added at any time: by this server's next catalog upgrade, which forgets
+// what it knew (ForgetCreationOrder), or by another server sharing the
+// database.
+var knownColumns sync.Map
 
-// missingCreationOrderTTL is how long a table found without its creation
-// order column is taken not to have it before it is looked up again.
+// missingCreationOrderTTL is how long a table found without one of these
+// columns is taken not to have it before it is looked up again.
 var missingCreationOrderTTL = 30 * time.Second
 
-type creationOrderKey struct {
-	db    *sql.DB
-	table string
+type knownColumnKey struct {
+	db     *sql.DB
+	table  string
+	column string
 }
 
-// ForgetCreationOrder drops what is known of the creation order columns of a
-// database's tables, so that tables just given one are ordered by it.
+// ForgetCreationOrder drops what is known of the creation order and
+// modification count columns of a database's tables, so that tables just
+// given one use it.
 func ForgetCreationOrder(db *sql.DB) {
-	knownCreationOrder.Range(func(key, _ any) bool {
-		if k, ok := key.(creationOrderKey); ok && k.db == db {
-			knownCreationOrder.Delete(key)
+	knownColumns.Range(func(key, _ any) bool {
+		if k, ok := key.(knownColumnKey); ok && k.db == db {
+			knownColumns.Delete(key)
 		}
 		return true
 	})
@@ -62,8 +65,17 @@ func ForgetCreationOrder(db *sql.DB) {
 
 // HasCreationOrder reports whether a table has its creation order column.
 func HasCreationOrder(ctx context.Context, driver dbal.DatabaseDriver, tableName string) (bool, error) {
-	key := creationOrderKey{driver.DB(), tableName}
-	if known, ok := knownCreationOrder.Load(key); ok {
+	return hasColumn(ctx, driver, tableName, dbal.CreationOrderColumn)
+}
+
+// HasModCount reports whether a table has its modification count column.
+func HasModCount(ctx context.Context, driver dbal.DatabaseDriver, tableName string) (bool, error) {
+	return hasColumn(ctx, driver, tableName, dbal.ModCountColumn)
+}
+
+func hasColumn(ctx context.Context, driver dbal.DatabaseDriver, tableName, column string) (bool, error) {
+	key := knownColumnKey{driver.DB(), tableName, column}
+	if known, ok := knownColumns.Load(key); ok {
 		if found, missing := known.(time.Time); !missing || time.Since(found) < missingCreationOrderTTL {
 			return !missing, nil
 		}
@@ -76,15 +88,15 @@ func HasCreationOrder(ctx context.Context, driver dbal.DatabaseDriver, tableName
 	var one int
 	err := driver.DB().QueryRowContext(ctx, `SELECT 1 FROM information_schema.columns WHERE table_schema = `+schema+
 		` AND table_name = `+dialect.Placeholder(1)+` AND column_name = `+dialect.Placeholder(2),
-		tableName, dbal.CreationOrderColumn).Scan(&one)
+		tableName, column).Scan(&one)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
 	if err == nil {
-		knownCreationOrder.Store(key, true)
+		knownColumns.Store(key, true)
 		return true, nil
 	}
-	knownCreationOrder.Store(key, time.Now())
+	knownColumns.Store(key, time.Now())
 	return false, nil
 }
 

@@ -1,4 +1,4 @@
--- File4Base System Catalog Migration 010 (PostgreSQL & MariaDB)
+-- File4Base System Catalog Migration 011 (PostgreSQL & MariaDB)
 --
 -- The FileMaker ids of migrated fields deleted since the migration (#191).
 -- A FileMaker Import Records step reads its source fields by position, the

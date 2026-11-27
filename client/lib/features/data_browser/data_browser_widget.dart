@@ -592,12 +592,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// condition is hidden, so nothing hidden is ever shown or typed into.
   ///
   /// The answer also holds `<object id>#<index>@<repetition>` for each
-  /// conditional format of a field whose calculation is true on [record] in
-  /// that repetition (see [_conditions]); until it is known, none applies.
+  /// conditional format whose calculation is true on [record] in that
+  /// repetition (see [_conditions]); until it is known, none applies. The
+  /// objects of a portal's rows are hidden per row, by the portal.
   Set<String> _hiddenOn(LayoutDefinitionModel layout, Map<String, dynamic> record) {
-    final conditional = [for (final o in layout.objects) if ((o.hideWhen ?? '').trim().isNotEmpty) o.id];
+    final conditions = _conditions(layout);
     final recordId = record['id']?.toString() ?? '';
-    if ((conditional.isEmpty && _conditions(layout).isEmpty) ||
+    if (conditions.isEmpty ||
         recordId.isEmpty ||
         record[_draftKey] == true) {
       return const {};
@@ -611,7 +612,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       if (_hiddenQueue.isEmpty) scheduleMicrotask(() => unawaited(_evaluateHidden()));
       _hiddenQueue[key] = (layout: layout, recordId: recordId, base: base);
     }
-    return _lastHiddenObjects[base] ?? conditional.toSet();
+    return _lastHiddenObjects[base] ?? _conditionallyHidden;
   }
 
   /// [objects] of [layout] less those hidden on [record].
@@ -626,27 +627,33 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   }
 
   /// The calculations [layout] evaluates against each record, by the key
-  /// its answer is kept under, with the field their Self reads: each
-  /// object's hide condition, by the object's id, and each formula of a
-  /// field's conditional formats in each repetition the field shows, by
-  /// `<object id>#<index of the rule>@<repetition>`. In a field object's
-  /// conditions Self is the value the object shows, as in FileMaker. The
-  /// formats of a portal's row objects are its rows', evaluated there
-  /// against each related record.
+  /// its answer is kept under, with what their Self reads: each object's
+  /// hide condition, by the object's id, and each formula of the
+  /// conditional formats of a field, a text or a button, in each
+  /// repetition a field shows, by
+  /// `<object id>#<index of the rule>@<repetition>`. Self is the value a
+  /// field object shows, and the text a text or a button shows, as in
+  /// FileMaker. The conditions of a portal's row objects are its rows',
+  /// evaluated there against each related record.
   List<(String, String, ConditionSelf?)> _conditions(LayoutDefinitionModel layout) {
     if (!identical(layout, _conditionsLayout) || !identical(widget.table, _conditionsTable)) {
       final inPortals = _portalContents(layout).$2;
       _conditionsLayout = layout;
       _conditionsTable = widget.table;
       _conditionsOf = [
-        for (final o in layout.objects) ...[
-          if ((o.hideWhen ?? '').trim().isNotEmpty) (o.id, o.hideWhen!, _selvesOf(o).first.$2),
-          if (o.type == 'field' && !inPortals.contains(o.id))
-            for (final (i, rule) in o.style.conditionalRules.indexed)
-              if (rule.isFormula && rule.value.trim().isNotEmpty)
-                for (final (n, self) in _selvesOf(o)) ('${o.id}#$i@$n', rule.value, self),
-        ],
+        for (final o in layout.objects)
+          if (!inPortals.contains(o.id)) ...[
+            if ((o.hideWhen ?? '').trim().isNotEmpty) (o.id, o.hideWhen!, _selvesOf(o).first.$2),
+            if (o.type == 'field' || layoutObjectShowsText(o))
+              for (final (i, rule) in o.style.conditionalRules.indexed)
+                if (rule.isFormula && rule.value.trim().isNotEmpty)
+                  for (final (n, self) in _selvesOf(o)) ('${o.id}#$i@$n', rule.value, self),
+          ],
       ];
+      _conditionallyHidden = {
+        for (final o in layout.objects)
+          if ((o.hideWhen ?? '').trim().isNotEmpty && !inPortals.contains(o.id)) o.id,
+      };
     }
     return _conditionsOf;
   }
@@ -662,11 +669,17 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   TableModel? _conditionsTable;
   List<(String, String, ConditionSelf?)> _conditionsOf = const [];
 
+  /// The objects of the layout [_conditions] last answered for that have a
+  /// hide condition, outside the portals' rows.
+  Set<String> _conditionallyHidden = const {};
+
   /// The field [obj] shows in each of the repetitions it shows, by
   /// repetition: what Self reads in its conditions. A related field, or one
   /// several relationships away, shows one value, its first related
-  /// record's; any other object has no Self.
+  /// record's; a text or a button shows its text (see [layoutTextSelf]);
+  /// any other object has no Self.
   List<(int, ConditionSelf?)> _selvesOf(LayoutObjectModel obj) {
+    if (layoutTextSelf(obj) case final text?) return [(1, ConditionSelf.text(text))];
     final binding = obj.type == 'field' ? obj.fieldBinding : null;
     if (binding == null || binding.fieldName.isEmpty) return const [(1, null)];
     if (binding.readsRelated) {
@@ -724,21 +737,24 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             );
             for (final id in chunkIds) {
               for (final (j, result) in (results[id] ?? const <EvaluationModel>[]).indexed) {
-                if (j < chunk.length && result.error.isEmpty && isLayoutConditionTrue(result.text)) {
-                  hidden[id]!.add(chunk[j].$1);
+                if (j >= chunk.length) continue;
+                final key = chunk[j].$1;
+                // A hide condition that cannot be evaluated hides its
+                // object, as in FileMaker; a format's applies nothing.
+                if (result.error.isEmpty ? isLayoutConditionTrue(result.text) : _conditionallyHidden.contains(key)) {
+                  hidden[id]!.add(key);
                 }
               }
             }
           } on Exception catch (_) {
-            // A calculation that cannot be evaluated hides nothing; the
-            // records are asked about again when next drawn.
+            // Unanswered, every object with a hide condition stays hidden.
             failed.addAll(chunkIds);
           }
           if (!mounted) return;
         }
       }
       for (final k in keys) {
-        answers[k] = failed.contains(recordOf[k]) ? const {} : hidden[recordOf[k]]!;
+        answers[k] = failed.contains(recordOf[k]) ? _conditionallyHidden : hidden[recordOf[k]]!;
       }
     }
     if (!mounted) return;
@@ -3423,7 +3439,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           .where((c) => c.name.toLowerCase() == fieldName.toLowerCase())
           .firstOrNull;
       if (col != null && col.storageType == 'CONTAINER') {
-        final bytes = _tryDecodeBase64Image(rec[col.name]?.toString());
+        // The repetition the box starts at, with its conditional formats'
+        // fill behind the picture.
+        final repetition = obj.fieldBinding?.repetitionNumbers(col.maxRepetitions).first ?? 1;
+        final value = rec[ColumnModel.repetitionKey(col.name, repetition)];
+        final bytes = _tryDecodeBase64Image(value?.toString());
+        final look = obj.style.conditionalLook(value, formulaTrue: _formulaTrueOn(obj, rec, repetition: repetition));
         return InkWell(
           onTap: () async {
             if (obj.action != null) {
@@ -3435,7 +3456,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           },
           child: Container(
             decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF21262D) : const Color(0xFFF3F4F6),
+              color: parseLayoutColor(look?.fillColor) ?? (isDark ? const Color(0xFF21262D) : const Color(0xFFF3F4F6)),
               border: Border.all(
                 color: isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB),
               ),
@@ -3550,19 +3571,32 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     }
     if (obj.type == 'button') {
       final btnText = _resolveTextForRecord(obj.text.isEmpty && obj.action == null ? 'Button' : obj.text, rec);
+      // Its conditional formats, Self being its text.
+      final look = obj.style.conditionalLook(btnText, formulaTrue: _formulaTrueOn(obj, rec));
       if (obj.style.fillColor == '#00000000' && obj.style.borderWidth <= 0) {
         // A button without a fill (a grouped button, an icon) is a place
-        // to click over what is drawn under it.
+        // to click over what is drawn under it, which a fill would hide.
         return InkWell(
           onTap: () => _clickRowButton(recordIndex, obj, btnText),
           child: btnText.isEmpty
               ? const SizedBox.expand()
-              : Center(child: Text(btnText, overflow: TextOverflow.ellipsis, style: layoutTextStyle(obj.style))),
+              : Container(
+                  color: parseLayoutColor(look?.fillColor),
+                  alignment: Alignment.center,
+                  child: Text(btnText,
+                      overflow: TextOverflow.ellipsis, style: conditionalTextStyle(layoutTextStyle(obj.style), look)),
+                ),
         );
       }
       return ElevatedButton(
+        style: look == null
+            ? null
+            : ElevatedButton.styleFrom(
+                backgroundColor: parseLayoutColor(look.fillColor),
+                foregroundColor: parseLayoutColor(look.textColor),
+              ),
         onPressed: () => _clickRowButton(recordIndex, obj, btnText),
-        child: Text(btnText, overflow: TextOverflow.ellipsis),
+        child: Text(btnText, overflow: TextOverflow.ellipsis, style: conditionalTextStyle(const TextStyle(), look)),
       );
     }
     // A portal of a row shows that row's related records, read with those
@@ -4065,17 +4099,19 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           obj.style.textCase,
         );
         final isMultilineLabel = obj.height > 36 || resolvedText.contains('\n');
+        // Its conditional formats, Self being its text.
+        final labelStyle = isFindMode ? obj.style : _styleOn(obj, record, resolvedText);
         final textWidget = Text(
           resolvedText,
           textAlign: _parseTextAlign(obj.style.textAlign),
           style: layoutTextStyle(
-            obj.style,
+            labelStyle,
             fallbackColor: isDark ? Colors.white : Colors.black87,
           ),
         );
         return Container(
           alignment: isMultilineLabel ? Alignment.topLeft : _parseAlignment(obj.style.textAlign),
-          decoration: layoutBoxDecoration(obj.style),
+          decoration: layoutBoxDecoration(labelStyle),
           padding: EdgeInsets.only(
             left: 4 + obj.style.indentLeft,
             right: 4 + obj.style.indentRight,
@@ -4258,11 +4294,15 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
         if (col.isPrimaryKey) {
           final pkVal = record[col.name]?.toString() ?? '';
+          // Shown its own way, with the conditional formats that apply.
+          final look = obj.style.conditionalLook(record[col.name],
+              formulaTrue: _formulaTrueOn(obj, record,
+                  repetition: obj.fieldBinding?.repetitionNumbers(col.maxRepetitions).first ?? 1));
           return Container(
             alignment: Alignment.centerLeft,
             padding: const EdgeInsets.symmetric(horizontal: 8),
             decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF272D37) : Colors.grey.shade100,
+              color: parseLayoutColor(look?.fillColor) ?? (isDark ? const Color(0xFF272D37) : Colors.grey.shade100),
               border: Border.all(
                   color: isDark ? const Color(0xFF38404B) : Colors.grey.shade300),
               borderRadius: BorderRadius.circular(obj.style.cornerRadius),
@@ -4272,9 +4312,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                 Expanded(
                   child: Text(
                     pkVal,
-                    style: TextStyle(
-                      fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 12,
-                      fontFamily: 'monospace',
+                    style: conditionalTextStyle(
+                      TextStyle(
+                        fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 12,
+                        fontFamily: 'monospace',
+                      ),
+                      look,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -4321,19 +4364,28 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         // A button with an action and no label (a grouped button, an icon)
         // shows nothing of its own.
         final btnText = _resolveTextForRecord(obj.text.isEmpty && obj.action == null ? 'Button' : obj.text, record);
-        final btnBorder = parseLayoutColor(obj.style.borderColor);
+        // Its conditional formats, Self being its text.
+        final btnStyle = isFindMode ? obj.style : _styleOn(obj, record, btnText);
+        final btnBorder = parseLayoutColor(btnStyle.borderColor);
         if (obj.style.fillColor == '#00000000' && obj.style.borderWidth <= 0) {
+          // A place to click over what is drawn under it (an icon), which
+          // a fill would hide: only a button with a label takes one.
           return InkWell(
             onTap: isFindMode && obj.action == null ? null : () => _handleLayoutButtonClick(obj, btnText),
             child: Container(
+              color: obj.text.isEmpty ? null : parseLayoutColor(btnStyle.fillColor),
               alignment: _parseAlignment(obj.style.textAlign),
               padding: const EdgeInsets.symmetric(horizontal: 2),
               child: Text(
                 btnText,
                 style: TextStyle(
                   fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 12,
-                  color: parseLayoutColor(obj.style.textColor) ?? const Color(0xFF0066CC),
-                  decoration: btnText.startsWith('http') ? TextDecoration.underline : TextDecoration.none,
+                  color: parseLayoutColor(btnStyle.textColor) ?? const Color(0xFF0066CC),
+                  fontWeight: btnStyle.fontWeight == 'bold' ? FontWeight.bold : null,
+                  fontStyle: btnStyle.fontStyle == 'italic' ? FontStyle.italic : null,
+                  decoration: btnText.startsWith('http') || btnStyle.underline
+                      ? TextDecoration.underline
+                      : TextDecoration.none,
                 ),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -4343,13 +4395,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         return ElevatedButton(
           style: ElevatedButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-            backgroundColor: parseLayoutColor(obj.style.fillColor),
-            foregroundColor: parseLayoutColor(obj.style.textColor),
+            backgroundColor: parseLayoutColor(btnStyle.fillColor),
+            foregroundColor: parseLayoutColor(btnStyle.textColor),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(obj.style.cornerRadius),
-              side: btnBorder == null || obj.style.borderWidth <= 0
+              side: btnBorder == null || btnStyle.borderWidth <= 0
                   ? BorderSide.none
-                  : BorderSide(color: btnBorder, width: obj.style.borderWidth),
+                  : BorderSide(color: btnBorder, width: btnStyle.borderWidth),
             ),
           ),
           onPressed: isFindMode && obj.action == null ? null : () => _handleLayoutButtonClick(obj, btnText),
@@ -4357,9 +4409,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             btnText,
             style: TextStyle(
               fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 12,
-              fontWeight: obj.style.fontWeight == 'bold'
+              fontWeight: btnStyle.fontWeight == 'bold'
                   ? FontWeight.bold
                   : FontWeight.w600,
+              fontStyle: btnStyle.fontStyle == 'italic' ? FontStyle.italic : null,
+              decoration: btnStyle.underline ? TextDecoration.underline : null,
             ),
             overflow: TextOverflow.ellipsis,
           ),
@@ -4482,7 +4536,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     int repetition = 1,
   }) {
     if (col.storageType == 'CONTAINER') {
-      return _buildContainerFieldObject(obj, col, record, isDark, key: key);
+      return _buildContainerFieldObject(obj, col, record, isDark, key: key, repetition: repetition);
     }
     final cell = _buildFieldBox(obj, col, record, isDark, key, trigger: trigger, repetition: repetition);
     if (trigger == null) return cell;
@@ -4697,16 +4751,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     Map<String, dynamic> record,
     bool isDark, {
     String? key,
+    int repetition = 1,
   }) {
     final k = key ?? col.name;
     final rawVal = record[k]?.toString() ?? _fieldControllers[k]?.text ?? '';
     final bytes = _tryDecodeBase64Image(rawVal);
     final isViewLayout = widget.layout?.name.toLowerCase().contains('view') ?? false;
+    // Its conditional formats give their fill behind the picture.
+    final look = obj.style.conditionalLook(record[k], formulaTrue: _formulaTrueOn(obj, record, repetition: repetition));
     final child = Container(
       decoration: BoxDecoration(
-        color: isViewLayout
-            ? Colors.transparent
-            : (isDark ? const Color(0xFF1E232B) : const Color(0xFFF8F9FA)),
+        color: parseLayoutColor(look?.fillColor) ??
+            (isViewLayout ? Colors.transparent : (isDark ? const Color(0xFF1E232B) : const Color(0xFFF8F9FA))),
         border: isViewLayout
             ? null
             : Border.all(

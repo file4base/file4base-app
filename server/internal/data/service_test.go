@@ -21,7 +21,7 @@ func TestDataService_CRUDAndFindMode(t *testing.T) {
 		DSN:        dsn,
 	})
 	if err != nil {
-		t.Skip("PostgreSQL not accessible:", err)
+		testdb.Unavailable(t, "PostgreSQL not accessible:", err)
 		return
 	}
 	defer driver.Close()
@@ -30,7 +30,7 @@ func TestDataService_CRUDAndFindMode(t *testing.T) {
 	defer cancel()
 
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("PostgreSQL ping failed:", err)
+		testdb.Unavailable(t, "PostgreSQL ping failed:", err)
 		return
 	}
 
