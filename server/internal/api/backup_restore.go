@@ -71,12 +71,15 @@ type restoreReport struct {
 	RecordsRestored int
 }
 
-// lockRestore lets one restore of a database run at a time.
+// lockRestore lets one restore of a database run at a time, and none
+// while a backup of it is being taken: on MariaDB, which cannot restore in
+// one transaction, a backup taken meanwhile could hold a database half
+// restored, and displace a good backup.
 func (h *ServerAdminHandler) lockRestore(database string) (func(), bool) {
 	key := strings.ToLower(database)
 	h.restoreMu.Lock()
 	defer h.restoreMu.Unlock()
-	if h.restoring[key] {
+	if h.restoring[key] || h.backingUp[key] > 0 {
 		return nil, false
 	}
 	if h.restoring == nil {
@@ -86,6 +89,28 @@ func (h *ServerAdminHandler) lockRestore(database string) (func(), bool) {
 	return func() {
 		h.restoreMu.Lock()
 		delete(h.restoring, key)
+		h.restoreMu.Unlock()
+	}, true
+}
+
+// beginBackup marks a backup of database as being taken, unless a restore
+// of it is running. Backups of one database may run together.
+func (h *ServerAdminHandler) beginBackup(database string) (func(), bool) {
+	key := strings.ToLower(database)
+	h.restoreMu.Lock()
+	defer h.restoreMu.Unlock()
+	if h.restoring[key] {
+		return nil, false
+	}
+	if h.backingUp == nil {
+		h.backingUp = map[string]int{}
+	}
+	h.backingUp[key]++
+	return func() {
+		h.restoreMu.Lock()
+		if h.backingUp[key]--; h.backingUp[key] <= 0 {
+			delete(h.backingUp, key)
+		}
 		h.restoreMu.Unlock()
 	}, true
 }
@@ -133,7 +158,7 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 	unlock, ok := h.lockRestore(targetDB)
 	if !ok {
 		telemetry.WriteProblem(w, r, http.StatusConflict, "Restore In Progress",
-			"a restore of "+targetDB+" is already running")
+			"a restore or a backup of "+targetDB+" is running; restore it once it ends")
 		return
 	}
 	defer unlock()

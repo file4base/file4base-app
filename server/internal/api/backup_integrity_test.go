@@ -334,3 +334,32 @@ func TestBackup_OlderFilesAreStillRead(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "a", got["note"])
 }
+
+// A restore does not start while a backup of the database is being taken:
+// on MariaDB the backup could hold the database half restored.
+func TestRestore_WaitsForNoBackupOfTheDatabase(t *testing.T) {
+	s := newServerToolsHarness(t, false)
+	backupFixture(t, s)
+	code, id := s.backup(s.aliceToken, nil)
+	require.Equal(t, http.StatusCreated, code)
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer api.SetBackupHookForTest(func() {
+		entered <- struct{}{}
+		<-release
+	})()
+	done := make(chan int, 1)
+	go func() {
+		rec := s.doRaw(http.MethodPost, "/api/v1/server/backups", s.aliceToken, "application/json", []byte(`{}`))
+		done <- rec.Code
+	}()
+	<-entered
+	rec := s.do(http.MethodPost, "/api/v1/server/backups/"+id+"/restore", s.aliceToken, nil, nil)
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	close(release)
+	assert.Equal(t, http.StatusCreated, <-done)
+	api.SetBackupHookForTest(nil)()
+
+	rec = s.do(http.MethodPost, "/api/v1/server/backups/"+id+"/restore", s.aliceToken, nil, nil)
+	assert.Equal(t, http.StatusOK, rec.Code, "once the backup ends: %s", rec.Body.String())
+}

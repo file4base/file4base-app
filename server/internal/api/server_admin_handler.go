@@ -182,8 +182,10 @@ type ServerAdminHandler struct {
 	adminDatabase string
 
 	// restoring holds the databases a restore is running on (lockRestore).
+	// backingUp counts the backups being taken of each (beginBackup).
 	restoreMu sync.Mutex
 	restoring map[string]bool
+	backingUp map[string]int
 }
 
 // ConfigureAccess sets who administers the server (the owners of
@@ -963,8 +965,15 @@ func (h *ServerAdminHandler) ApplyContainerUpdate(w http.ResponseWriter, r *http
 	if dbName != "" {
 		if _, err := h.dbMgr.DriverFor(r.Context(), dbName); err == nil {
 			now := time.Now().UTC()
+			done, ok := h.beginBackup(dbName)
+			if !ok {
+				telemetry.WriteProblem(w, r, http.StatusConflict, "Restore In Progress",
+					"a restore of "+dbName+" is running; update once it ends")
+				return
+			}
 			rec, err := h.writeSnapshot(r.Context(), dbName, "", sess.Username,
 				fmt.Sprintf("Automatic pre-update snapshot before updating %s", target), "pre_update", now)
+			done()
 			if err != nil {
 				h.recordAudit("container", "Update Container Stack", sess.Username, dbName, target, "error",
 					"The pre-update snapshot could not be made: "+err.Error())
@@ -1175,12 +1184,14 @@ func (h *ServerAdminHandler) CreateBackup(w http.ResponseWriter, r *http.Request
 	now := time.Now().UTC()
 	// During a restore the database is between two states (on MariaDB, which
 	// cannot restore in one transaction, they can be seen).
-	if h.isRestoring(dbName) {
+	done, ok := h.beginBackup(dbName)
+	if !ok {
 		telemetry.WriteProblem(w, r, http.StatusConflict, "Restore In Progress",
 			"a restore of "+dbName+" is running; back it up once it ends")
 		return
 	}
 	rec, err := h.writeSnapshot(r.Context(), dbName, "", sess.Username, req.Notes, bkpType, now)
+	done()
 	if err != nil {
 		h.recordAudit("backup", "Create Backup", sess.Username, dbName, "", "error", err.Error())
 		telemetry.WriteProblem(w, r, http.StatusInternalServerError, "Backup Failed",
