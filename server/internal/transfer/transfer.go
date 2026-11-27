@@ -6,7 +6,7 @@
 // manual export runs and the destination side is the import every manual
 // import runs, so a transfer converts values, evaluates calculations,
 // enforces validation rules and commits in one transaction exactly as a
-// person importing the same file by hand would (#38, #92).
+// person importing the same file by hand would (#38, #92, #231).
 package transfer
 
 import (
@@ -16,8 +16,8 @@ import (
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/data"
-	"github.com/file4base/file4base-app/server/internal/dataio"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/repetition"
 	"github.com/file4base/file4base-app/server/internal/schema"
 )
 
@@ -25,17 +25,24 @@ import (
 // written when it is.
 var ErrTransfer = errors.New("transfer failed")
 
-// ErrRejected is returned when rows were rejected and the definition's
-// policy is "abort". The report carries every rejected row, and the
+// ErrRejected is returned when a record or a value was rejected and the
+// definition's policy is "abort". The report carries every rejection, and the
 // destination is untouched.
 var ErrRejected = errors.New("transfer refused: rows the destination cannot hold")
 
-// Rejection is one source value the destination field cannot hold.
+// Rejection is a source value the destination field cannot hold, or a record
+// the destination's validation skipped (#231). With "skip", the import's
+// FileMaker rules decide which: a value its field's type cannot hold, or one
+// breaking strict data type, range, maximum length, unique or existing value,
+// is left out of its record, which is written without it; a record failing
+// not empty or a validation by calculation is not written (RecordSkipped).
 type Rejection struct {
 	// Row is the 1-based position of the record in the source found set, in
 	// the order the source was read.
 	Row int `json:"row"`
 
+	// SourceField is empty when the destination field is given no source
+	// field, such as one an auto-enter option fills.
 	SourceField      string `json:"source_field"`
 	DestinationField string `json:"destination_field"`
 
@@ -47,6 +54,14 @@ type Rejection struct {
 	// Reason says what the destination field would not accept, in the words
 	// the import itself uses.
 	Reason string `json:"reason"`
+
+	// Rule is "type" for a value the field's type cannot hold, otherwise the
+	// validation rule it broke.
+	Rule string `json:"rule"`
+
+	// RecordSkipped is set when the whole record was left out, not only the
+	// value.
+	RecordSkipped bool `json:"record_skipped"`
 }
 
 // Report says what one run of a transfer did.
@@ -65,10 +80,16 @@ type Report struct {
 	// Rows is how many records the source found set held.
 	Rows int `json:"rows"`
 
-	Added    int         `json:"added"`
-	Updated  int         `json:"updated"`
-	Skipped  int         `json:"skipped"`
-	Rejected []Rejection `json:"rejected"`
+	Added   int `json:"added"`
+	Updated int `json:"updated"`
+	Skipped int `json:"skipped"`
+
+	// SkippedErrors are the records skipped due to errors and FieldsSkipped
+	// the values left out of the records written, FileMaker's Import Summary
+	// counts; Rejected lists each.
+	SkippedErrors int         `json:"skipped_errors"`
+	FieldsSkipped int         `json:"fields_skipped"`
+	Rejected      []Rejection `json:"rejected"`
 
 	// Committed says whether the destination transaction was committed. It
 	// is false for every refused transfer, and a refused transfer leaves the
@@ -106,7 +127,8 @@ type RunOptions struct {
 	ReturnRecordIDs bool
 }
 
-// RejectedCount is how many rows the destination would not accept.
+// RejectedCount is how many records and values the destination would not
+// accept.
 func (r *Report) RejectedCount() int { return len(r.Rejected) }
 
 // Run carries out one transfer.
@@ -123,7 +145,9 @@ func (r *Report) RejectedCount() int { return len(r.Rejected) }
 //
 // The transaction boundary is the destination table: one transfer writes one
 // table, inside one transaction, so a row that cannot be stored takes the
-// whole run with it and leaves nothing half-applied. A transfer of parents
+// whole run with it and leaves nothing half-applied. A record or a value the
+// destination rejects is skipped with "skip", FileMaker's way, and refuses
+// the run with "abort". A transfer of parents
 // and children is two definitions run in order, and each commits on its own.
 func Run(
 	ctx context.Context,
@@ -225,28 +249,6 @@ func RunWith(
 	report.Rows = len(exported.Rows)
 
 	order := data.DateOrder(def.DateOrder)
-	accepted, rejected := screen(def, exported, destinationTypes, order)
-	report.Rejected = rejected
-	// Replacing the found set pairs the n-th row with the n-th record, so a
-	// row left out still takes its record with it rather than shifting every
-	// row after it onto the wrong record.
-	var passOver map[int]bool
-	if def.Mode == schema.TransferModeReplaceFoundSet && len(rejected) > 0 {
-		accepted = exported
-		passOver = make(map[int]bool, len(rejected))
-		for _, r := range rejected {
-			passOver[r.Row-1] = true
-		}
-	}
-
-	if len(rejected) > 0 && def.OnRejected == schema.TransferRejectedAbort {
-		// Nothing has been written: the whole transfer is refused, and the
-		// caller can correct the source and replay it.
-		return report, fmt.Errorf("%w: %d of %d rows were rejected and this transfer aborts on a "+
-			"rejected row, so the destination was left unchanged",
-			ErrRejected, len(rejected), report.Rows)
-	}
-
 	mappings := make([]data.ImportMapping, 0, len(def.Mappings))
 	for i, m := range def.Mappings {
 		mappings = append(mappings, data.ImportMapping{Column: i, Field: m.DestinationField})
@@ -267,13 +269,25 @@ func RunWith(
 		PerformAutoEnter: def.PerformAutoEnter,
 		AutoEnterFields:  def.AutoEnterFields,
 		ReturnRecordIDs:  opts.ReturnRecordIDs,
-		PassOver:         passOver,
+		AbortOnError:     def.OnRejected == schema.TransferRejectedAbort,
 	}
 	if action != data.ImportAdd && opts.DestinationFoundSet != nil {
 		importOpts.FoundSet = opts.DestinationFoundSet
 	}
 
-	imported, err := destination.ImportRecords(ctx, def.Destination.Table, accepted, importOpts)
+	imported, err := destination.ImportRecords(ctx, def.Destination.Table, exported, importOpts)
+	if imported != nil {
+		report.SkippedErrors = imported.SkippedErrors
+		report.FieldsSkipped = imported.FieldsSkipped
+		report.Rejected = rejections(def, imported.Problems)
+	}
+	if errors.Is(err, data.ErrImportProblems) {
+		// Nothing has been written: the whole transfer is refused, and the
+		// caller can correct the source and replay it.
+		return report, fmt.Errorf("%w: %d record(s) and %d value(s) were rejected of %d rows and this "+
+			"transfer aborts on a rejected row, so the destination was left unchanged",
+			ErrRejected, imported.SkippedErrors, imported.FieldsSkipped, report.Rows)
+	}
 	if err != nil {
 		// The destination transaction rolled back, so the destination is as
 		// it was and the transfer can be replayed.
@@ -283,9 +297,9 @@ func RunWith(
 
 	report.Added = imported.Added
 	report.Updated = imported.Updated
-	// A row left out by the rejected-row policy is not an import's "skipped":
-	// it is counted as rejected, and only the rows the destination passed
-	// over for want of a match are skipped.
+	// A record skipped due to an error is not an import's "skipped": it is
+	// counted as rejected, and only the rows the destination passed over for
+	// want of a match are skipped.
 	report.Skipped = imported.Skipped
 	report.Fields = imported.Fields
 	report.RecordIDs = imported.RecordIDs
@@ -376,48 +390,21 @@ func pairByName(
 	return &paired, unpaired, nil
 }
 
-// screen converts every mapped cell the way the destination import will, and
-// separates the rows the destination can hold from the rows it cannot.
-//
-// It is the same conversion the import runs (data.CoerceImportValue), so a
-// row this function accepts is a row the import accepts: screening a row here
-// rather than letting the import fail is what lets one bad row be reported
-// with its field and its value, and lets a transfer either refuse everything
-// or commit the rest.
-func screen(
-	def *schema.TransferDefinition,
-	exported *dataio.Table,
-	destinationTypes map[string]dbal.AgnosticFieldType,
-	order data.DateOrder,
-) (*dataio.Table, []Rejection) {
-	accepted := &dataio.Table{
-		Columns: append([]string(nil), exported.Columns...),
-		Rows:    make([][]string, 0, len(exported.Rows)),
+// rejections names the source field of each problem the import reported.
+func rejections(def *schema.TransferDefinition, problems []data.ImportProblem) []Rejection {
+	sourceOf := make(map[string]string, len(def.Mappings))
+	for _, m := range def.Mappings {
+		sourceOf[m.DestinationField] = m.SourceField
 	}
-	rejected := []Rejection{}
-
-	for i := range exported.Rows {
-		var why *Rejection
-		for column, m := range def.Mappings {
-			cell := exported.Cell(i, column)
-			if _, err := data.CoerceImportValue(destinationTypes[m.DestinationField], cell, order); err != nil {
-				why = &Rejection{
-					Row:              i + 1,
-					SourceField:      m.SourceField,
-					DestinationField: m.DestinationField,
-					Value:            cell,
-					Reason:           err.Error(),
-				}
-				break // the first field that will not convert is why the row is out
-			}
-		}
-		if why != nil {
-			rejected = append(rejected, *why)
-			continue
-		}
-		accepted.Rows = append(accepted.Rows, exported.Rows[i])
+	rejected := make([]Rejection, 0, len(problems))
+	for _, p := range problems {
+		field, _, _ := repetition.Split(p.Field)
+		rejected = append(rejected, Rejection{
+			Row: p.Row, SourceField: sourceOf[field], DestinationField: p.Field,
+			Value: p.Value, Reason: p.Message, Rule: p.Rule, RecordSkipped: p.RecordSkipped,
+		})
 	}
-	return accepted, rejected
+	return rejected
 }
 
 func describeDatabase(name string) string {

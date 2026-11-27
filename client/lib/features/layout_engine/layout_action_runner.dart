@@ -2292,6 +2292,13 @@ class LayoutActionRunner {
   /// "update_matching" transfer updates. The records it added or updated are
   /// then the window's found set, as in FileMaker (#191). With dialog, it
   /// asks first; cancelling sets error 1 and the script goes on.
+  ///
+  /// A record the destination's validation skipped does not undo the others,
+  /// and the script goes on, as after FileMaker's Import Records: it sets
+  /// error 729, "Errors occurred during import; records could not be
+  /// imported" (FileMaker error codes), and without Set Error Capture the
+  /// user is shown the import summary (#231). Values left out of records
+  /// that were imported set no error.
   Future<LayoutActionResult> _execTransfer(
     String norm,
     Map<String, dynamic> params,
@@ -2466,10 +2473,17 @@ class LayoutActionRunner {
       return LayoutActionResult.stopped('$label "$name" wrote ${report.added + report.updated} record(s), '
           'which could not be shown as the found set.');
     }
-    if (report.unpaired.isNotEmpty && host is DocumentActionHost) {
+    final problems = report.skippedErrors > 0 || report.fieldsSkipped > 0;
+    if ((report.unpaired.isNotEmpty || problems && !session.errorCapture) && host is DocumentActionHost) {
       // FileMaker imports the fields whose names match and goes on; the
-      // user is told which ones were left out.
-      await (host as DocumentActionHost).actionNotify('$label "$name": ${report.describeCounts()}.');
+      // user is told which ones were left out, and what was skipped.
+      // Set Error Capture keeps what was skipped to the script.
+      final first = session.errorCapture ? const <String>[] : report.rejected.take(3).map((r) => r.describe());
+      await (host as DocumentActionHost)
+          .actionNotify('${['$label "$name": ${report.describeCounts()}', ...first].join('; ')}.');
+    }
+    if (report.skippedErrors > 0) {
+      session.lastError = 729; // set last: notifying the user is not a step
     }
     return const LayoutActionResult.ok();
   }

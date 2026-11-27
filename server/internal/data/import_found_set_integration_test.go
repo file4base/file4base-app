@@ -98,18 +98,6 @@ func TestImportFoundSet(t *testing.T) {
 		assert.Equal(t, 2, report.Added)
 	})
 
-	t.Run("a row passed over keeps its record's place", func(t *testing.T) {
-		f := newAutoFixture(t, ctx, driver, columns...)
-		ids := seed(t, f, "a", "b")
-		report, err := f.dataSvc.ImportRecords(ctx, f.orders, parseCSV(t, "Note\nbad\ngood\n"), data.ImportOptions{
-			Action: data.ImportReplaceFoundSet, Mappings: notes, FoundSet: ids, PassOver: map[int]bool{0: true},
-		})
-		require.NoError(t, err)
-		assert.Equal(t, 1, report.Updated)
-		assert.Equal(t, "a", noteOf(t, f, ids[0]))
-		assert.Equal(t, "good", noteOf(t, f, ids[1]))
-	})
-
 	t.Run("replace matches on nothing", func(t *testing.T) {
 		f := newAutoFixture(t, ctx, driver, columns...)
 		_, err := f.dataSvc.ImportRecords(ctx, f.orders, parseCSV(t, "Note\nx\n"), data.ImportOptions{

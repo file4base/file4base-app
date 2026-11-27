@@ -4448,7 +4448,7 @@
             }
           }
         },
-        "description": "options.perform_auto_enter (default false) performs the fields' auto-enter options while importing, as FileMaker's Perform auto-enter options while importing."
+        "description": "options.perform_auto_enter (default false) performs the fields' auto-enter options while importing, as FileMaker's Perform auto-enter options while importing. As FileMaker imports, a value its field cannot hold or that breaks a rule checked as it is entered is left out of its record and a record failing not empty or its validation by calculation is skipped; the answer counts them (skipped_errors, fields_skipped) and lists each (problems: row, field, rule, value, message, record_skipped). options.abort_on_error (default false) imports nothing when anything would be skipped (422)."
       }
     },
     "/api/v1/data/{table}/import/preview": {

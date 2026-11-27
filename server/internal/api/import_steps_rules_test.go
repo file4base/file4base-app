@@ -173,21 +173,28 @@ func TestAPI_ImportStepsUnderFileMakersRules(t *testing.T) {
 		rec := h.do(http.MethodPost, "/api/v1/data/lines", stock, row, nil)
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	}
-	rec = h.do(http.MethodPost, "/api/v1/data/items", depot, map[string]interface{}{"code": "A1", "qty": 1}, nil)
-	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	for _, item := range []map[string]interface{}{{"code": "A1", "qty": 1}, {"code": "B2", "qty": 7}} {
+		rec = h.do(http.MethodPost, "/api/v1/data/items", depot, item, nil)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	}
 
-	// The stored calculation finds the record and is never written; the
-	// count that is not a number is passed over and reported.
+	// The stored calculation finds the records and is never written; the
+	// count that is not a number is left out of its record, which is still
+	// updated, and reported (#231).
 	var report transfer.Report
 	rec = h.do(http.MethodPost, "/api/v1/transfers/"+urlPath(confirmed.Steps[0].Transfer)+"/run", depot,
 		map[string]interface{}{"peer_token": stock}, &report)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Equal(t, 1, report.Updated)
-	assert.Equal(t, 1, report.RejectedCount())
-	items := h.observeRows(depot, "items")
-	require.Len(t, items, 1)
-	assert.Equal(t, "5", fmt.Sprint(items[0]["qty"]))
-	assert.Equal(t, "A1", fmt.Sprint(items[0]["key"]))
+	assert.Equal(t, 2, report.Updated)
+	assert.Equal(t, 1, report.FieldsSkipped)
+	require.Equal(t, 1, report.RejectedCount())
+	assert.Equal(t, 2, report.Rejected[0].Row)
+	assert.False(t, report.Rejected[0].RecordSkipped)
+	qty := map[string]string{}
+	for _, r := range h.observeRows(depot, "items") {
+		qty[fmt.Sprint(r["key"])] = fmt.Sprint(r["qty"])
+	}
+	assert.Equal(t, map[string]string{"A1": "5", "B2": "7"}, qty)
 
 	// Matching names pairs CODE with code and NOTE with note at each run.
 	var byNameDef schema.TransferDefinition

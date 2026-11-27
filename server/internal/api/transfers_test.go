@@ -175,6 +175,9 @@ func TestAPI_TransferRefusesTheWholeRunOnARejectedRow(t *testing.T) {
 	require.Len(t, refused.Rejected, 1)
 	assert.Equal(t, "score_text", refused.Rejected[0].SourceField)
 	assert.Equal(t, "score", refused.Rejected[0].DestinationField)
+	// score cannot be stored empty, so the record is skipped rather than
+	// added without it (#231).
+	assert.True(t, refused.Rejected[0].RecordSkipped)
 	assert.NotEmpty(t, refused.Error)
 
 	// Nothing was written, so the run can be replayed once the source is
