@@ -46,6 +46,10 @@ type ImportStepView struct {
 	// MatchByName: FileMaker pairs the fields by matching names each time
 	// the step runs, and so does its transfer.
 	MatchByName bool `json:"match_by_name,omitempty"`
+	// TargetFromLayout: the step was saved without its target, and its
+	// target table was taken from the Go to Layout before it. It is
+	// confirmed on its own, never in bulk.
+	TargetFromLayout bool `json:"target_from_layout,omitempty"`
 
 	// SuggestedDatabase is the solution the source file most likely became:
 	// this one when the step imports from the file the design was saved
@@ -93,7 +97,7 @@ func (h *TransferHandler) ListImportSteps(w http.ResponseWriter, r *http.Request
 			StepID: st.StepID, ScriptID: st.ScriptID, ScriptName: st.ScriptName, StepIndex: st.StepIndex,
 			SourceFile: step.SourceFile, TargetTable: step.TargetTable, Method: step.Method,
 			AddRemain: step.AddRemaining, Mappings: []ImportStepMapping{}, MatchByName: step.MatchByName,
-			EnabledInFileMaker: st.EnabledInFileMaker,
+			TargetFromLayout: step.TargetFromLayout, EnabledInFileMaker: st.EnabledInFileMaker,
 		}
 		for _, m := range step.Maps {
 			v.Mappings = append(v.Mappings, ImportStepMapping{Position: m.Position, TargetField: m.Target.Name, Match: m.Match})
@@ -269,24 +273,31 @@ func (h *TransferHandler) InferImportSteps(w http.ResponseWriter, r *http.Reques
 			resp.Steps = append(resp.Steps, out)
 			continue
 		}
-		exclude := ""
-		if src.database == "" {
-			exclude = step.TargetTable
-		}
-		positioned := make([]transfer.PositionedTable, 0, len(src.names))
-		for _, name := range src.names {
-			positioned = append(positioned, src.tables[name])
-		}
-		out.Inference = transfer.InferSource(step, target, positioned, exclude)
-		if src.hidden > 0 {
-			// Uniqueness is not claimed over tables nobody could weigh.
-			out.TablesHidden = src.hidden
-			out.Reason += fmt.Sprintf("; %d table(s) of the solution were left out, as this account may not "+
-				"export from them", src.hidden)
-		}
+		out.Inference = src.infer(step, target)
 		resp.Steps = append(resp.Steps, out)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// infer weighs every table of the source solution the account may export
+// from for a step.
+func (src *sourceSolution) infer(step transfer.ImportStep, target transfer.TargetColumns) transfer.Inference {
+	exclude := ""
+	if src.database == "" {
+		exclude = step.TargetTable
+	}
+	positioned := make([]transfer.PositionedTable, 0, len(src.names))
+	for _, name := range src.names {
+		positioned = append(positioned, src.tables[name])
+	}
+	inf := transfer.InferSource(step, target, positioned, exclude)
+	if src.hidden > 0 {
+		// Uniqueness is not claimed over tables nobody could weigh.
+		inf.TablesHidden = src.hidden
+		inf.Reason += fmt.Sprintf("; %d table(s) of the solution were left out, as this account may not "+
+			"export from them", src.hidden)
+	}
+	return inf
 }
 
 // loadImportStep reads a step waiting for its transfer and its target table.
@@ -338,6 +349,12 @@ type ImportStepOutcome struct {
 // in the step, which is enabled again if FileMaker had it enabled. Each step
 // is created on its own: one that cannot be is reported and leaves the
 // others as they are.
+//
+// A request naming several steps is a bulk confirmation, which the server
+// holds to the rule the review shows: each step is inferred again, and only
+// one inferred with high or medium confidence over every table, from the
+// table named, with its target saved in FileMaker, is created. Any other
+// step is confirmed in a request of its own, the table picked by a person.
 func (h *TransferHandler) ConfirmImportSteps(w http.ResponseWriter, r *http.Request) {
 	var body ImportStepsConfirmRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -385,7 +402,7 @@ func (h *TransferHandler) ConfirmImportSteps(w http.ResponseWriter, r *http.Requ
 	for _, item := range body.Items {
 		src := sources[sourceKey(item.SourceDatabase)]
 		out := ImportStepOutcome{StepID: item.StepID}
-		def, err := h.confirmImportStep(ctx, svc, src, item, currentSession(r).UserID, local)
+		def, err := h.confirmImportStep(ctx, svc, src, item, currentSession(r).UserID, local, len(body.Items) > 1)
 		if err != nil {
 			out.Error = err.Error()
 		} else {
@@ -396,8 +413,28 @@ func (h *TransferHandler) ConfirmImportSteps(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]interface{}{"steps": outcomes})
 }
 
+// bulkRefusal says why a step cannot be confirmed in bulk from table, or "".
+func bulkRefusal(step transfer.ImportStep, inf transfer.Inference, table string) string {
+	switch {
+	case step.Problem() != "":
+		return "the step cannot get a transfer as saved: " + step.Problem()
+	case step.TargetFromLayout:
+		return "the step's target table was taken from the Go to Layout before it, not saved in FileMaker"
+	case inf.Table == "":
+		return "no source table is inferred for the step: " + inf.Reason
+	case inf.Confidence != transfer.ConfidenceHigh && inf.Confidence != transfer.ConfidenceMedium:
+		return "the step's source table is inferred with " + inf.Confidence + " confidence: " + inf.Reason
+	case inf.TablesHidden > 0:
+		return "some tables of the source solution could not be weighed for the step"
+	case inf.Table != table:
+		return "the step's inferred source table is " + inf.Table + ", not " + table
+	}
+	return ""
+}
+
 func (h *TransferHandler) confirmImportStep(
 	ctx context.Context, svc *schema.Service, src *sourceSolution, item ImportStepChoice, createdBy, local string,
+	bulk bool,
 ) (*schema.TransferDefinition, error) {
 	step, target, err := loadImportStep(ctx, svc, item.StepID)
 	if err != nil {
@@ -407,6 +444,11 @@ func (h *TransferHandler) confirmImportStep(
 	if !ok {
 		return nil, errors.New("the source solution has no table " + item.SourceTable +
 			" that the account signed in to it may export from")
+	}
+	if bulk {
+		if why := bulkRefusal(step, src.infer(step, target), table.Name); why != "" {
+			return nil, errors.New(why + "; confirm the step on its own, with its source table picked")
+		}
 	}
 	if len(table.Fields) == 0 {
 		return nil, errors.New("the table " + table.Name + " was not migrated from FileMaker, " +

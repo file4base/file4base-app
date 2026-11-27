@@ -23,26 +23,45 @@ func importTargetDesign(steps string) string {
 		`<Map name="Source field 3 not import to " index="3" kind="1"/>`
 	r := strings.NewReplacer("{import}", importStep(live, "False"), "{deleted}", importStep(deleted, "False"),
 		"{byname}", importStep(live, "True"))
+	// Two layouts share the name "Order List", on different tables; one
+	// layout runs a script as it is entered, and one was saved without its
+	// occurrence.
 	return `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
- <BaseTableCatalog><BaseTable id="129" name="Orders"/></BaseTableCatalog>
+ <BaseTableCatalog><BaseTable id="129" name="Orders"/><BaseTable id="130" name="Returns"/></BaseTableCatalog>
  <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Orders"/><ObjectList>
   <Field id="1" name="Code" datatype="Text" fieldtype="Normal"/>
   <Field id="2" name="Total" datatype="Number" fieldtype="Normal"/>
+ </ObjectList></FieldCatalog><FieldCatalog><BaseTableReference id="130" name="Returns"/><ObjectList>
+  <Field id="1" name="Code" datatype="Text" fieldtype="Normal"/>
+  <Field id="2" name="Total" datatype="Number" fieldtype="Normal"/>
  </ObjectList></FieldCatalog></FieldsForTables>
- <TableOccurrenceCatalog><TableOccurrence id="7" name="Open Orders"><BaseTableSourceReference><BaseTableReference id="129" name="Orders"/></BaseTableSourceReference></TableOccurrence></TableOccurrenceCatalog>
- <LayoutCatalog><Layout id="40" name="Order List"><TableOccurrenceReference id="7" name="Open Orders"/></Layout></LayoutCatalog>
+ <TableOccurrenceCatalog><TableOccurrence id="7" name="Open Orders"><BaseTableSourceReference><BaseTableReference id="129" name="Orders"/></BaseTableSourceReference></TableOccurrence><TableOccurrence id="8" name="All Returns"><BaseTableSourceReference><BaseTableReference id="130" name="Returns"/></BaseTableSourceReference></TableOccurrence></TableOccurrenceCatalog>
+ <LayoutCatalog>
+  <Layout id="40" name="Order List"><TableOccurrenceReference id="7" name="Open Orders"/></Layout>
+  <Layout id="41" name="Order List"><TableOccurrenceReference id="8" name="All Returns"/></Layout>
+  <Layout id="42" name="Order Entry"><TableOccurrenceReference id="7" name="Open Orders"/>
+   <ScriptTriggers membercount="1"><ScriptTrigger id="1" action="OnLayoutEnter" browseMode="True"><ScriptReference id="81" name="Steps"/></ScriptTrigger></ScriptTriggers></Layout>
+  <Layout id="43" name="Bare"/>
+ </LayoutCatalog>
  <ScriptCatalog><Script id="81" name="Steps"/></ScriptCatalog>
  <StepsForScripts><Script><ScriptReference id="81" name="Steps"/><ObjectList>` + r.Replace(steps) + `
  </ObjectList></Script></StepsForScripts>
  </AddAction></Structure></FMSaveAsXML>`
 }
 
+func goToLayout(id, name string) string {
+	return `<Step id="6" name="Go to Layout" enable="True"><ParameterValues><Parameter type="LayoutReferenceContainer"><LayoutReferenceContainer value="5"><LayoutReference id="` +
+		id + `" name="` + name + `"/></LayoutReferenceContainer></Parameter></ParameterValues></Step>`
+}
+
+var goToOrderList = goToLayout("40", "Order List")
+
 const (
-	goToOrderList = `<Step id="6" name="Go to Layout" enable="True"><ParameterValues><Parameter type="LayoutReferenceContainer"><LayoutReferenceContainer value="5"><LayoutReference id="40" name="Order List"/></LayoutReferenceContainer></Parameter></ParameterValues></Step>`
-	goToDeleted   = `<Step id="6" name="Go to Layout" enable="True"><ParameterValues><Parameter type="LayoutReferenceContainer"><LayoutReferenceContainer value="5"/></Parameter></ParameterValues></Step>`
-	stepIf        = `<Step id="68" name="If" enable="True"><ParameterValues><Parameter type="Calculation"><Calculation><Calculation><Text>$go</Text></Calculation></Calculation></Parameter></ParameterValues></Step>`
-	stepEndIf     = `<Step id="70" name="End If" enable="True"/>`
-	stepComment   = `<Step id="89" name="# (comment)" enable="True"/>`
+	stepPause   = `<Step id="62" name="Pause/Resume Script" enable="True"/>`
+	goToDeleted = `<Step id="6" name="Go to Layout" enable="True"><ParameterValues><Parameter type="LayoutReferenceContainer"><LayoutReferenceContainer value="5"/></Parameter></ParameterValues></Step>`
+	stepIf      = `<Step id="68" name="If" enable="True"><ParameterValues><Parameter type="Calculation"><Calculation><Calculation><Text>$go</Text></Calculation></Calculation></Parameter></ParameterValues></Step>`
+	stepEndIf   = `<Step id="70" name="End If" enable="True"/>`
+	stepComment = `<Step id="89" name="# (comment)" enable="True"/>`
 )
 
 func TestImportTargetFromTheLayoutBeforeIt(t *testing.T) {
@@ -71,6 +90,28 @@ func TestImportTargetFromTheLayoutBeforeIt(t *testing.T) {
 		}
 		if note, _ := p["migration_note"].(string); !strings.Contains(note, "into orders") {
 			t.Errorf("note = %s", note)
+		}
+	})
+
+	t.Run("the layout is found by its id, not its name", func(t *testing.T) {
+		if p := steps(t, goToLayout("41", "Order List")+"{import}")[0]; p["target_table"] != "returns" {
+			t.Errorf("the second Order List layout: target = %v", p["target_table"])
+		}
+		if p := steps(t, goToOrderList+"{import}")[0]; p["target_table"] != "orders" {
+			t.Errorf("the first Order List layout: target = %v", p["target_table"])
+		}
+	})
+
+	t.Run("a layout that cannot say its table before the script runs fixes none", func(t *testing.T) {
+		for name, design := range map[string]string{
+			"a trigger on entering it": goToLayout("42", "Order Entry") + "{import}",
+			"saved without occurrence": goToLayout("43", "Bare") + "{import}",
+			"not in the design":        goToLayout("99", "Order List") + "{import}",
+			"a pause between them":     goToOrderList + stepPause + "{import}",
+		} {
+			if p := steps(t, design)[0]; p["target_table"] != nil {
+				t.Errorf("%s: target = %v", name, p["target_table"])
+			}
 		}
 	})
 

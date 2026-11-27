@@ -138,6 +138,8 @@ func TestAPI_ImportStepsUnderFileMakersRules(t *testing.T) {
 	assert.Equal(t, "lines", byName.Table)
 	assert.Equal(t, transfer.ConfidenceHigh, byName.Confidence)
 
+	// In bulk, the server infers each step again: the low-confidence one is
+	// refused, the high-confidence one created.
 	var confirmed importStepsOutcome
 	rec = h.do(http.MethodPost, "/api/v1/transfers/import-steps/confirm", depot, map[string]interface{}{
 		"items": []map[string]string{
@@ -148,9 +150,21 @@ func TestAPI_ImportStepsUnderFileMakersRules(t *testing.T) {
 	}, &confirmed)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Len(t, confirmed.Steps, 2)
-	for _, o := range confirmed.Steps {
-		require.Empty(t, o.Error)
-	}
+	assert.Contains(t, confirmed.Steps[0].Error, "low confidence")
+	assert.Contains(t, confirmed.Steps[0].Error, "confirm the step on its own")
+	assert.Empty(t, confirmed.Steps[0].Transfer)
+	require.Empty(t, confirmed.Steps[1].Error)
+
+	// On its own, with the table picked, it is created.
+	var alone importStepsOutcome
+	rec = h.do(http.MethodPost, "/api/v1/transfers/import-steps/confirm", depot, map[string]interface{}{
+		"items":       []map[string]string{{"step_id": byScript["Pull stock"].StepID, "source_database": stockDB, "source_table": "lines"}},
+		"peer_tokens": map[string]string{stockDB: stock},
+	}, &alone)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, alone.Steps, 1)
+	require.Empty(t, alone.Steps[0].Error)
+	confirmed.Steps[0] = alone.Steps[0]
 
 	for _, row := range []map[string]interface{}{
 		{"code": "a1", "count": "5", "note": "first"},

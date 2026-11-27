@@ -391,3 +391,94 @@ func TestPairByName(t *testing.T) {
 		t.Fatal("a run writing nothing was not refused")
 	}
 }
+
+// The review of a step matching names pairs exactly as its transfer's run
+// does: by the destination field's current name, over every field of the
+// source table, and refuses at confirmation a table the run never could run
+// against (#191).
+func TestByNameReviewPairsAsTheRunDoes(t *testing.T) {
+	p := importStepParams()
+	p["match_field_names"] = true
+	step, _ := ParseImportStep(p)
+	// FileMaker saved "total"; the target field was renamed "amount" since,
+	// and is found by its FileMaker id.
+	target := NewTargetColumns(table("orders", "code", "TEXT", "1", "amount", "NUMBER", "2"))
+
+	t.Run("the destination's current name, not the one FileMaker saved", func(t *testing.T) {
+		old := PositionTable(table("old", "code", "TEXT", "1", "total", "NUMBER", "2"))
+		inf := InferSource(step, target, []PositionedTable{old}, "")
+		pairs := inf.Candidates[0].Pairs
+		if inf.Table != "" || !pairs[1].Missing || pairs[1].TargetField != "amount" {
+			t.Fatalf("inference = %#v", inf)
+		}
+		in, err := PlanTransfer(step, "n", "", old, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		def := &schema.TransferDefinition{Name: "n", Mappings: in.Mappings, MatchFields: in.MatchFields}
+		_, unpaired, err := pairByName(def, map[string]dbal.AgnosticFieldType{
+			"code": dbal.FieldTypeText, "total": dbal.FieldTypeNumber,
+		})
+		if err != nil || len(unpaired) != 1 || unpaired[0] != "amount" {
+			t.Fatalf("the run pairs otherwise than the review: unpaired = %v, %v", unpaired, err)
+		}
+	})
+
+	t.Run("a field that did not come from FileMaker pairs too", func(t *testing.T) {
+		src := table("src", "code", "TEXT", "1")
+		src.Columns = append(src.Columns, schema.ColumnMetadata{Name: "Amount", FieldType: dbal.FieldTypeNumber})
+		inf := InferSource(step, target, []PositionedTable{PositionTable(src)}, "")
+		if inf.Table != "src" || inf.Confidence != ConfidenceHigh || inf.Candidates[0].Pairs[1].SourceField != "Amount" {
+			t.Fatalf("inference = %#v", inf)
+		}
+	})
+
+	t.Run("two names a case apart pair neither", func(t *testing.T) {
+		twin := PositionTable(table("twin", "code", "TEXT", "1", "amount", "NUMBER", "2", "AMOUNT", "NUMBER", "3"))
+		if inf := InferSource(step, target, []PositionedTable{twin}, ""); inf.Table != "" ||
+			!inf.Candidates[0].Pairs[1].Missing {
+			t.Fatalf("inference = %#v", inf)
+		}
+		if _, err := PlanTransfer(step, "n", "", twin, target); err == nil || !strings.Contains(err.Error(), "two fields") {
+			t.Fatalf("planned against two names a case apart: %v", err)
+		}
+	})
+
+	t.Run("a picked table the run never could run against is refused", func(t *testing.T) {
+		noMatch := PositionTable(table("nomatch", "amount", "NUMBER", "1"))
+		if _, err := PlanTransfer(step, "n", "", noMatch, target); err == nil ||
+			!strings.Contains(err.Error(), "matches records on code") {
+			t.Fatalf("planned without the match field: %v", err)
+		}
+		p := importStepParams()
+		p["match_field_names"] = true
+		p["import_method"] = "add"
+		add, _ := ParseImportStep(p)
+		none := PositionTable(table("none", "x", "TEXT", "1"))
+		if _, err := PlanTransfer(add, "n", "", none, target); err == nil ||
+			!strings.Contains(err.Error(), "no field named as any") {
+			t.Fatalf("planned a transfer pairing nothing: %v", err)
+		}
+	})
+}
+
+// A target field that no longer resolves is the target's fault, not the
+// source tables'.
+func TestInferSourceBlamesAGoneTargetField(t *testing.T) {
+	step, _ := ParseImportStep(importStepParams())
+	target := NewTargetColumns(table("orders", "code", "TEXT", "1"))
+	entries := PositionTable(table("entries", "x", "NUMBER", "1", "code", "TEXT", "2", "total", "NUMBER", "3"))
+	inf := InferSource(step, target, []PositionedTable{entries}, "")
+	if inf.Table != "" || !strings.Contains(inf.Reason, `the target table orders has no field "total" any more`) ||
+		strings.Contains(inf.Reason, "no table of the solution") {
+		t.Fatalf("reason = %q", inf.Reason)
+	}
+}
+
+func TestImportStepTargetFromLayout(t *testing.T) {
+	p := importStepParams()
+	p["target_table_from_layout"] = true
+	if s, _ := ParseImportStep(p); !s.TargetFromLayout {
+		t.Fatal("the target taken from the layout was not read")
+	}
+}

@@ -289,9 +289,24 @@ class TransferRunReport {
 
   int get rejectedCount => rejected.length;
 
-  /// "2 added, 1 updated, 0 skipped, 1 rejected of 4 records".
-  String describeCounts() =>
-      '$added added, $updated updated, $skipped skipped, $rejectedCount rejected of $rows records';
+  /// "2 added, 1 updated, 0 skipped, 1 rejected of 4 records", and the
+  /// warning on the fields a transfer pairing by name left out.
+  String describeCounts() {
+    final counts = '$added added, $updated updated, $skipped skipped, $rejectedCount rejected of $rows records';
+    final warning = unpairedWarning();
+    return warning.isEmpty ? counts : '$counts; $warning';
+  }
+
+  /// "Warning: no source field is named note or qty, so they were left out
+  /// of this run", or '' when nothing was left out.
+  String unpairedWarning() {
+    if (unpaired.isEmpty) return '';
+    final names = unpaired.length == 1
+        ? unpaired.first
+        : '${unpaired.sublist(0, unpaired.length - 1).join(', ')} or ${unpaired.last}';
+    return 'Warning: no source field is named $names, so ${unpaired.length == 1 ? 'it was' : 'they were'} '
+        'left out of this run';
+  }
 
   /// What to tell someone whose transfer was refused: the counts, the reason,
   /// and the first rejected rows, which are the ones they have to fix.
@@ -329,6 +344,7 @@ class ImportStepModel {
     this.problem = '',
     this.enabledInFileMaker = false,
     this.matchByName = false,
+    this.targetFromLayout = false,
   });
 
   factory ImportStepModel.fromJson(Map<String, dynamic> json) => ImportStepModel(
@@ -351,6 +367,7 @@ class ImportStepModel {
         problem: json['problem'] as String? ?? '',
         enabledInFileMaker: json['enabled_in_filemaker'] as bool? ?? false,
         matchByName: json['match_by_name'] as bool? ?? false,
+        targetFromLayout: json['target_from_layout'] as bool? ?? false,
       );
 
   final String stepId;
@@ -388,6 +405,10 @@ class ImportStepModel {
   /// Whether FileMaker pairs the step's fields by matching names each time
   /// it runs, rather than by position; so does its transfer.
   final bool matchByName;
+
+  /// Whether the step was saved without its target, its target table taken
+  /// from the Go to Layout before it. It is confirmed on its own.
+  final bool targetFromLayout;
 
   /// Replacing overwrites the fields of records already there.
   bool get isDestructive => method == 'replace';

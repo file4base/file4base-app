@@ -293,28 +293,57 @@ func RunWith(
 	return report, nil
 }
 
+// namePairing pairs fields by name, as FileMaker pairs matching names each
+// time its Import Records step is performed. FileMaker field names are unique
+// within a table regardless of case, so the names are compared without it:
+// one name pairs with at most one field. A table with two names a case apart
+// (possible in File4Base, not in FileMaker) pairs neither; twice names them.
+//
+// It is the one pairing both the review of a step and the run of its
+// transfer use, so the review shows what the run does.
+type namePairing struct {
+	byKey map[string]string
+	twice map[string]bool
+}
+
+func newNamePairing(names []string) namePairing {
+	p := namePairing{byKey: make(map[string]string, len(names)), twice: map[string]bool{}}
+	for _, name := range names {
+		if strings.HasSuffix(name, "[]") {
+			continue // a repeating field's internal entry, not a field
+		}
+		key := strings.ToLower(name)
+		if _, taken := p.byKey[key]; taken {
+			p.twice[key] = true
+		}
+		p.byKey[key] = name
+	}
+	return p
+}
+
+// pair answers the field named as destination, whatever its case.
+func (p namePairing) pair(destination string) (string, bool) {
+	key := strings.ToLower(destination)
+	if p.twice[key] {
+		return "", false
+	}
+	name, ok := p.byKey[key]
+	return name, ok
+}
+
 // pairByName pairs each destination field of a transfer matching names with
-// the source field named as it, on this run, as FileMaker matches the names
-// each time its Import Records step is performed. FileMaker field names are
-// unique within a table whatever their case, so the names are compared
-// without it. A destination field no source field is named as is left out
-// and answered in unpaired, unless records are matched on it: the run is
-// then refused, as it would match on nothing.
+// the source field named as it, on this run (see namePairing). A destination
+// field no source field is named as is left out and answered in unpaired,
+// unless records are matched on it: the run is then refused, as it would
+// match on nothing.
 func pairByName(
 	def *schema.TransferDefinition, sourceTypes map[string]dbal.AgnosticFieldType,
 ) (*schema.TransferDefinition, []string, error) {
-	byName := make(map[string]string, len(sourceTypes))
-	twice := map[string]bool{}
+	names := make([]string, 0, len(sourceTypes))
 	for field := range sourceTypes {
-		if strings.HasSuffix(field, "[]") {
-			continue // a repeating field's internal entry, not a field
-		}
-		key := strings.ToLower(field)
-		if _, taken := byName[key]; taken {
-			twice[key] = true
-		}
-		byName[key] = field
+		names = append(names, field)
 	}
+	pairing := newNamePairing(names)
 	matched := make(map[string]bool, len(def.MatchFields))
 	for _, field := range def.MatchFields {
 		matched[field] = true
@@ -323,12 +352,11 @@ func pairByName(
 	paired.Mappings = make([]schema.TransferMapping, 0, len(def.Mappings))
 	var unpaired []string
 	for _, m := range def.Mappings {
-		key := strings.ToLower(m.DestinationField)
-		if twice[key] {
+		if pairing.twice[strings.ToLower(m.DestinationField)] {
 			return def, nil, fmt.Errorf("%w: %q pairs fields by name, and the source table %q has two fields "+
 				"named %q whatever their case", ErrTransfer, def.Name, def.Source.Table, m.DestinationField)
 		}
-		source, ok := byName[key]
+		source, ok := pairing.pair(m.DestinationField)
 		if !ok {
 			if matched[m.DestinationField] {
 				return def, nil, fmt.Errorf("%w: %q pairs fields by name and matches records on %q, and the "+

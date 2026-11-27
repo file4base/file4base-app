@@ -45,6 +45,21 @@ List<Map<String, dynamic>> _steps({bool extra = false}) => [
       'suggested_database': 'ledger',
       'suggested_by': 'database_name',
     },
+    {
+      'step_id': 's-layout',
+      'script_id': 'sc-6',
+      'script_name': 'Pull on layout',
+      'step_index': 2,
+      'source_file': 'Ledger',
+      'target_table': 'orders',
+      'method': 'add',
+      'target_from_layout': true,
+      'mappings': [
+        {'position': 1, 'target_field': 'code'},
+      ],
+      'suggested_database': 'ledger',
+      'suggested_by': 'database_name',
+    },
   ],
   {
     'step_id': 's-pull',
@@ -234,6 +249,26 @@ class _FakeServer {
                     'pairs': [
                       {'position': 0, 'source_field': 'CODE', 'target_field': 'code'},
                       {'position': 0, 'source_field': 'NOTE', 'target_field': 'note'},
+                    ],
+                  },
+                ],
+              },
+              {
+                'step_id': 's-layout',
+                'table': 'entries',
+                'confidence': 'high',
+                'reason': 'the only table whose fields fit every position by type and agree by name on 1 of 1',
+                'candidates': [
+                  {
+                    'table': 'entries',
+                    'fields': 3,
+                    'types_matched': 1,
+                    'names_matched': 1,
+                    'positions': 1,
+                    'fits': true,
+                    'possible': true,
+                    'pairs': [
+                      {'position': 1, 'source_field': 'code', 'target_field': 'code'},
                     ],
                   },
                 ],
@@ -468,12 +503,26 @@ void main() {
     expect(find.descendant(of: byName, matching: find.textContaining('paired by matching names')), findsOneWidget);
     expect(find.descendant(of: byName, matching: find.textContaining('each time it runs')), findsOneWidget);
 
-    // The bulk confirmation leaves the low one out.
+    // A target taken from the Go to Layout before the step is said.
+    final fromLayout = find.byKey(const Key('import-step-s-layout'));
+    expect(
+      find.descendant(
+        of: fromLayout,
+        matching: find.textContaining('into orders (target taken from the preceding Go to Layout)'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('import-step-target-from-layout-s-layout')), findsOneWidget);
+
+    // The bulk confirmation leaves the low one and the derived target out,
+    // and says how the steps it covers pair their fields.
     await tester.tap(find.byKey(const Key('import-steps-create-inferred')));
     await tester.pumpAndSettle();
     expect(find.text('Create 3 transfers?'), findsOneWidget);
     expect(find.byKey(const Key('import-steps-confirm-s-low')), findsNothing);
+    expect(find.byKey(const Key('import-steps-confirm-s-layout')), findsNothing);
     expect(find.byKey(const Key('import-steps-confirm-s-name')), findsOneWidget);
+    expect(find.textContaining('paired below by position, or by matching names again at each run'), findsOneWidget);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 

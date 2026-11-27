@@ -455,7 +455,17 @@ func (s *Service) ImportRecords(
 
 	dialect := s.driver.Dialect()
 	db := s.driver.DB()
-	report := &ImportReport{Rows: len(source.Rows), Fields: written}
+	// A calculation matched on is not written: the report leaves it out.
+	reported := written
+	if len(matchOnly) > 0 {
+		reported = make([]string, 0, len(written))
+		for _, field := range written {
+			if !matchOnly[field] {
+				reported = append(reported, field)
+			}
+		}
+	}
+	report := &ImportReport{Rows: len(source.Rows), Fields: reported}
 	// An updated record loses the original texts of the fields it is given
 	// (#124); the table they are kept in has to exist before the transaction.
 	if opts.Action != ImportAdd {

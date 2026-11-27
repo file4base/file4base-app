@@ -2466,6 +2466,11 @@ class LayoutActionRunner {
       return LayoutActionResult.stopped('$label "$name" wrote ${report.added + report.updated} record(s), '
           'which could not be shown as the found set.');
     }
+    if (report.unpaired.isNotEmpty && host is DocumentActionHost) {
+      // FileMaker imports the fields whose names match and goes on; the
+      // user is told which ones were left out.
+      await (host as DocumentActionHost).actionNotify('$label "$name": ${report.describeCounts()}.');
+    }
     return const LayoutActionResult.ok();
   }
 

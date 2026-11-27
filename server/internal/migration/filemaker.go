@@ -887,6 +887,10 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// 5. Extract Layouts (their script triggers are kept, disabled)
 	layoutNodes := catalogDefinitions(root, []string{"LayoutCatalog", "layouts"}, "Layout", "layout")
 	layoutCtx := newLayoutObjectContext(root, bundle, binding, req.NativeDateOrder)
+	// layoutTables maps a layout's FileMaker id to the table of this
+	// solution it shows, for the Import Records steps saved without their
+	// target (see layoutTargetTable).
+	layoutTables := map[string]string{}
 	for _, ln := range layoutNodes {
 		lay, items := convertLayoutNode(ln, bundle.TableOccurrences, occIDByName, occTableByName, deletedOccurrences, layoutCtx)
 		for _, it := range items {
@@ -894,6 +898,11 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		}
 		if lay != nil {
 			bundle.Layouts = append(bundle.Layouts, *lay)
+			if id := strings.TrimSpace(firstAttr(ln, "id", "ID")); id != "" {
+				if table := layoutTargetTable(ln, lay, bundle.TableOccurrences, occTableByName); table != "" {
+					layoutTables[id] = table
+				}
+			}
 		}
 	}
 	report.Counts.Layouts = len(bundle.Layouts)
@@ -906,7 +915,6 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	if len(bundle.Tables) > 0 {
 		defaultContextTable = bundle.Tables[0].Name
 	}
-	layoutTables := layoutTableByName(bundle, occTableByName)
 	for _, sn := range scriptNodes {
 		// Skip <script> references inside <layout>
 		if firstAttr(sn, "where") != "" && len(sn.Children) == 0 {
@@ -2336,42 +2344,57 @@ func layoutOccurrenceDetail(occName string, occurrences []schema.BundleOccurrenc
 	return fmt.Sprintf("Layout bound to table occurrence %q", occName)
 }
 
-// layoutTableByName maps each layout's lower-cased name to the table of this
-// solution its occurrence shows; a layout of another file's table is left
-// out.
-func layoutTableByName(bundle *schema.SolutionBundle, occTableByName map[string]string) map[string]string {
-	occName := make(map[string]string, len(bundle.TableOccurrences))
-	for _, o := range bundle.TableOccurrences {
-		if o.External == nil {
-			occName[o.ID] = o.Name
+// layoutTargetTable is the table of this solution a migrated layout shows,
+// as an Import Records step saved without its target imports into it, or ""
+// when it cannot be said before the script runs: the layout was saved without
+// its occurrence (the migration then shows the first one, which FileMaker
+// does not), its occurrence is of another file's table, or it has a trigger
+// that runs a script as the layout is entered or a record loaded, which may
+// go to another layout before the import.
+func layoutTargetTable(
+	ln *xmlNode, lay *schema.BundleLayout, occurrences []schema.BundleOccurrence, occTableByName map[string]string,
+) string {
+	occName := firstAttr(ln, "table_occurrence", "table", "tableOccurrence")
+	if occName == "" && findFirstChild(ln, "Table", "TableOccurrenceReference") == nil {
+		return ""
+	}
+	for _, st := range readLayoutTriggers(ln) {
+		if st.object != nil {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(st.event)) {
+		case "onlayoutenter", "onlayoutload", "onrecordload", "onmodeenter":
+			return ""
 		}
 	}
-	out := make(map[string]string, len(bundle.Layouts))
-	for _, l := range bundle.Layouts {
-		if name := occName[l.TableOccurrenceID]; name != "" {
-			if table := occTableByName[strings.ToLower(name)]; table != "" {
-				out[strings.ToLower(strings.TrimSpace(l.Name))] = table
+	for _, o := range occurrences {
+		if o.ID == lay.TableOccurrenceID {
+			if o.External != nil {
+				return ""
 			}
+			return occTableByName[strings.ToLower(o.Name)]
 		}
 	}
-	return out
+	return ""
 }
 
 // nextLayoutTable is the table of the layout a script is on once a step has
-// run, as far as it is fixed before the script runs: a Go to Layout naming
-// its layout fixes it, and a branch, a loop, another window or another
-// script makes it unknown again, since which way it goes is decided only as
-// the script runs.
+// run, as far as it is fixed before the script runs: a Go to Layout to a
+// layout it names fixes it, found by the layout's FileMaker id, as two
+// layouts can share a name. A branch, a loop, a pause (the user may go to
+// another layout), another window, another script, or a step File4Base does
+// not recognise makes it unknown again, since which way it goes is decided
+// only as the script runs.
 func nextLayoutTable(current, canonical string, params map[string]interface{}, layoutTables map[string]string) string {
 	switch canonical {
 	case "Go to Layout":
-		name, _ := params["layout_name"].(string)
-		if params["layout_destination"] != "selected" || strings.TrimSpace(name) == "" {
+		id, _ := params["filemaker_layout_id"].(string)
+		if params["layout_destination"] != "selected" || strings.TrimSpace(id) == "" {
 			return ""
 		}
-		return layoutTables[strings.ToLower(strings.TrimSpace(name))]
-	case "If", "Else If", "Else", "End If", "Loop", "Exit Loop If", "End Loop",
-		"Perform Script", "Perform Script on Server", "Go to Related Record",
+		return layoutTables[strings.TrimSpace(id)]
+	case "", "If", "Else If", "Else", "End If", "Loop", "Exit Loop If", "End Loop",
+		"Perform Script", "Pause/Resume Script", "Go to Related Record",
 		"New Window", "Select Window", "Close Window":
 		return ""
 	}
@@ -2382,9 +2405,9 @@ func nextLayoutTable(current, canonical string, params map[string]interface{}, l
 // table it shows, so a step naming an occurrence can say which table it
 // writes.
 //
-// layoutTables maps a lower-cased layout name to the table of this solution
-// it shows: an Import Records step saved without its target occurrence
-// imports into the table of the layout a Go to Layout just before it fixes.
+// layoutTables maps a layout's FileMaker id to the table of this solution it
+// shows: an Import Records step saved without its target occurrence imports
+// into the table of the layout a Go to Layout just before it fixes.
 func convertScriptNode(
 	sn *xmlNode, defaultContextTable string, occTableByName, layoutTables map[string]string,
 ) (*schema.BundleScript, []ReportItem) {

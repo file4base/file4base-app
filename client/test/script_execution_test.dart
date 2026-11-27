@@ -182,6 +182,15 @@ Map<String, dynamic> _transferJson({
       'date_order': 'iso',
     };
 
+/// A host that tells the user something without stopping the script.
+class _NoticeHost extends _RecordingHost implements DocumentActionHost {
+  final notices = <String>[];
+  @override
+  Future<void> actionNotify(String message) async => notices.add(message);
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 /// A run report as the server answers it.
 Map<String, dynamic> _reportJson({
   String transfer = 'Send answers',
@@ -191,6 +200,7 @@ Map<String, dynamic> _reportJson({
   List<Map<String, dynamic>> rejected = const [],
   bool committed = true,
   String? error,
+  List<String> unpaired = const [],
 }) =>
     {
       'transfer': transfer,
@@ -207,6 +217,7 @@ Map<String, dynamic> _reportJson({
       'rejected': rejected,
       'committed': committed,
       if (error != null) 'error': error,
+      if (unpaired.isNotEmpty) 'unpaired': unpaired,
     };
 
 /// A runner whose API serves scripts, transfer definitions by name, and one
@@ -698,6 +709,26 @@ void main() {
       expect(runner.globalVariables[r'$$transferupdated'], '1');
       expect(runner.globalVariables[r'$$transferrejected'], '0');
       expect(runner.globalVariables[r'$$transfercommitted'], '1');
+    });
+
+    test('a transfer pairing by name that left fields out warns, and the script goes on', () async {
+      final host = _NoticeHost();
+      final runner = _transferRunner(
+        host,
+        scripts: {
+          'sc1': _script('sc1', 'Sync', [
+            _stepJson(1, 'import_records', {'transfer': 'Send answers'}),
+            _stepJson(2, 'commit_records'),
+          ]),
+        },
+        transfers: {'Send answers': _transferJson()},
+        report: _reportJson(added: 2, unpaired: ['note', 'qty']),
+      );
+      final result = await _runScript(runner, 'sc1', 'Sync');
+      expect(result.completed, isTrue, reason: result.message);
+      expect(host.did, ['commit_records']);
+      expect(host.notices.single,
+          contains('Warning: no source field is named note or qty, so they were left out of this run'));
     });
 
     test('a refused transfer stops the script and says which rows were rejected',

@@ -390,6 +390,9 @@ func WriteHTML(report *Report) ([]byte, error) {
 				from += ` (found set)`
 			}
 			mappings := []string{}
+			if t.MatchByName {
+				mappings = append(mappings, `<em>Paired by name at each run</em>`)
+			}
 			for _, m := range t.Mappings {
 				mappings = append(mappings, esc(m.Source)+" → "+esc(m.Destination))
 			}

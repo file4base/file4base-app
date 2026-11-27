@@ -278,6 +278,7 @@ func TestImportUpdateMatchingOnAStoredCalculation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.Updated)
 	assert.Equal(t, 1, report.Added)
+	assert.Equal(t, []string{"city"}, report.Fields, "the calculation matched on is not reported as written")
 
 	rows, err := f.dataSvc.ListRows(ctx, f.table, data.QueryOptions{})
 	require.NoError(t, err)

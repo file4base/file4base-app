@@ -260,6 +260,7 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 			OnRejected:  t.OnRejected,
 			DateOrder:   t.DateOrder,
 			FoundSet:    len(t.FoundSet) > 0,
+			MatchByName: t.MatchByName,
 		}
 		for _, m := range t.Mappings {
 			reported.Mappings = append(reported.Mappings, designreport.TransferMapping{
