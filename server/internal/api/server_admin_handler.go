@@ -256,7 +256,16 @@ func (h *ServerAdminHandler) mayUseBackup(sess auth.Session, database string) bo
 func (h *ServerAdminHandler) ownBackup(w http.ResponseWriter, r *http.Request, filename string) (string, backupHeader, bool) {
 	path := filepath.Join(h.backupsDir, filename)
 	hdr, err := readBackupHeader(path)
-	if err != nil || !h.mayUseBackup(currentSession(r), hdr.Database) {
+	if err != nil {
+		// A server administrator may still download or delete a file whose
+		// header cannot be read, a damaged one, which a restore refuses.
+		if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() && h.isServerAdmin(currentSession(r)) {
+			return path, backupHeader{}, true
+		}
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Backup Not Found", "snapshot file does not exist")
+		return "", backupHeader{}, false
+	}
+	if !h.mayUseBackup(currentSession(r), hdr.Database) {
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Backup Not Found", "snapshot file does not exist")
 		return "", backupHeader{}, false
 	}
@@ -954,7 +963,7 @@ func (h *ServerAdminHandler) ApplyContainerUpdate(w http.ResponseWriter, r *http
 	if dbName != "" {
 		if _, err := h.dbMgr.DriverFor(r.Context(), dbName); err == nil {
 			now := time.Now().UTC()
-			rec, err := h.writeSnapshot(r.Context(), dbName, h.newBackupID(dbName, now, ""), sess.Username,
+			rec, err := h.writeSnapshot(r.Context(), dbName, "", sess.Username,
 				fmt.Sprintf("Automatic pre-update snapshot before updating %s", target), "pre_update", now)
 			if err != nil {
 				h.recordAudit("container", "Update Container Stack", sess.Username, dbName, target, "error",
@@ -1164,7 +1173,14 @@ func (h *ServerAdminHandler) CreateBackup(w http.ResponseWriter, r *http.Request
 		bkpType = "manual"
 	}
 	now := time.Now().UTC()
-	rec, err := h.writeSnapshot(r.Context(), dbName, h.newBackupID(dbName, now, ""), sess.Username, req.Notes, bkpType, now)
+	// During a restore the database is between two states (on MariaDB, which
+	// cannot restore in one transaction, they can be seen).
+	if h.isRestoring(dbName) {
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Restore In Progress",
+			"a restore of "+dbName+" is running; back it up once it ends")
+		return
+	}
+	rec, err := h.writeSnapshot(r.Context(), dbName, "", sess.Username, req.Notes, bkpType, now)
 	if err != nil {
 		h.recordAudit("backup", "Create Backup", sess.Username, dbName, "", "error", err.Error())
 		telemetry.WriteProblem(w, r, http.StatusInternalServerError, "Backup Failed",
@@ -1257,9 +1273,18 @@ func (h *ServerAdminHandler) UploadBackup(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	if target == "" || strings.ContainsAny(target, `/\`) || strings.Contains(target, "..") {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid Database", "the backup is not of a database name")
+		return
+	}
 	now := time.Now().UTC()
+	id, err := h.newBackupID(target, now, "uploaded")
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
 	hdr := backupHeader{
-		ID: h.newBackupID(target, now, "uploaded"), Database: target, Engine: fileEngine,
+		ID: id, Database: target, Engine: fileEngine,
 		CreatedAt: now.Format(time.RFC3339), CreatedBy: sess.Username, Notes: fileNotes, Type: "uploaded",
 		TablesCount: len(tables),
 	}
@@ -1320,14 +1345,21 @@ func (h *ServerAdminHandler) DownloadBackup(w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(http.StatusOK)
 		gz := gzip.NewWriter(w)
 		tw := tar.NewWriter(gz)
+		// The archive has no length the client could check: a failure after
+		// the headers were sent breaks the connection, so the download is
+		// seen to fail instead of ending as a shorter archive.
 		if err := tw.WriteHeader(&tar.Header{Name: filename, Mode: 0o600, Size: info.Size(), ModTime: info.ModTime()}); err != nil {
-			return
+			panic(http.ErrAbortHandler)
 		}
 		if _, err := io.Copy(tw, f); err != nil {
-			return
+			panic(http.ErrAbortHandler)
 		}
-		_ = tw.Close()
-		_ = gz.Close()
+		if err := tw.Close(); err != nil {
+			panic(http.ErrAbortHandler)
+		}
+		if err := gz.Close(); err != nil {
+			panic(http.ErrAbortHandler)
+		}
 		return
 	}
 
@@ -1352,8 +1384,14 @@ func (h *ServerAdminHandler) DeleteBackup(w http.ResponseWriter, r *http.Request
 	if !strings.HasSuffix(filename, ".f4b.json") {
 		filename += ".f4b.json"
 	}
-	path, _, ok := h.ownBackup(w, r, filename)
+	path, hdr, ok := h.ownBackup(w, r, filename)
 	if !ok {
+		return
+	}
+	// A restore running on its database may need this backup to undo it.
+	if hdr.Database != "" && h.isRestoring(hdr.Database) {
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Restore In Progress",
+			"a restore of "+hdr.Database+" is running; delete the backup once it ends")
 		return
 	}
 	if err := os.Remove(path); err != nil {

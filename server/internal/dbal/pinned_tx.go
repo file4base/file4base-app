@@ -65,7 +65,12 @@ func (m *MultiDatabaseManager) openTx(ctx context.Context, dbName string, opts d
 	default:
 		return nil, fmt.Errorf("no transaction support for engine: %s", m.baseEngine)
 	}
-	dsn, err := NormalizeDSN(m.baseEngine, m.BuildDSN(strings.ToLower(strings.TrimSpace(dbName))))
+	// The database as DriverFor names it, spelling included.
+	dbName = strings.TrimSpace(dbName)
+	if !validDatabaseName.MatchString(dbName) || IsProtectedDatabase(dbName) {
+		return nil, fmt.Errorf("invalid database name: %s", dbName)
+	}
+	dsn, err := NormalizeDSN(m.baseEngine, m.BuildDSN(dbName))
 	if err != nil {
 		return nil, err
 	}

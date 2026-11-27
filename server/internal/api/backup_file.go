@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 )
 
@@ -184,7 +185,9 @@ func (bw *backupWriter) Base64Field(key string, write func(io.Writer) error) err
 // It returns the size of the file.
 func writeBackupFile(path string, hdr backupHeader, body func(*backupWriter) error) (int64, error) {
 	partial := path + ".partial"
-	f, err := os.OpenFile(partial, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	// newBackupID reserved the name by creating this file: it is this
+	// writer's alone.
+	f, err := os.OpenFile(partial, os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return 0, err
 	}
@@ -226,6 +229,15 @@ func writeBackupFile(path string, hdr backupHeader, body func(*backupWriter) err
 		_ = os.Remove(partial)
 		return 0, err
 	}
+	// The new name is durable too: a restore relies on its pre-restore
+	// backup surviving a crash of the host.
+	if dir, err := os.Open(filepath.Dir(path)); err == nil {
+		syncErr := dir.Sync()
+		_ = dir.Close()
+		if syncErr != nil {
+			return 0, syncErr
+		}
+	}
 	return info.Size(), nil
 }
 
@@ -234,8 +246,14 @@ func writeBackupFile(path string, hdr backupHeader, body func(*backupWriter) err
 func writeRemainingFields(bw *backupWriter, fields map[string]json.RawMessage) error {
 	keys := make([]string, 0, len(fields))
 	for k := range fields {
-		if _, isHeader := map[string]bool{"id": true, "database": true, "engine": true, "created_at": true,
-			"created_by": true, "notes": true, "type": true, "tables_count": true}[k]; !isHeader {
+		// The header is the one just written. A key spelled like one of its
+		// fields in another case would be read as that field by a JSON
+		// decoder, and is dropped.
+		isHeader := false
+		for _, h := range backupHeaderOrder {
+			isHeader = isHeader || strings.EqualFold(k, h)
+		}
+		if !isHeader {
 			keys = append(keys, k)
 		}
 	}
@@ -254,7 +272,7 @@ func writeRemainingFields(bw *backupWriter, fields map[string]json.RawMessage) e
 // design, the accounts and every table's records are as they were at one
 // moment even while users keep working (#203). Any part that cannot be read
 // fails the backup, rather than leaving one that restores to nothing.
-func (h *ServerAdminHandler) writeSnapshot(ctx context.Context, dbName, backupID, createdBy, notes, bkpType string, now time.Time) (BackupRecord, error) {
+func (h *ServerAdminHandler) writeSnapshot(ctx context.Context, dbName, suffix, createdBy, notes, bkpType string, now time.Time) (BackupRecord, error) {
 	driver, err := h.dbMgr.DriverFor(ctx, dbName)
 	if err != nil {
 		return BackupRecord{}, err
@@ -275,6 +293,15 @@ func (h *ServerAdminHandler) writeSnapshot(ctx context.Context, dbName, backupID
 		_ = snap.Rollback()
 		schema.ForgetPool(snap.DB())
 	}()
+	if h.dbMgr.Engine() == dbal.EnginePostgres {
+		// PostgreSQL shows a snapshot a table rewritten after it began (a
+		// field whose type changed) as empty. Locking the tables before the
+		// first read, which is when the snapshot begins, makes such a change
+		// wait for the backup instead.
+		if err := lockTablesForSnapshot(ctx, live, snap); err != nil {
+			return BackupRecord{}, err
+		}
+	}
 	svc := schema.NewService(snap)
 
 	tables, err := svc.ListTables(ctx)
@@ -309,6 +336,10 @@ func (h *ServerAdminHandler) writeSnapshot(ctx context.Context, dbName, backupID
 	tableData := make(map[string]interface{}, len(tables))
 	for _, t := range tables {
 		tableData[t.Name] = map[string]interface{}{"metadata": t, "columns": t.Columns}
+	}
+	backupID, err := h.newBackupID(dbName, now, suffix)
+	if err != nil {
+		return BackupRecord{}, err
 	}
 	hdr := backupHeader{
 		ID: backupID, Database: dbName, Engine: string(h.dbMgr.Engine()), CreatedAt: now.Format(time.RFC3339),
@@ -350,24 +381,58 @@ func (h *ServerAdminHandler) writeSnapshot(ctx context.Context, dbName, backupID
 	}, nil
 }
 
+func lockTablesForSnapshot(ctx context.Context, live *schema.Service, snap *dbal.TxDriver) error {
+	tables, err := live.ListTables(ctx)
+	if err != nil {
+		return fmt.Errorf("the tables could not be read: %w", err)
+	}
+	if len(tables) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(tables))
+	for _, t := range tables {
+		names = append(names, snap.Dialect().QuoteIdentifier(t.Name))
+	}
+	if _, err := snap.DB().ExecContext(ctx, "LOCK TABLE "+strings.Join(names, ", ")+" IN ACCESS SHARE MODE"); err != nil {
+		return fmt.Errorf("the tables could not be locked for the backup: %w", err)
+	}
+	return nil
+}
+
 // backupHookForTest runs, in tests, between reading the design of a backup
 // and its records.
 var backupHookForTest func()
 
-// newBackupID names a backup of dbName taken at now. A suffix keeps two
-// backups taken in the same second apart.
-func (h *ServerAdminHandler) newBackupID(dbName string, now time.Time, suffix string) string {
+// newBackupID names a backup of dbName taken at now, and reserves the name
+// by creating its temporary file, which writeBackupFile then writes: two
+// backups started in the same second never share a file. A suffix tells
+// the kinds of backup apart.
+func (h *ServerAdminHandler) newBackupID(dbName string, now time.Time, suffix string) (string, error) {
 	base := fmt.Sprintf("bkp_%s_%s", dbName, now.Format("20060102_150405"))
 	if suffix != "" {
 		base += "_" + suffix
 	}
 	id := base
-	for n := 2; ; n++ {
-		if _, err := os.Stat(filepath.Join(h.backupsDir, id+".f4b.json")); errors.Is(err, os.ErrNotExist) {
-			return id
+	for n := 2; n <= 1000; n++ {
+		final := filepath.Join(h.backupsDir, id+".f4b.json")
+		f, err := os.OpenFile(final+".partial", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		switch {
+		case err == nil:
+			_ = f.Close()
+			_, statErr := os.Stat(final)
+			if errors.Is(statErr, os.ErrNotExist) {
+				return id, nil
+			}
+			_ = os.Remove(final + ".partial")
+			if statErr != nil {
+				return "", fmt.Errorf("the backups folder cannot be used: %w", statErr)
+			}
+		case !errors.Is(err, os.ErrExist):
+			return "", fmt.Errorf("the backups folder cannot be written: %w", err)
 		}
 		id = fmt.Sprintf("%s_%d", base, n)
 	}
+	return "", errors.New("no free name for the backup in the backups folder")
 }
 
 // removePartialBackups deletes what backups interrupted by a stop of the

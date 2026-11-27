@@ -28,7 +28,6 @@ type backupTableSnapshot struct {
 
 // backupContent is what a restore reads of a backup file.
 type backupContent struct {
-	Database          string                         `json:"database"`
 	TablesCount       int                            `json:"tables_count"`
 	Tables            map[string]backupTableSnapshot `json:"tables"`
 	Layouts           []schema.LayoutMetadata        `json:"layouts"`
@@ -91,6 +90,12 @@ func (h *ServerAdminHandler) lockRestore(database string) (func(), bool) {
 	}, true
 }
 
+func (h *ServerAdminHandler) isRestoring(database string) bool {
+	h.restoreMu.Lock()
+	defer h.restoreMu.Unlock()
+	return h.restoring[strings.ToLower(database)]
+}
+
 // RestoreBackup puts a database back as a backup holds it: its tables and
 // fields, layouts, scripts, occurrences, relationships, value lists, menus
 // and records. Its accounts are left as they are.
@@ -109,20 +114,21 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 	if !strings.HasSuffix(filename, ".f4b.json") {
 		filename += ".f4b.json"
 	}
-	path, _, ok := h.ownBackup(w, r, filename)
+	path, hdr, ok := h.ownBackup(w, r, filename)
 	if !ok {
+		return
+	}
+	// The database is the one ownBackup authorized, from the header: never
+	// what the rest of the file says.
+	targetDB := hdr.Database
+	if targetDB == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Corrupt Backup", "the backup does not say which database it is of")
 		return
 	}
 	content, err := readBackupContent(path)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Corrupt Backup", err.Error())
 		return
-	}
-
-	// ownBackup already checked the backup's database against the session.
-	targetDB := strings.TrimSpace(content.Database)
-	if targetDB == "" {
-		targetDB = sess.Database
 	}
 	unlock, ok := h.lockRestore(targetDB)
 	if !ok {
@@ -135,7 +141,7 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 	ctx := context.WithoutCancel(r.Context())
 
 	now := time.Now().UTC()
-	pre, err := h.writeSnapshot(ctx, targetDB, h.newBackupID(targetDB, now, "pre_restore"), sess.Username,
+	pre, err := h.writeSnapshot(ctx, targetDB, "pre_restore", sess.Username,
 		"Automatic backup before restoring "+id, "pre_restore", now)
 	if err != nil {
 		h.failRestore(w, r, sess.Username, targetDB, id,
@@ -145,28 +151,38 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 	prePath := filepath.Join(h.backupsDir, pre.Filename)
 
 	tablesCount := content.TablesCount
-	report, err := h.restoreInto(ctx, targetDB, content)
+	report, commitUnknown, err := h.restoreInto(ctx, targetDB, content)
 	content = nil
 	if err != nil {
-		if h.dbMgr.Engine() == dbal.EnginePostgres {
+		switch {
+		case commitUnknown:
+			// The commit may have been applied: the backup that undoes it
+			// stays.
+			h.failRestore(w, r, sess.Username, targetDB, id, fmt.Errorf(
+				"%w; whether the restore was applied is not known: check the database, and restore the pre-restore backup %s to undo it if it was",
+				err, pre.ID))
+		case h.dbMgr.Engine() == dbal.EnginePostgres:
 			_ = os.Remove(prePath)
 			h.failRestore(w, r, sess.Username, targetDB, id,
 				fmt.Errorf("%w; the restore was rolled back, the database is unchanged", err))
-			return
-		}
-		undo, rbErr := readBackupContent(prePath)
-		if rbErr == nil {
-			_, rbErr = h.restoreInto(ctx, targetDB, undo)
-		}
-		if rbErr != nil {
+		default:
+			// MariaDB commits before each change of a table's structure, so
+			// the database is put back by restoring the pre-restore backup,
+			// which is kept: records can come back with new record IDs.
+			undo, rbErr := readBackupContent(prePath)
+			if rbErr == nil {
+				_, _, rbErr = h.restoreInto(ctx, targetDB, undo)
+			}
+			if rbErr != nil {
+				h.failRestore(w, r, sess.Username, targetDB, id, fmt.Errorf(
+					"%w; putting the database back as it was also failed (%v): restore the pre-restore backup %s",
+					err, rbErr, pre.ID))
+				return
+			}
 			h.failRestore(w, r, sess.Username, targetDB, id, fmt.Errorf(
-				"%w; putting the database back as it was also failed (%v): restore the pre-restore backup %s",
-				err, rbErr, pre.ID))
-			return
+				"%w; the database was put back as it was before the restore from the pre-restore backup %s, which is kept",
+				err, pre.ID))
 		}
-		_ = os.Remove(prePath)
-		h.failRestore(w, r, sess.Username, targetDB, id,
-			fmt.Errorf("%w; the database was put back as it was before the restore", err))
 		return
 	}
 
@@ -195,30 +211,38 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 }
 
 // restoreInto restores content into database: in one transaction on
-// PostgreSQL, directly on MariaDB.
-func (h *ServerAdminHandler) restoreInto(ctx context.Context, database string, content *backupContent) (restoreReport, error) {
+// PostgreSQL, directly on MariaDB. commitUnknown says that the transaction
+// failed at its commit, which may or may not have been applied.
+func (h *ServerAdminHandler) restoreInto(ctx context.Context, database string, content *backupContent) (rep restoreReport, commitUnknown bool, err error) {
 	defer h.forgetCaches(ctx, database)
+	// A defect of the restore is a failed restore, which is rolled back or
+	// undone like any other.
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("the restore stopped on an internal error: %v", p)
+		}
+	}()
 	if h.dbMgr.Engine() != dbal.EnginePostgres {
 		driver, err := h.dbMgr.DriverFor(ctx, database)
 		if err != nil {
-			return restoreReport{}, err
+			return restoreReport{}, false, err
 		}
-		return restoreContent(ctx, schema.NewService(driver), content)
+		rep, err = restoreContent(ctx, schema.NewService(driver), content)
+		return rep, false, err
 	}
 	tx, err := h.dbMgr.OpenTransaction(ctx, database)
 	if err != nil {
-		return restoreReport{}, err
+		return restoreReport{}, false, err
 	}
 	defer schema.ForgetPool(tx.DB())
-	report, err := restoreContent(ctx, schema.NewService(tx), content)
-	if err != nil {
-		_ = tx.Rollback()
-		return report, err
+	defer tx.Rollback() // after a commit, nothing
+	if rep, err = restoreContent(ctx, schema.NewService(tx), content); err != nil {
+		return rep, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return report, fmt.Errorf("the restore could not be committed: %w", err)
+		return rep, true, fmt.Errorf("the restore could not be committed: %w", err)
 	}
-	return report, nil
+	return rep, false, nil
 }
 
 // forgetCaches drops what this process keeps of a database that was changed
@@ -238,8 +262,9 @@ func restoreContent(ctx context.Context, svc *schema.Service, snap *backupConten
 		return rep, fmt.Errorf("the catalog could not be prepared: %w", err)
 	}
 
-	// 1. Tables and fields.
-	if len(snap.Tables) > 0 {
+	// 1. Tables and fields. A backup without the section (none written by
+	// File4Base) leaves them; an empty one is of a database without tables.
+	if snap.Tables != nil {
 		if err := restoreTables(ctx, svc, snap, &rep); err != nil {
 			return rep, err
 		}
@@ -263,7 +288,7 @@ func restoreContent(ctx context.Context, svc *schema.Service, snap *backupConten
 	}
 
 	// 4. Layouts, removing those added after the backup.
-	if len(snap.Layouts) > 0 {
+	if snap.Layouts != nil {
 		if err := restoreLayouts(ctx, svc, snap, &rep); err != nil {
 			return rep, err
 		}
@@ -283,6 +308,15 @@ func restoreContent(ctx context.Context, svc *schema.Service, snap *backupConten
 		dataReport, err := svc.ImportDatabaseData(ctx, snap.records)
 		if err != nil {
 			return rep, fmt.Errorf("the records could not be restored: %w", err)
+		}
+		// Every record of the backup is put back, or the restore fails.
+		if len(dataReport.SkippedTables) > 0 {
+			return rep, fmt.Errorf("the records of %s could not be restored: the backup has no such table",
+				strings.Join(dataReport.SkippedTables, ", "))
+		}
+		if dataReport.RecordsSkipped > 0 {
+			return rep, fmt.Errorf("%d records of the backup could not be restored: an id or a unique value is repeated",
+				dataReport.RecordsSkipped)
 		}
 		rep.RecordsRestored = dataReport.RecordsInserted
 	}

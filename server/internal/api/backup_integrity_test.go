@@ -70,6 +70,31 @@ func TestBackup_IsOneSnapshotWhileUsersWrite(t *testing.T) {
 	assert.Len(t, rows, 2, "the write itself went through")
 }
 
+// On PostgreSQL a table changed in a way that rewrites it while a backup
+// runs would read as empty in the backup: the change waits for it instead.
+func TestBackup_TableRewritesWaitForIt(t *testing.T) {
+	if testdb.Engine() != dbal.EnginePostgres {
+		t.Skip("MariaDB fails such a read instead (table definition has changed)")
+	}
+	s := newServerToolsHarness(t, false)
+	ctx, _, _, _, _ := backupFixture(t, s)
+	live, err := s.mgr.DriverFor(ctx, s.aliceDB)
+	require.NoError(t, err)
+	var alterErr error
+	defer api.SetBackupHookForTest(func() {
+		conn, err := live.DB().Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+		_, err = conn.ExecContext(ctx, `SET lock_timeout = '300ms'`)
+		require.NoError(t, err)
+		_, alterErr = conn.ExecContext(ctx, `ALTER TABLE samples ADD COLUMN rewritten INT`)
+	})()
+	code, _ := s.backup(s.aliceToken, nil)
+	require.Equal(t, http.StatusCreated, code)
+	require.Error(t, alterErr, "the change waited for the backup")
+	assert.Contains(t, alterErr.Error(), "lock timeout")
+}
+
 // The records of a backup are written as they are read, and are those the
 // data export gives.
 func TestBackup_StreamsTheRecordsTheExportGives(t *testing.T) {
@@ -157,7 +182,70 @@ func TestRestore_FailingPartWayLeavesTheDatabaseUnchanged(t *testing.T) {
 
 	var list backupList
 	s.do(http.MethodGet, "/api/v1/server/backups", s.aliceToken, nil, &list)
-	assert.Len(t, list.Backups, 2, "no pre-restore backup is left: nothing was changed")
+	if testdb.Engine() == dbal.EnginePostgres {
+		assert.Len(t, list.Backups, 2, "no pre-restore backup is left: nothing was changed")
+	} else {
+		assert.Len(t, list.Backups, 3, "the pre-restore backup it was put back from is kept")
+	}
+}
+
+// A field validated as unique is restored, on MariaDB too, where its index
+// was created a second time and failed the restore and its undoing.
+func TestRestore_KeepsAUniqueField(t *testing.T) {
+	s := newServerToolsHarness(t, false)
+	ctx, svc, dataSvc, echo, id := backupFixture(t, s)
+	rules := `{"unique":true}`
+	_, err := svc.AddColumn(ctx, echo.TableID, schema.ColumnMetadata{
+		Name: "code", DisplayName: "code", FieldType: dbal.FieldTypeText, IsNullable: true, ValidationRules: &rules})
+	require.NoError(t, err)
+	_, err = dataSvc.UpdateRow(ctx, "samples", id, map[string]interface{}{"code": "A1"})
+	require.NoError(t, err)
+	code, backupID := s.backup(s.aliceToken, nil)
+	require.Equal(t, http.StatusCreated, code)
+	_, err = dataSvc.UpdateRow(ctx, "samples", id, map[string]interface{}{"code": "B2"})
+	require.NoError(t, err)
+
+	rec := s.do(http.MethodPost, "/api/v1/server/backups/"+backupID+"/restore", s.aliceToken, nil, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got, err := dataSvc.GetRow(ctx, "samples", id)
+	require.NoError(t, err)
+	assert.Equal(t, "A1", got["code"])
+	_, err = dataSvc.InsertRow(ctx, "samples", map[string]interface{}{"code": "A1"})
+	assert.Error(t, err, "the field is still unique")
+}
+
+// A restore goes into the database the backup was authorized for, whatever
+// else its file says: a key "Database" next to "database", which a JSON
+// decoder reads as it, does not choose the database.
+func TestRestore_IntoTheAuthorizedDatabaseOnly(t *testing.T) {
+	s := newServerToolsHarness(t, false)
+	backupFixture(t, s)
+	code, backupID := s.backup(s.aliceToken, nil)
+	require.Equal(t, http.StatusCreated, code)
+	file := backupFileOf(t, s, s.aliceToken, backupID)
+	file["Database"], _ = json.Marshal(s.bobDB)
+	file["DATABASE"], _ = json.Marshal(s.bobDB)
+	forged, err := json.Marshal(file)
+	require.NoError(t, err)
+	up := s.doRaw(http.MethodPost, "/api/v1/server/backups/upload", s.aliceToken, "application/json", forged)
+	require.Equal(t, http.StatusCreated, up.Code, up.Body.String())
+	var uploaded struct{ ID string }
+	require.NoError(t, json.Unmarshal(up.Body.Bytes(), &uploaded))
+
+	bobDriver, err := s.mgr.DriverFor(context.Background(), s.bobDB)
+	require.NoError(t, err)
+	before, err := schema.NewService(bobDriver).ListTables(context.Background())
+	require.NoError(t, err)
+
+	var res struct {
+		Database string `json:"database"`
+	}
+	rec := s.do(http.MethodPost, "/api/v1/server/backups/"+uploaded.ID+"/restore", s.aliceToken, nil, &res)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, s.aliceDB, res.Database)
+	after, err := schema.NewService(bobDriver).ListTables(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, len(before), len(after), "Bob's database was not touched")
 }
 
 // A restore that completes keeps a pre-restore backup, which undoes it.

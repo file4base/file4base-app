@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"strings"
 	"time"
 
@@ -2144,6 +2145,9 @@ func (s *Service) WriteDatabaseData(ctx context.Context, dbName string, w io.Wri
 		if err := enc.EncodeString(tbl.Name); err != nil {
 			return err
 		}
+		if count > math.MaxUint32 {
+			return fmt.Errorf("%s has more records than a backup can hold", tbl.Name)
+		}
 		if err := enc.EncodeArrayLen(count); err != nil {
 			return err
 		}
@@ -2309,12 +2313,23 @@ type DataImportReport struct {
 	RecordIDsRenumbered int `json:"record_ids_renumbered"`
 }
 
+// dataEntryLimit is how many entries a data file of size bytes may declare.
+func dataEntryLimit(size int) int {
+	const atLeast = 5_000_000
+	if size > atLeast {
+		return size
+	}
+	return atLeast
+}
+
 // ImportDatabaseData restores records in one transaction. Tables and fields
 // are validated first; the first failing record rolls everything back. A
 // record whose id already exists is skipped, not overwritten.
 func (s *Service) ImportDatabaseData(ctx context.Context, file []byte) (*DataImportReport, error) {
-	// Check declared sizes before the decoder allocates from them (#13).
-	if err := msgpackguard.Check(file, msgpackguard.Limits{}); err != nil {
+	// Check declared sizes before the decoder allocates from them (#13). An
+	// entry takes at least a byte, so a file may declare as many as it has
+	// bytes: a backup of a large database is read back whole (#203).
+	if err := msgpackguard.Check(file, msgpackguard.Limits{MaxEntries: dataEntryLimit(len(file))}); err != nil {
 		return nil, fmt.Errorf("invalid MessagePack database data file: %w", err)
 	}
 	var bundle DatabaseDataBundle
@@ -2380,6 +2395,9 @@ func (s *Service) ImportDatabaseData(ctx context.Context, file []byte) (*DataImp
 		tableNames = append(tableNames, tableName)
 		identities[tableName] = make([]data.Identity, len(rows))
 		for i, row := range rows {
+			if row == nil {
+				return nil, fmt.Errorf("%w: record %d of table %s is empty", ErrInvalidBundle, i+1, tableName)
+			}
 			identity, err := recordIdentityFromRecord(row)
 			if err != nil {
 				return nil, fmt.Errorf("record %d of table %s: %w", i+1, tableName, err)
