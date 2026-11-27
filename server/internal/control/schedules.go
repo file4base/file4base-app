@@ -159,18 +159,30 @@ func (s *Store) CreateSchedule(ctx context.Context, sc ServerSchedule) error {
 	return err
 }
 
-// UpdateSchedule replaces a schedule's settings and next run.
-func (s *Store) UpdateSchedule(ctx context.Context, sc ServerSchedule) error {
+// ErrScheduleChanged is returned by UpdateSchedule when the schedule's next
+// run moved since it was read: it ran meanwhile.
+var ErrScheduleChanged = errors.New("the schedule ran or changed meanwhile")
+
+// UpdateSchedule replaces a schedule's settings. Its next run is replaced
+// only when timing is true (its cron or enabled state changed), and then
+// only if it is still prevNext, the one the caller read: a run claimed in
+// between is never moved back to its occurrence and run again.
+func (s *Store) UpdateSchedule(ctx context.Context, sc ServerSchedule, timing bool, prevNext *time.Time) error {
 	if s == nil || s.db == nil {
 		return errors.New("no control store")
 	}
 	dbs, _ := json.Marshal(nonNilStrings(sc.Databases))
-	res, err := s.db.ExecContext(ctx, `
-		UPDATE server_schedules SET name = ?, name_key = ?, job_type = ?, databases_json = ?, cron_expr = ?,
-			keep_count = ?, operation = ?, enabled = ?, next_run_at = ?, updated_at = ?
-		WHERE id = ?
-	`, strings.TrimSpace(sc.Name), scheduleNameKey(sc.Name), sc.Type, string(dbs), sc.Cron, sc.Keep,
-		sc.Operation, boolToInt(sc.Enabled), storeTimePtr(sc.NextRunAt), storeTime(time.Now()), sc.ID)
+	query := `UPDATE server_schedules SET name = ?, name_key = ?, job_type = ?, databases_json = ?, cron_expr = ?,
+			keep_count = ?, operation = ?, enabled = ?, updated_at = ? WHERE id = ?`
+	args := []interface{}{strings.TrimSpace(sc.Name), scheduleNameKey(sc.Name), sc.Type, string(dbs), sc.Cron,
+		sc.Keep, sc.Operation, boolToInt(sc.Enabled), storeTime(time.Now()), sc.ID}
+	if timing {
+		query = `UPDATE server_schedules SET name = ?, name_key = ?, job_type = ?, databases_json = ?, cron_expr = ?,
+			keep_count = ?, operation = ?, enabled = ?, updated_at = ?, next_run_at = ?
+			WHERE id = ? AND next_run_at IS ?`
+		args = append(args[:9], storeTimePtr(sc.NextRunAt), sc.ID, storeTimePtr(prevNext))
+	}
+	res, err := s.db.ExecContext(ctx, query, args...)
 	if isUniqueViolation(err) {
 		return ErrScheduleNameTaken
 	}
@@ -178,7 +190,10 @@ func (s *Store) UpdateSchedule(ctx context.Context, sc ServerSchedule) error {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrScheduleNotFound
+		if _, err := s.GetSchedule(ctx, sc.ID); err != nil {
+			return err
+		}
+		return ErrScheduleChanged
 	}
 	return nil
 }
@@ -255,25 +270,61 @@ func (s *Store) ListSchedules(ctx context.Context) ([]ServerSchedule, error) {
 	return list, rows.Err()
 }
 
-// ClaimScheduleRun moves a schedule's next run from due to next, and says
-// whether this caller was the one that did: the update applies only while
+// ClaimScheduleRun moves an enabled schedule's next run from due to next,
+// and records run for that occurrence, in one transaction: as running, or,
+// when run.Status is RunSkipped, as skipped. The update applies only while
 // the schedule still has the next run the caller read, so one occurrence is
-// claimed once.
-func (s *Store) ClaimScheduleRun(ctx context.Context, id string, due time.Time, next *time.Time) (bool, error) {
+// claimed once, and a claimed occurrence always has its run recorded. It
+// gives the schedule as it is now, and the run's id; nil when the
+// occurrence was not claimed.
+func (s *Store) ClaimScheduleRun(ctx context.Context, id string, due time.Time, next *time.Time, run ScheduleRun) (*ServerSchedule, int64, error) {
 	if s == nil || s.db == nil {
-		return false, errors.New("no control store")
+		return nil, 0, errors.New("no control store")
 	}
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE server_schedules SET next_run_at = ? WHERE id = ? AND next_run_at = ?`,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE server_schedules SET next_run_at = ? WHERE id = ? AND enabled = 1 AND next_run_at = ?`,
 		storeTimePtr(next), id, storeTime(due))
 	if err != nil {
-		return false, err
+		return nil, 0, err
 	}
-	n, _ := res.RowsAffected()
-	return n == 1, nil
+	if n, _ := res.RowsAffected(); n != 1 {
+		return nil, 0, nil
+	}
+	sc, err := scanServerSchedule(tx.QueryRowContext(ctx, `SELECT `+scheduleColumns+` FROM server_schedules WHERE id = ?`, id))
+	if err != nil {
+		return nil, 0, err
+	}
+	status, finished := RunRunning, interface{}(nil)
+	if run.Status == RunSkipped {
+		status, finished = RunSkipped, storeTime(run.StartedAt)
+	}
+	ins, err := tx.ExecContext(ctx, `
+		INSERT INTO server_schedule_runs (schedule_id, trigger, status, started_at, finished_at, error)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, id, run.Trigger, status, storeTime(run.StartedAt), finished, run.Error)
+	if err != nil {
+		return nil, 0, err
+	}
+	runID, err := ins.LastInsertId()
+	if err != nil {
+		return nil, 0, err
+	}
+	if _, err := tx.ExecContext(ctx, trimRuns, id, id, keptRuns); err != nil {
+		return nil, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, 0, err
+	}
+	return sc, runID, nil
 }
 
-// StartScheduleRun records a run as started, and gives its id.
+// StartScheduleRun records a run that is not an occurrence (run now) as
+// started, and gives its id.
 func (s *Store) StartScheduleRun(ctx context.Context, run ScheduleRun) (int64, error) {
 	if s == nil || s.db == nil {
 		return 0, errors.New("no control store")
@@ -317,12 +368,13 @@ func (s *Store) FinishScheduleRun(ctx context.Context, run ScheduleRun) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `
-		DELETE FROM server_schedule_runs WHERE schedule_id = ? AND id NOT IN (
-			SELECT id FROM server_schedule_runs WHERE schedule_id = ? ORDER BY id DESC LIMIT ?)
-	`, run.ScheduleID, run.ScheduleID, keptRuns)
+	_, err = s.db.ExecContext(ctx, trimRuns, run.ScheduleID, run.ScheduleID, keptRuns)
 	return err
 }
+
+// trimRuns keeps the keptRuns latest runs of a schedule.
+const trimRuns = `DELETE FROM server_schedule_runs WHERE schedule_id = ? AND id NOT IN (
+	SELECT id FROM server_schedule_runs WHERE schedule_id = ? ORDER BY id DESC LIMIT ?)`
 
 // InterruptScheduleRuns records every run still marked running as failed:
 // called at startup, when no run of this process has begun, they are runs

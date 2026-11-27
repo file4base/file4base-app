@@ -88,24 +88,22 @@ func newScheduleHarness(t *testing.T, store *control.Store, start time.Time) *sc
 	}
 	clock := &fakeClock{t: start}
 	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
 	s := newServerToolsHarnessWith(t, true, func(o *api.Options) {
 		o.ControlStore = store
-		o.Schedules = &api.ScheduleOptions{Context: ctx, Interval: 10 * time.Millisecond, Location: paris, Now: clock.Now}
+		o.Schedules = &api.ScheduleOptions{Context: ctx, Interval: 10 * time.Millisecond, Location: paris,
+			Now: clock.Now, Stopped: stopped}
 	})
-	h := &scheduleHarness{serverToolsHarness: s, clock: clock, store: store}
 	// The scheduler stops, and its run ends, before the databases go.
 	t.Cleanup(func() {
 		cancel()
-		assert.Eventually(t, func() bool {
-			for _, sc := range h.list(t) {
-				if sc.Running {
-					return false
-				}
-			}
-			return true
-		}, 30*time.Second, 20*time.Millisecond)
+		select {
+		case <-stopped:
+		case <-time.After(30 * time.Second):
+			t.Error("the scheduler did not stop")
+		}
 	})
-	return h
+	return &scheduleHarness{serverToolsHarness: s, clock: clock, store: store}
 }
 
 func (h *scheduleHarness) list(t *testing.T) []scheduleJSON {
@@ -338,6 +336,8 @@ func TestSchedules_AreCheckedWhenSaved(t *testing.T) {
 		{map[string]interface{}{"name": "Nobody", "type": "backup", "cron": "0 2 * * *", "databases": []string{"f4b_none"}}, "no solution"},
 		{map[string]interface{}{"name": "Bad cron", "type": "backup", "cron": "every night"}, ""},
 		{map[string]interface{}{"name": "Too many", "type": "backup", "cron": "0 2 * * *", "keep": 5000}, "1000"},
+		{map[string]interface{}{"name": "None kept", "type": "backup", "cron": "0 2 * * *", "keep": 0}, "1000"},
+		{map[string]interface{}{"name": "Never", "type": "backup", "cron": "0 2 31 2 *"}, "never"},
 		{map[string]interface{}{"name": "Rebuild", "type": "maintenance", "cron": "0 2 * * *", "operation": "reindex"}, "reindex"},
 		{map[string]interface{}{"type": "backup", "cron": "0 2 * * *"}, "name"},
 	}
@@ -363,7 +363,14 @@ func TestSchedules_AreCheckedWhenSaved(t *testing.T) {
 		map[string]interface{}{"name": "NIGHTLY", "type": "backup", "cron": "0 3 * * *"}, nil)
 	assert.Equal(t, http.StatusConflict, rec.Code)
 
+	// A change that leaves its timing alone leaves its next run alone.
 	var changed scheduleJSON
+	rec = h.do(http.MethodPut, "/api/v1/server/schedules/"+sc.ID, h.adminToken, map[string]interface{}{"keep": 30}, &changed)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, 30, changed.Keep)
+	require.NotNil(t, changed.NextRunAt)
+	assert.True(t, changed.NextRunAt.Equal(*sc.NextRunAt))
+
 	rec = h.do(http.MethodPut, "/api/v1/server/schedules/"+sc.ID, h.adminToken, map[string]interface{}{"enabled": false}, &changed)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.False(t, changed.Enabled)

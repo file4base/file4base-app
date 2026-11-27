@@ -51,10 +51,11 @@ class _ServerSchedulesPanelState extends State<ServerSchedulesPanel> {
         _loading = false;
         _error = null;
       });
-      // While a run is going or waiting, its outcome is fetched as it comes.
+      // The list follows the runs: quickly while one is going or waiting,
+      // slowly otherwise.
       final busy = list.any((s) => s['running'] == true || s['queued'] == true);
       _poll?.cancel();
-      if (busy) _poll = Timer(const Duration(seconds: 3), () => unawaited(_load()));
+      _poll = Timer(Duration(seconds: busy ? 3 : 30), () => unawaited(_load()));
     } on Exception catch (e) {
       if (!mounted) return;
       setState(() {
@@ -101,8 +102,8 @@ class _ServerSchedulesPanelState extends State<ServerSchedulesPanel> {
                     const SizedBox(height: 2),
                     Text(
                       'Backups of the solutions, kept to a number of copies, and their maintenance. '
-                      'Times are in the server time zone${_timeZone.isEmpty ? '' : ' ($_timeZone)'}; '
-                      'a run the server was down for is skipped, not run late.',
+                      'Frequencies are read in the server time zone${_timeZone.isEmpty ? '' : ' ($_timeZone)'}, '
+                      "run times are shown in this computer's; a run the server was down for is skipped, not run late.",
                       style: TextStyle(fontSize: 12, color: muted),
                     ),
                   ],
@@ -120,7 +121,7 @@ class _ServerSchedulesPanelState extends State<ServerSchedulesPanel> {
             Padding(
               padding: const EdgeInsets.only(top: 10),
               child: Text(
-                'This server process does not run schedules (FILE4BASE_SERVER_SCHEDULER=false).',
+                'This server process does not run schedules (FILE4BASE_SERVER_SCHEDULER=false, or no persistent control store).',
                 style: TextStyle(fontSize: 12, color: theme.colorScheme.error),
               ),
             ),
@@ -504,13 +505,19 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
 
   Future<void> _save() async {
     if (_timing.frequency == ScheduleFrequency.custom) _timing.cron = _cron.text;
+    final keep = int.tryParse(_keep.text.trim());
+    if (_type == 'backup' && (keep == null || keep < 1 || keep > 1000)) {
+      // A backup schedule deletes what it does not keep: never guess.
+      setState(() => _error = 'Keep from 1 to 1000 backups of each solution.');
+      return;
+    }
     final body = <String, dynamic>{
       'name': _name.text.trim(),
       'type': _type,
       'databases': _allSolutions ? <String>[] : _selected.toList(),
       'cron': _timing.toCron(),
       'enabled': _enabled,
-      if (_type == 'backup') 'keep': int.tryParse(_keep.text.trim()) ?? 0,
+      if (_type == 'backup') 'keep': keep,
       if (_type == 'maintenance') 'operation': _operation,
     };
     if (!_allSolutions && _selected.isEmpty) {

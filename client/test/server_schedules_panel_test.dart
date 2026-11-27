@@ -163,6 +163,19 @@ void main() {
     });
   });
 
+  testWidgets('a backup schedule is never saved without a count of copies to keep', (tester) async {
+    final api = _SchedulesApi();
+    await _pump(tester, api);
+
+    await tester.tap(find.text('New Schedule'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Backups to keep of each solution'), '');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(api.created, isEmpty, reason: 'an empty count is not sent as 0, nor replaced by a default');
+    expect(find.textContaining('Keep from 1 to 1000'), findsOneWidget);
+  });
+
   test('reads the frequencies back from their cron expressions', () {
     expect(describeCron('15 * * * *'), 'Every hour at :15');
     expect(describeCron('0 2 * * *'), 'Daily at 02:00');

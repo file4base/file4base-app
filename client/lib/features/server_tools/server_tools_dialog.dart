@@ -145,6 +145,9 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
   // 5. Sessions state
   List<Map<String, dynamic>> _sessions = [];
 
+  // 6. Schedules: reloaded by Refresh (server_schedules_panel.dart)
+  int _schedulesGeneration = 0;
+
   // 7. Audit Logs state
   List<Map<String, dynamic>> _auditEvents = [];
   String _auditCategoryFilter = 'all';
@@ -299,8 +302,11 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
             _loading = false;
           });
         case ServerToolSection.schedules:
-          // The panel loads its own list.
-          setState(() => _loading = false);
+          // The panel loads its own list; a new key makes it load again.
+          setState(() {
+            _schedulesGeneration++;
+            _loading = false;
+          });
         case ServerToolSection.auditLogs:
           final list = await widget.apiClient.listServerAuditLogs();
           if (!mounted) return;
@@ -2645,7 +2651,8 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
   // ===========================================================================
   // 6. SCHEDULES VIEW (server_schedules_panel.dart)
   // ===========================================================================
-  Widget _buildSchedulesView() => ServerSchedulesPanel(apiClient: widget.apiClient);
+  Widget _buildSchedulesView() =>
+      ServerSchedulesPanel(key: ValueKey(_schedulesGeneration), apiClient: widget.apiClient);
 
   // ===========================================================================
   // 7. AUDIT & SECURITY LOGS VIEW

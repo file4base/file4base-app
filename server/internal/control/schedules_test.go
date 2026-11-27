@@ -64,15 +64,45 @@ func TestSchedules_AnOccurrenceIsClaimedOnce(t *testing.T) {
 	require.NoError(t, store.CreateSchedule(ctx, ServerSchedule{ID: "s1", Name: "Nightly", Type: ScheduleBackup,
 		Cron: "0 2 * * *", Keep: 7, Enabled: true, NextRunAt: &due}))
 
-	claimed, err := store.ClaimScheduleRun(ctx, "s1", due, &after)
+	run := ScheduleRun{ScheduleID: "s1", Trigger: "schedule", StartedAt: due}
+	sc, runID, err := store.ClaimScheduleRun(ctx, "s1", due, &after, run)
 	require.NoError(t, err)
-	assert.True(t, claimed)
-	claimed, err = store.ClaimScheduleRun(ctx, "s1", due, &after)
+	require.NotNil(t, sc, "claimed")
+	assert.True(t, sc.NextRunAt.Equal(after), "the schedule is given as it is now")
+	assert.Positive(t, runID)
+	sc, _, err = store.ClaimScheduleRun(ctx, "s1", due, &after, run)
 	require.NoError(t, err)
-	assert.False(t, claimed, "the same occurrence is not claimed twice")
+	assert.Nil(t, sc, "the same occurrence is not claimed twice")
+
+	// The claimed occurrence has its run recorded with it, so a stop right
+	// after the claim is found at the next start.
+	runs, err := store.ListScheduleRuns(ctx, "s1", 0)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, RunRunning, runs[0].Status)
+
+	// A change of its settings leaves its next run alone; a change of its
+	// timing applies only over the next run it was read with.
 	got, err := store.GetSchedule(ctx, "s1")
 	require.NoError(t, err)
+	got.Keep = 30
+	require.NoError(t, store.UpdateSchedule(ctx, *got, false, nil))
+	stale := due
+	moved := due.Add(time.Hour)
+	got.NextRunAt = &moved
+	assert.ErrorIs(t, store.UpdateSchedule(ctx, *got, true, &stale), ErrScheduleChanged,
+		"a run claimed meanwhile is not moved back")
+	got, err = store.GetSchedule(ctx, "s1")
+	require.NoError(t, err)
 	assert.True(t, got.NextRunAt.Equal(after))
+	assert.Equal(t, 30, got.Keep)
+
+	// A disabled schedule is not claimed.
+	got.Enabled = false
+	require.NoError(t, store.UpdateSchedule(ctx, *got, false, nil))
+	sc, _, err = store.ClaimScheduleRun(ctx, "s1", after, nil, run)
+	require.NoError(t, err)
+	assert.Nil(t, sc)
 }
 
 // The history of a schedule keeps its latest runs, and goes with it.

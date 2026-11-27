@@ -211,6 +211,7 @@ func main() {
 		controlDBPath = "./data/file4base_control.db"
 	}
 	controlStore, err := control.NewStore(controlDBPath)
+	controlPersistent := err == nil
 	if err != nil {
 		log.Printf("Warning: failed to open SQLite control store at %s (%v); falling back to in-memory control store", controlDBPath, err)
 		controlStore, err = control.NewStore(":memory:")
@@ -332,10 +333,16 @@ func main() {
 	var serverSchedules *api.ScheduleOptions
 	serverSchedulesCtx, stopServerSchedules := context.WithCancel(context.Background())
 	defer stopServerSchedules()
-	if envBool("FILE4BASE_SERVER_SCHEDULER", true) {
-		serverSchedules = &api.ScheduleOptions{Context: serverSchedulesCtx}
+	serverSchedulesDone := make(chan struct{})
+	switch {
+	case !controlPersistent:
+		close(serverSchedulesDone)
+		log.Println("Server schedules disabled: the control store is in memory, so schedules and their history would be lost at the next start")
+	case envBool("FILE4BASE_SERVER_SCHEDULER", true):
+		serverSchedules = &api.ScheduleOptions{Context: serverSchedulesCtx, Stopped: serverSchedulesDone}
 		log.Printf("Server schedules running (time zone %s)", time.Local)
-	} else {
+	default:
+		close(serverSchedulesDone)
 		log.Println("Server schedules disabled (FILE4BASE_SERVER_SCHEDULER=false): backup and maintenance schedules do not run in this process")
 	}
 
@@ -434,13 +441,18 @@ func main() {
 
 	// 4. Stop starting scheduled transfers and let the running ones finish
 	// their transaction, within the same shutdown deadline. A server
-	// schedule running now is stopped; the next start records it as such.
+	// schedule running now is stopped and its run recorded as failed.
 	stopServerSchedules()
 	stopScheduler()
 	select {
 	case <-schedulerDone:
 	case <-ctx.Done():
 		log.Println("Warning: shutdown deadline reached while a scheduled transfer was still running")
+	}
+	select {
+	case <-serverSchedulesDone:
+	case <-ctx.Done():
+		log.Println("Warning: shutdown deadline reached while a server schedule was still running")
 	}
 
 	// 5. Close database pool connections

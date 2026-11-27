@@ -174,9 +174,10 @@ func (s *Schedule) NextIn(after time.Time, loc *time.Location) time.Time {
 		}
 		t := time.Date(n.Year(), n.Month(), n.Day(), n.Hour(), n.Minute(), 0, 0, loc)
 		// time.Date may give either occurrence of a repeated time: take the
-		// first one still to come.
+		// first one, and only it, so the second is never due even once the
+		// first has passed.
 		for _, back := range []time.Duration{time.Hour, 30 * time.Minute} {
-			if e := t.Add(-back); sameWallMinute(e.In(loc), n) && e.After(after) {
+			if e := t.Add(-back); sameWallMinute(e.In(loc), n) {
 				t = e
 				break
 			}

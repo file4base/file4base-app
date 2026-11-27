@@ -20,7 +20,6 @@ import (
 	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/cronexpr"
 	"github.com/file4base/file4base-app/server/internal/dbal"
-	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 )
 
@@ -46,10 +45,14 @@ type ScheduleOptions struct {
 	Location *time.Location
 	// Now is the clock. Tests set it.
 	Now func() time.Time
+	// Stopped, if set, is closed once the scheduler has stopped and its
+	// last run is recorded.
+	Stopped chan struct{}
 }
 
 // missedAfter is how late a run can start after the server starts: an
-// occurrence older than that was missed while the server was down.
+// occurrence older than that was missed while the server was down. A
+// server restarted within it (an upgrade) still runs the occurrence.
 const missedAfter = 5 * time.Minute
 
 // The maintenance operations.
@@ -58,6 +61,8 @@ const (
 	maintenanceAnalyze       = "analyze"
 )
 
+var errScheduleBusy = errors.New("this schedule is running; delete it once its run ends")
+
 type serverScheduler struct {
 	h        *ServerAdminHandler
 	interval time.Duration
@@ -65,6 +70,9 @@ type serverScheduler struct {
 	now      func() time.Time
 	wake     chan struct{}
 
+	// mu guards what follows. A schedule is marked running before its
+	// occurrence is claimed, and deleted only while it is not, under mu, so
+	// a schedule is never deleted while it runs.
 	mu      sync.Mutex
 	started bool
 	running string   // the schedule running now
@@ -79,9 +87,15 @@ func newServerScheduler(h *ServerAdminHandler) *serverScheduler {
 	}
 }
 
-// StartSchedules runs the server schedules until opts.Context ends.
+// StartSchedules runs the server schedules until opts.Context ends. It
+// starts them once: a second call does nothing.
 func (h *ServerAdminHandler) StartSchedules(opts ScheduleOptions) {
 	s := h.scheduler
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.started {
+		return
+	}
 	if opts.Interval > 0 {
 		s.interval = opts.Interval
 	}
@@ -91,17 +105,23 @@ func (h *ServerAdminHandler) StartSchedules(opts ScheduleOptions) {
 	if opts.Now != nil {
 		s.now = opts.Now
 	}
-	s.mu.Lock()
 	s.started = true
-	s.mu.Unlock()
-	go s.run(opts.Context)
+	go s.run(opts.Context, opts.Stopped)
 }
 
 func (s *serverScheduler) logf(format string, args ...interface{}) {
 	log.Printf("server schedules: "+format, args...)
 }
 
-func (s *serverScheduler) run(ctx context.Context) {
+func (s *serverScheduler) run(ctx context.Context, stopped chan struct{}) {
+	defer func() {
+		s.mu.Lock()
+		s.started, s.queued = false, nil
+		s.mu.Unlock()
+		if stopped != nil {
+			close(stopped)
+		}
+	}()
 	store := s.h.controlStore
 	if n, err := store.InterruptScheduleRuns(ctx); err != nil {
 		s.logf("the runs the server stopped during could not be recorded: %v", err)
@@ -123,7 +143,8 @@ func (s *serverScheduler) run(ctx context.Context) {
 }
 
 // skipMissed records the occurrences that passed while the server was not
-// running and moves their schedules on, without running them.
+// running and moves their schedules on, without running them: one skipped
+// run per schedule, from the first occurrence missed.
 func (s *serverScheduler) skipMissed(ctx context.Context) {
 	list, err := s.h.controlStore.ListSchedules(ctx)
 	if err != nil {
@@ -143,15 +164,16 @@ func (s *serverScheduler) skipMissed(ctx context.Context) {
 // skip records that sc's occurrence due was not run, and moves sc to its
 // next one after now.
 func (s *serverScheduler) skip(ctx context.Context, sc control.ServerSchedule, due, now time.Time, why string) {
-	claimed, err := s.h.controlStore.ClaimScheduleRun(ctx, sc.ID, due, s.nextAfter(sc.Cron, now))
-	if err != nil || !claimed {
+	claimed, _, err := s.h.controlStore.ClaimScheduleRun(ctx, sc.ID, due, s.nextAfter(sc.Cron, now),
+		control.ScheduleRun{ScheduleID: sc.ID, Trigger: scheduleTriggerSchedule, Status: control.RunSkipped,
+			StartedAt: due, Error: why})
+	if err != nil {
+		s.logf("%s: its skipped occurrence could not be recorded: %v", sc.Name, err)
 		return
 	}
-	_ = s.h.controlStore.FinishScheduleRun(ctx, control.ScheduleRun{
-		ScheduleID: sc.ID, Trigger: scheduleTriggerSchedule, Status: control.RunSkipped,
-		StartedAt: due, FinishedAt: &due, Error: why,
-	})
-	s.h.recordAudit("schedule", "Skip Scheduled Job", "scheduler", "", sc.Name, "warning", why)
+	if claimed != nil {
+		s.h.recordAudit("schedule", "Skip Scheduled Job", "scheduler", "", sc.Name, "warning", why)
+	}
 }
 
 func (s *serverScheduler) nextAfter(expr string, t time.Time) *time.Time {
@@ -174,46 +196,62 @@ const (
 // tick runs the run-now requests, then every schedule that is due, one
 // after the other.
 func (s *serverScheduler) tick(ctx context.Context) {
+	store := s.h.controlStore
 	for ctx.Err() == nil {
 		id, ok := s.popQueued()
 		if !ok {
 			break
 		}
-		if sc, err := s.h.controlStore.GetSchedule(ctx, id); err == nil {
-			s.runOne(ctx, *sc, scheduleTriggerManual)
+		started := s.now()
+		if sc, err := store.GetSchedule(ctx, id); err == nil {
+			runID, err := store.StartScheduleRun(ctx, control.ScheduleRun{ScheduleID: id, Trigger: scheduleTriggerManual, StartedAt: started})
+			if err != nil {
+				s.logf("%s: the run could not be recorded, so it was not run: %v", sc.Name, err)
+			} else {
+				s.runOne(ctx, *sc, scheduleTriggerManual, runID)
+				s.skipOverlap(ctx, id, started)
+			}
 		}
 		s.setRunning("")
 	}
-	list, err := s.h.controlStore.ListSchedules(ctx)
+	list, err := store.ListSchedules(ctx)
 	if err != nil {
 		s.logf("the schedules could not be read: %v", err)
 		return
 	}
-	for _, sc := range list {
+	for _, listed := range list {
 		if ctx.Err() != nil {
 			return
 		}
 		now := s.now()
-		if !sc.Enabled || sc.NextRunAt == nil || sc.NextRunAt.After(now) {
+		if !listed.Enabled || listed.NextRunAt == nil || listed.NextRunAt.After(now) {
 			continue
 		}
-		claimed, err := s.h.controlStore.ClaimScheduleRun(ctx, sc.ID, *sc.NextRunAt, s.nextAfter(sc.Cron, now))
+		s.setRunning(listed.ID)
+		// The claim gives the schedule as it is now: a change saved since
+		// the list was read (its retention) applies to this run.
+		sc, runID, err := store.ClaimScheduleRun(ctx, listed.ID, *listed.NextRunAt, s.nextAfter(listed.Cron, now),
+			control.ScheduleRun{ScheduleID: listed.ID, Trigger: scheduleTriggerSchedule, StartedAt: now})
 		if err != nil {
-			s.logf("%s could not be claimed: %v", sc.Name, err)
-			continue
+			s.logf("%s could not be claimed: %v", listed.Name, err)
 		}
-		if !claimed {
-			continue
+		if sc != nil {
+			s.runOne(ctx, *sc, scheduleTriggerSchedule, runID)
+			s.skipOverlap(ctx, sc.ID, now)
 		}
-		s.setRunning(sc.ID)
-		s.runOne(ctx, sc, scheduleTriggerSchedule)
 		s.setRunning("")
-		// An occurrence that came while it ran is not run late.
-		if after, err := s.h.controlStore.GetSchedule(ctx, sc.ID); err == nil && after.Enabled &&
-			after.NextRunAt != nil && !after.NextRunAt.After(s.now()) {
-			s.skip(ctx, *after, *after.NextRunAt, s.now(), "its previous run was still running")
-		}
 	}
+}
+
+// skipOverlap skips the occurrence of id that came while its run, begun at
+// started, was going: it is not run late.
+func (s *serverScheduler) skipOverlap(ctx context.Context, id string, started time.Time) {
+	after, err := s.h.controlStore.GetSchedule(ctx, id)
+	now := s.now()
+	if err != nil || !after.Enabled || after.NextRunAt == nil || after.NextRunAt.After(now) || !after.NextRunAt.After(started) {
+		return
+	}
+	s.skip(ctx, *after, *after.NextRunAt, now, "its previous run was still running")
 }
 
 func (s *serverScheduler) popQueued() (string, bool) {
@@ -244,12 +282,18 @@ func (s *serverScheduler) state(id string) (running, queued bool) {
 	return s.running == id, queued
 }
 
+func (s *serverScheduler) isStarted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.started
+}
+
 // enqueue asks for a run of id as soon as the scheduler is free.
 func (s *serverScheduler) enqueue(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.started {
-		return errors.New("the schedules do not run in this server process (FILE4BASE_SERVER_SCHEDULER=false)")
+		return errors.New("the schedules do not run in this server process")
 	}
 	if s.running == id {
 		return errors.New("this schedule is running")
@@ -267,6 +311,27 @@ func (s *serverScheduler) enqueue(id string) error {
 	return nil
 }
 
+// deleteUnlessRunning deletes id with del, unless it is running; a run
+// waiting for it is dropped.
+func (s *serverScheduler) deleteUnlessRunning(id string, del func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running == id {
+		return errScheduleBusy
+	}
+	if err := del(); err != nil {
+		return err
+	}
+	kept := s.queued[:0]
+	for _, q := range s.queued {
+		if q != id {
+			kept = append(kept, q)
+		}
+	}
+	s.queued = kept
+	return nil
+}
+
 // scheduleTarget is what one run did with one solution.
 type scheduleTarget struct {
 	Database  string   `json:"database"`
@@ -277,20 +342,14 @@ type scheduleTarget struct {
 	Error     string   `json:"error,omitempty"`
 }
 
-// runOne runs sc and records the run.
-func (s *serverScheduler) runOne(ctx context.Context, sc control.ServerSchedule, trigger string) {
+// runOne runs sc and records the outcome of its run runID.
+func (s *serverScheduler) runOne(ctx context.Context, sc control.ServerSchedule, trigger string, runID int64) {
 	store := s.h.controlStore
 	started := time.Now()
-	run := control.ScheduleRun{ScheduleID: sc.ID, Trigger: trigger, StartedAt: s.now()}
-	id, err := store.StartScheduleRun(ctx, run)
-	if err != nil {
-		s.logf("%s: the run could not be recorded, so it was not run: %v", sc.Name, err)
-		return
-	}
-	run.ID = id
+	run := control.ScheduleRun{ID: runID, ScheduleID: sc.ID, Trigger: trigger}
 
-	targets, err := s.targets(ctx, sc)
-	var results []scheduleTarget
+	targets, unreadable, err := s.targets(ctx, sc)
+	results := unreadable
 	if err == nil {
 		for _, db := range targets {
 			if ctx.Err() != nil {
@@ -316,11 +375,11 @@ func (s *serverScheduler) runOne(ctx context.Context, sc control.ServerSchedule,
 		run.Status, run.Error = control.RunFailed, err.Error()
 	case ctx.Err() != nil:
 		run.Status, run.Error = control.RunFailed, "the server stopped during this run"
-	case len(targets) == 0:
+	case len(results) == 0:
 		run.Status, run.Error = control.RunSkipped, "there is no solution to act on"
 	case len(failures) > 0:
 		run.Status = control.RunFailed
-		run.Error = fmt.Sprintf("%d of %d solutions failed: %s", len(failures), len(targets), strings.Join(failures, "; "))
+		run.Error = fmt.Sprintf("%d of %d solutions failed: %s", len(failures), len(results), strings.Join(failures, "; "))
 	}
 	run.Details, _ = json.Marshal(results)
 	finished := s.now()
@@ -339,28 +398,52 @@ func (s *serverScheduler) runOne(ctx context.Context, sc control.ServerSchedule,
 }
 
 // targets are the solutions sc acts on: those it names, or every solution
-// on the server.
-func (s *serverScheduler) targets(ctx context.Context, sc control.ServerSchedule) ([]string, error) {
+// on the server. A database that could not be checked is not left out: it
+// is given as a failure of the run.
+func (s *serverScheduler) targets(ctx context.Context, sc control.ServerSchedule) ([]string, []scheduleTarget, error) {
 	if len(sc.Databases) > 0 {
-		return sc.Databases, nil
+		return sc.Databases, nil, nil
 	}
 	all, err := s.h.dbMgr.ListDatabases(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("the solutions of the server could not be listed: %w", err)
+		return nil, nil, fmt.Errorf("the solutions of the server could not be listed: %w", err)
 	}
 	var out []string
+	var unreadable []scheduleTarget
 	for _, db := range all {
 		if dbal.IsProtectedDatabase(db) {
 			continue
 		}
-		driver, err := s.h.dbMgr.DriverFor(ctx, db)
-		if err != nil || !schema.NewService(driver).HasSystemCatalog(ctx) {
-			continue // not a File4Base solution
+		solution, err := s.h.isSolution(ctx, db)
+		if err != nil {
+			unreadable = append(unreadable, scheduleTarget{Database: db, Status: control.RunFailed,
+				Error: "it could not be checked: " + err.Error()})
+			continue
 		}
-		out = append(out, db)
+		if solution {
+			out = append(out, db)
+		}
 	}
 	sort.Strings(out)
-	return out, nil
+	return out, unreadable, nil
+}
+
+// isSolution says whether db has a File4Base catalog. An error is a
+// database that could not be checked, not one without a catalog.
+func (h *ServerAdminHandler) isSolution(ctx context.Context, db string) (bool, error) {
+	driver, err := h.dbMgr.DriverFor(ctx, db)
+	if err != nil {
+		return false, err
+	}
+	q := `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'sys_users'`
+	if h.dbMgr.Engine() != dbal.EnginePostgres {
+		q = `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'sys_users'`
+	}
+	var n int
+	if err := driver.DB().QueryRowContext(ctx, q).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (s *serverScheduler) runFor(ctx context.Context, sc control.ServerSchedule, db string) scheduleTarget {
@@ -369,24 +452,35 @@ func (s *serverScheduler) runFor(ctx context.Context, sc control.ServerSchedule,
 		res.Status, res.Error = control.RunFailed, err.Error()
 		return res
 	}
-	if s.h.isRestoring(db) {
-		return fail(errors.New("a restore of it was running"))
+	solution, err := s.h.isSolution(ctx, db)
+	if err != nil {
+		return fail(fmt.Errorf("it could not be reached: %w", err))
+	}
+	if !solution {
+		return fail(errors.New("it is not a File4Base solution"))
 	}
 	switch sc.Type {
 	case control.ScheduleBackup:
-		now := s.now()
+		done, ok := s.h.beginBackup(db)
+		if !ok {
+			return fail(errors.New("a restore of it was running"))
+		}
+		defer done()
 		rec, err := s.h.writeSnapshotFor(ctx, db, "scheduled", "scheduler",
-			"Scheduled backup "+sc.Name, "scheduled", sc.ID, now)
+			"Scheduled backup "+sc.Name, "scheduled", sc.ID, s.now())
 		if err != nil {
 			return fail(err)
 		}
 		res.BackupID, res.SizeBytes = rec.ID, rec.SizeBytes
-		removed, err := s.h.pruneScheduledBackups(sc, db)
+		removed, err := s.h.pruneScheduledBackups(sc, db, rec.ID)
 		res.Removed = removed
 		if err != nil {
 			return fail(fmt.Errorf("backed up as %s, but the older backups could not be removed: %w", rec.ID, err))
 		}
 	case control.ScheduleMaintenance:
+		if s.h.isRestoring(db) {
+			return fail(errors.New("a restore of it was running"))
+		}
 		if err := s.h.optimizeDatabase(ctx, db, sc.Operation); err != nil {
 			return fail(err)
 		}
@@ -397,9 +491,11 @@ func (s *serverScheduler) runFor(ctx context.Context, sc control.ServerSchedule,
 }
 
 // pruneScheduledBackups keeps the sc.Keep latest backups sc made of db,
-// and deletes the others. Only backups of that schedule are counted or
-// deleted: manual, pre-update, pre-restore and uploaded backups never are.
-func (h *ServerAdminHandler) pruneScheduledBackups(sc control.ServerSchedule, db string) ([]string, error) {
+// written the latest, and deletes the others. Only regular files named as
+// that schedule's backups are read, and only backups of that schedule and
+// of that very database are counted or deleted: manual, pre-update,
+// pre-restore and uploaded backups never are.
+func (h *ServerAdminHandler) pruneScheduledBackups(sc control.ServerSchedule, db, latest string) ([]string, error) {
 	if sc.Keep <= 0 {
 		return nil, nil
 	}
@@ -407,17 +503,20 @@ func (h *ServerAdminHandler) pruneScheduledBackups(sc control.ServerSchedule, db
 	if err != nil {
 		return nil, err
 	}
+	prefix := "bkp_" + db + "_"
 	type found struct{ id, created string }
 	var mine []found
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".f4b.json") {
+		name := e.Name()
+		id := strings.TrimSuffix(name, ".f4b.json")
+		if !e.Type().IsRegular() || id == name || id == latest || !strings.HasPrefix(id, prefix) || !strings.Contains(id, "_scheduled") {
 			continue
 		}
-		hdr, err := readBackupHeader(filepath.Join(h.backupsDir, e.Name()))
-		if err != nil || hdr.Type != "scheduled" || hdr.ScheduleID != sc.ID || !strings.EqualFold(hdr.Database, db) {
+		hdr, err := readBackupHeader(filepath.Join(h.backupsDir, name))
+		if err != nil || hdr.Type != "scheduled" || hdr.ScheduleID != sc.ID || hdr.Database != db {
 			continue
 		}
-		mine = append(mine, found{strings.TrimSuffix(e.Name(), ".f4b.json"), hdr.CreatedAt})
+		mine = append(mine, found{id, hdr.CreatedAt})
 	}
 	sort.Slice(mine, func(i, j int) bool {
 		if mine[i].created != mine[j].created {
@@ -425,8 +524,9 @@ func (h *ServerAdminHandler) pruneScheduledBackups(sc control.ServerSchedule, db
 		}
 		return mine[i].id > mine[j].id
 	})
+	// The backup just written is the first kept.
 	var removed []string
-	for i := sc.Keep; i < len(mine); i++ {
+	for i := sc.Keep - 1; i < len(mine); i++ {
 		if err := os.Remove(filepath.Join(h.backupsDir, mine[i].id+".f4b.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return removed, err
 		}
@@ -502,9 +602,16 @@ func analyzeTables(ctx context.Context, driver dbal.DatabaseDriver, tables []str
 		if err := rows.Scan(vals...); err != nil {
 			return err
 		}
-		// Table, Op, Msg_type, Msg_text.
-		if len(cols) >= 4 && strings.EqualFold(*texts[2], "error") {
-			return fmt.Errorf("ANALYZE TABLE %s: %s", *texts[0], *texts[3])
+		// Table, Op, Msg_type, Msg_text. A table that could not be
+		// analyzed has an error row, or a status other than OK and
+		// "Table is already up to date" ("Operation failed").
+		if len(cols) >= 4 {
+			kind, text := strings.ToLower(*texts[2]), *texts[3]
+			failed := kind == "error" ||
+				(kind == "status" && !strings.EqualFold(text, "OK") && !strings.Contains(strings.ToLower(text), "up to date"))
+			if failed {
+				return fmt.Errorf("ANALYZE TABLE %s: %s", *texts[0], text)
+			}
 		}
 	}
 	return rows.Err()
@@ -560,11 +667,8 @@ func (h *ServerAdminHandler) ListSchedules(w http.ResponseWriter, r *http.Reques
 	for _, sc := range list {
 		views = append(views, h.viewSchedule(sc, last))
 	}
-	h.scheduler.mu.Lock()
-	started := h.scheduler.started
-	h.scheduler.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"schedules": views, "time_zone": h.scheduler.loc.String(), "scheduler_running": started,
+		"schedules": views, "time_zone": h.scheduler.loc.String(), "scheduler_running": h.scheduler.isStarted(),
 	})
 }
 
@@ -580,13 +684,16 @@ type scheduleInput struct {
 	Enabled   *bool     `json:"enabled"`
 }
 
-// apply checks in and applies it to sc.
-func (h *ServerAdminHandler) applyScheduleInput(ctx context.Context, sc *control.ServerSchedule, in scheduleInput) error {
+// applyScheduleInput checks in and applies it to sc, a schedule being
+// created when creating is true. It says whether sc's timing (its cron or
+// whether it is enabled) changed, and so its next run.
+func (h *ServerAdminHandler) applyScheduleInput(ctx context.Context, sc *control.ServerSchedule, in scheduleInput, creating bool) (bool, error) {
+	prevCron, prevEnabled := sc.Cron, sc.Enabled
 	if in.Name != nil {
 		sc.Name = strings.TrimSpace(*in.Name)
 	}
 	if sc.Name == "" {
-		return errors.New("a schedule needs a name")
+		return false, errors.New("a schedule needs a name")
 	}
 	if in.Type != nil {
 		sc.Type = strings.TrimSpace(*in.Type)
@@ -594,57 +701,56 @@ func (h *ServerAdminHandler) applyScheduleInput(ctx context.Context, sc *control
 	switch sc.Type {
 	case control.ScheduleBackup, control.ScheduleMaintenance:
 	case "script":
-		return errors.New("script schedules need the server-side script engine, which File4Base does not have yet (#204)")
+		return false, errors.New("script schedules need the server-side script engine, which File4Base does not have yet (#204)")
 	default:
-		return fmt.Errorf("a schedule is a backup or a maintenance, not %q", sc.Type)
+		return false, fmt.Errorf("a schedule is a backup or a maintenance, not %q", sc.Type)
 	}
 	if in.Cron != nil {
 		cron, err := cronexpr.Parse(*in.Cron)
 		if err != nil {
-			return err
+			return false, err
 		}
 		sc.Cron = cron.String()
 	}
 	if sc.Cron == "" {
-		return errors.New("a schedule needs a cron expression")
+		return false, errors.New("a schedule needs a cron expression")
 	}
 	if in.Databases != nil {
 		known, err := h.dbMgr.ListDatabases(ctx)
 		if err != nil {
-			return fmt.Errorf("the solutions of the server could not be listed: %w", err)
-		}
-		exists := map[string]string{}
-		for _, db := range known {
-			exists[strings.ToLower(db)] = db
+			return false, fmt.Errorf("the solutions of the server could not be listed: %w", err)
 		}
 		seen := map[string]bool{}
 		sc.Databases = []string{}
 		for _, db := range *in.Databases {
 			db = strings.TrimSpace(db)
-			name, ok := exists[strings.ToLower(db)]
-			if db == "" || seen[strings.ToLower(db)] {
+			if db == "" {
 				continue
 			}
+			name, ok := matchDatabase(known, db)
 			if !ok || dbal.IsProtectedDatabase(name) {
-				return fmt.Errorf("there is no solution %q on this server", db)
+				return false, fmt.Errorf("there is no solution %q on this server", db)
 			}
-			seen[strings.ToLower(db)] = true
-			sc.Databases = append(sc.Databases, name)
+			if !seen[name] {
+				seen[name] = true
+				sc.Databases = append(sc.Databases, name)
+			}
 		}
 	}
 	if in.Keep != nil {
 		sc.Keep = *in.Keep
+	} else if creating && sc.Type == control.ScheduleBackup {
+		sc.Keep = 7
 	}
 	if in.Operation != nil {
 		sc.Operation = strings.TrimSpace(*in.Operation)
 	}
 	switch sc.Type {
 	case control.ScheduleBackup:
-		if sc.Keep == 0 {
-			sc.Keep = 7
-		}
+		// A count given is never replaced by a default: a backup schedule
+		// deletes the backups it does not keep.
 		if sc.Keep < 1 || sc.Keep > 1000 {
-			return errors.New("a backup schedule keeps from 1 to 1000 backups of each solution")
+			return false, errors.New("a backup schedule keeps from 1 to 1000 backups of each solution")
 		}
 		sc.Operation = ""
 	case control.ScheduleMaintenance:
@@ -653,18 +759,43 @@ func (h *ServerAdminHandler) applyScheduleInput(ctx context.Context, sc *control
 			sc.Operation = maintenanceVacuumAnalyze
 		}
 		if sc.Operation != maintenanceVacuumAnalyze && sc.Operation != maintenanceAnalyze {
-			return fmt.Errorf("a maintenance schedule runs %q or %q, not %q",
+			return false, fmt.Errorf("a maintenance schedule runs %q or %q, not %q",
 				maintenanceVacuumAnalyze, maintenanceAnalyze, sc.Operation)
 		}
 	}
 	if in.Enabled != nil {
 		sc.Enabled = *in.Enabled
 	}
+	if !creating && sc.Cron == prevCron && sc.Enabled == prevEnabled {
+		return false, nil // its next run stays as it is
+	}
+	next := h.scheduler.nextAfter(sc.Cron, h.scheduler.now())
+	if next == nil {
+		return false, fmt.Errorf("%q never comes round: no date matches it", sc.Cron)
+	}
 	sc.NextRunAt = nil
 	if sc.Enabled {
-		sc.NextRunAt = h.scheduler.nextAfter(sc.Cron, h.scheduler.now())
+		sc.NextRunAt = next
 	}
-	return nil
+	return true, nil
+}
+
+// matchDatabase finds name among known: the database of that very name,
+// or else the only one of that name in another case.
+func matchDatabase(known []string, name string) (string, bool) {
+	var folded []string
+	for _, db := range known {
+		if db == name {
+			return db, true
+		}
+		if strings.EqualFold(db, name) {
+			folded = append(folded, db)
+		}
+	}
+	if len(folded) == 1 {
+		return folded[0], true
+	}
+	return "", false
 }
 
 func (h *ServerAdminHandler) writeScheduleError(w http.ResponseWriter, r *http.Request, err error) {
@@ -673,6 +804,10 @@ func (h *ServerAdminHandler) writeScheduleError(w http.ResponseWriter, r *http.R
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Schedule Not Found", "no schedule has this id")
 	case errors.Is(err, control.ErrScheduleNameTaken):
 		telemetry.WriteProblem(w, r, http.StatusConflict, "Name Taken", err.Error())
+	case errors.Is(err, control.ErrScheduleChanged):
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Schedule Changed", "the schedule ran or changed meanwhile; read it again and retry")
+	case errors.Is(err, errScheduleBusy):
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Schedule Running", err.Error())
 	default:
 		telemetry.WriteProblem(w, r, http.StatusInternalServerError, "Schedule Not Saved", err.Error())
 	}
@@ -687,7 +822,7 @@ func (h *ServerAdminHandler) CreateSchedule(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	sc := control.ServerSchedule{ID: uuid.NewString(), Enabled: true, CreatedBy: sess.Username}
-	if err := h.applyScheduleInput(r.Context(), &sc, in); err != nil {
+	if _, err := h.applyScheduleInput(r.Context(), &sc, in, true); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Validation Failed", err.Error())
 		return
 	}
@@ -718,11 +853,13 @@ func (h *ServerAdminHandler) UpdateSchedule(w http.ResponseWriter, r *http.Reque
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", err.Error())
 		return
 	}
-	if err := h.applyScheduleInput(r.Context(), sc, in); err != nil {
+	prevNext := sc.NextRunAt
+	timing, err := h.applyScheduleInput(r.Context(), sc, in, false)
+	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Validation Failed", err.Error())
 		return
 	}
-	if err := h.controlStore.UpdateSchedule(r.Context(), *sc); err != nil {
+	if err := h.controlStore.UpdateSchedule(r.Context(), *sc, timing, prevNext); err != nil {
 		h.writeScheduleError(w, r, err)
 		return
 	}
@@ -732,8 +869,13 @@ func (h *ServerAdminHandler) UpdateSchedule(w http.ResponseWriter, r *http.Reque
 	}
 	h.recordAudit("schedule", "Update Scheduled Job", sess.Username, sess.Database, sc.Name, "success",
 		fmt.Sprintf("The %s schedule %q is %s (%s)", sc.Type, sc.Name, state, sc.Cron))
+	saved, err := h.controlStore.GetSchedule(r.Context(), sc.ID)
+	if err != nil {
+		h.writeScheduleError(w, r, err)
+		return
+	}
 	last, _ := h.controlStore.LastScheduleRuns(r.Context())
-	writeJSON(w, http.StatusOK, h.viewSchedule(*sc, last))
+	writeJSON(w, http.StatusOK, h.viewSchedule(*saved, last))
 }
 
 // RunScheduleNow runs a schedule as soon as the scheduler is free, whether
@@ -778,11 +920,9 @@ func (h *ServerAdminHandler) DeleteSchedule(w http.ResponseWriter, r *http.Reque
 		h.writeScheduleError(w, r, err)
 		return
 	}
-	if running, _ := h.scheduler.state(sc.ID); running {
-		telemetry.WriteProblem(w, r, http.StatusConflict, "Schedule Running", "this schedule is running; delete it once its run ends")
-		return
-	}
-	if err := h.controlStore.DeleteSchedule(r.Context(), sc.ID); err != nil {
+	if err := h.scheduler.deleteUnlessRunning(sc.ID, func() error {
+		return h.controlStore.DeleteSchedule(r.Context(), sc.ID)
+	}); err != nil {
 		h.writeScheduleError(w, r, err)
 		return
 	}

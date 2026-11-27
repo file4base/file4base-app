@@ -106,6 +106,8 @@ func TestNextIn_ReadsTheWallClockOfItsZone(t *testing.T) {
 	first := repeat.NextIn(local("2026-10-25 00:00"), paris)
 	assert.Equal(t, at("2026-10-25 00:30"), first, "the first 02:30, still summer time")
 	assert.Equal(t, local("2026-10-26 02:30").UTC(), repeat.NextIn(first, paris), "not again an hour later")
+	assert.Equal(t, local("2026-10-26 02:30").UTC(), repeat.NextIn(at("2026-10-25 01:10"), paris),
+		"nor when worked out again at 02:10 winter time, between the two")
 	hourly, err := cronexpr.Parse("0 * * * *")
 	require.NoError(t, err)
 	assert.Equal(t, at("2026-10-25 02:00"), hourly.NextIn(at("2026-10-25 00:00"), paris), "03:00 local, after the repeated hour")
