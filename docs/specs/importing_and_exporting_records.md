@@ -14,7 +14,7 @@ and XML — and writes a found set back out.
 
 A parser reads cells, not values. Turning `"1.234,56"` into a number or
 `03/04/2011` into a date is the **import's** job, not the parser's, so a value
-that will not convert is reported with the row and the column it came from
+that will not convert is reported with the row and the field it came from
 rather than quietly becoming zero.
 
 | Format | Read | Written |
@@ -69,7 +69,7 @@ a blank date.
 
 **A date is not guessed.** `03/04/2011` is 3 April or 4 March depending on
 where the file came from, and nothing in the value says which. The import
-dialog asks, and the error names the order it tried.
+dialog asks, and the report names the order it tried.
 
 ## What an import does
 
@@ -107,17 +107,59 @@ group separator (0x1D) as FileMaker writes them; each is read as the field's
 type, and values past the field's maximum are dropped. In a field that does
 not repeat, the separators become line breaks.
 
+## Skipped records and values left out (#231)
+
+An import skips what FileMaker's import skips, imports the rest, and reports
+both in the Import Summary: **records skipped due to errors** and **fields
+skipped due to errors**, with each one's row, field and rule.
+
+The field validation rules validated *Always* apply; those validated only
+during data entry do not. FileMaker checks some options as a value is entered
+and the others as the record is committed (FileMaker Pro help, *About
+validating data during import*), and an import follows the same line:
+
+| Broken | What is skipped |
+| --- | --- |
+| strict data type, range, maximum length, unique, existing value | the value: the record is imported without it |
+| not empty, validation by calculation | the whole record |
+| the field's type (text sent to a number, an unreadable date) | the value |
+
+A value left out of a new record leaves its field empty; of an updated record,
+the field keeps what it held. The calculations reading it are worked out
+without it, and a field that must not be empty and lost its value skips its
+record, reported with the cause (`unique`, say); so does a value left out of
+a new record whose column is not nullable, which cannot be stored empty. An
+update validates the
+fields it writes, not those it leaves alone, and a row whose match field cannot
+be read is skipped, as it cannot be matched.
+
+**A value the field's type cannot hold.** FileMaker keeps text typed into a
+number field as typed, and `IsValid` reports it; a typed column cannot hold
+it. The import leaves it out and keeps the record, as FileMaker leaves out a
+value that breaks *Strict data type* validated *Always*, so one bad cell costs
+that cell, not the other fields of its record. Converting it the way
+`GetAsNumber` would (`12abc` → `12`) was rejected: it writes a value the file
+never held.
+
+```
+row 2  fee_paid  type  "not a number"  fee_paid is not a number
+```
+
+**All or nothing, when asked.** `abort_on_error` (a transfer's
+`on_rejected: "abort"`) writes nothing when anything would be skipped, and
+the answer names the first problem.
+
+**Validated before it is written.** Each record is validated in the import's
+transaction before it is written, so a skipped record writes nothing to undo.
+A savepoint per row would have let the database refuse a row instead, but it
+made a 10 000-row import 2.2 times slower on PostgreSQL (0.64 s → 1.41 s) and
+1.3 times on MariaDB.
+
 ## One transaction
 
-The first row that cannot be read or stored takes the whole file with it, and
-the error names the row and the column:
-
-```
-import failed: row 2, Fee Paid: "not a number" is not a number
-```
-
-Nothing is written when that happens — not even the rows before it. The field
-validation rules apply as they do to any other write.
+The import is one transaction. A row that cannot be stored for another reason
+— a database constraint — takes the whole file with it, and the error names
+the row. Nothing is written when that happens — not even the rows before it.
 
 ## Exporting
 

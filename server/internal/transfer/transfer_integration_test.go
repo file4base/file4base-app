@@ -19,7 +19,7 @@ import (
 // solutions, Dispatch and Results, with parent surveys and child answers
 // keyed by stable business codes. Two surveys and their answers are sent
 // across, one result is modified and returned, the transfer is replayed, and
-// one row is rejected — all with French text, exact decimals and a container
+// one value is rejected — all with French text, exact decimals and a container
 // to prove nothing is mangled on the way.
 //
 // Everything here is synthetic. No credential is ever part of a definition or
@@ -181,7 +181,7 @@ func (f *fixture) seed(t *testing.T, ctx context.Context) {
 		"answer_code": "AN-002", "survey_code": "SV-001",
 		"respondent": "Jean Dupont", "score_text": "7",
 	})
-	// The rejected row: a score nobody filled in, written as words. The
+	// The rejected value: a score nobody filled in, written as words. The
 	// destination field is a number, and "non renseigné" is not one.
 	insert(f.dispatch.dataSvc, "answers", map[string]interface{}{
 		"answer_code": "AN-003", "survey_code": "SV-002",
@@ -302,20 +302,26 @@ func TestRun_TheAcceptanceFixtureOfIssue96(t *testing.T) {
 	// either, and the transfer can be replayed once the source is fixed.
 	assert.Empty(t, rows(t, ctx, f.results.dataSvc, "project_answers"))
 
-	// ─── 3. Quarantining the rejected row commits the rest ────────────────
+	// ─── 3. Skipping leaves the rejected value out and commits the rest ───
+	// As FileMaker imports a value its field's validation refuses (#231):
+	// the record crosses without it, and the report names it.
 	lenient := f.answerTransfer(t, ctx, "Send answers", schema.TransferRejectedSkip)
 	report, err = f.run(ctx, lenient)
 	require.NoError(t, err)
 	assert.True(t, report.Committed)
 	assert.Equal(t, 3, report.Rows)
-	assert.Equal(t, 2, report.Added)
+	assert.Equal(t, 3, report.Added)
 	assert.Equal(t, 0, report.Updated)
+	assert.Equal(t, 0, report.SkippedErrors)
+	assert.Equal(t, 1, report.FieldsSkipped)
 	require.Len(t, report.Rejected, 1)
-	assert.Equal(t, "non renseigné", report.Rejected[0].Value)
+	assert.Equal(t, transfer.Rejection{Row: 3, SourceField: "score_text", DestinationField: "score",
+		Value: "non renseigné", Reason: "score is not a number", Rule: data.ProblemType}, report.Rejected[0])
 
 	answers := byKey(rows(t, ctx, f.results.dataSvc, "project_answers"), "code")
-	require.Len(t, answers, 2)
-	assert.NotContains(t, answers, "AN-003", "the rejected answer stayed behind")
+	require.Len(t, answers, 3)
+	assert.Equal(t, "Camille Roy", answers["AN-003"]["respondent"])
+	assert.Nil(t, answers["AN-003"]["score"], "the answer crossed without the score")
 	assert.Equal(t, frenchRespondent, answers["AN-001"]["respondent"])
 	assert.Equal(t, exactScore, fmt.Sprint(answers["AN-001"]["score"]))
 	assert.Equal(t, containerValue, answers["AN-001"]["attachment"],
@@ -353,6 +359,11 @@ func TestRun_TheAcceptanceFixtureOfIssue96(t *testing.T) {
 			{SourceField: "result_note", DestinationField: "result_note"},
 			{SourceField: "score", DestinationField: "score_text"},
 		},
+		// The project returns the answers it has a score for, so the one
+		// that crossed without its score does not empty the central text.
+		FoundSet: []data.FindRequest{{Criteria: []data.FindCriterion{
+			{FieldName: "score", Operator: "IS_NOT_EMPTY"},
+		}}},
 		MatchFields: []string{"answer_code"},
 		Mode:        schema.TransferModeUpdateMatching,
 		// A result that matches no central answer is not invented here: the
@@ -372,7 +383,8 @@ func TestRun_TheAcceptanceFixtureOfIssue96(t *testing.T) {
 	require.Len(t, central, 3, "the central answers are still the three that existed")
 	assert.Equal(t, "Réponse validée", central["AN-001"]["result_note"])
 	assert.Equal(t, "13.25", fmt.Sprint(central["AN-001"]["score_text"]))
-	assert.Nil(t, central["AN-003"]["result_note"], "the rejected answer never left")
+	assert.Nil(t, central["AN-003"]["result_note"], "the answer without a score was not returned")
+	assert.Equal(t, "non renseigné", central["AN-003"]["score_text"])
 
 	// ─── 5. The transfer is replayed ──────────────────────────────────────
 	// Running the same transfers again must change nothing structural: the
@@ -387,11 +399,11 @@ func TestRun_TheAcceptanceFixtureOfIssue96(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, report.Committed)
 	assert.Equal(t, 0, report.Added, "a replay adds no child")
-	assert.Equal(t, 2, report.Updated)
-	require.Len(t, report.Rejected, 1, "the same row is still rejected, and still only reported")
+	assert.Equal(t, 3, report.Updated)
+	require.Len(t, report.Rejected, 1, "the same value is still rejected, and still only reported")
 
 	assert.Len(t, rows(t, ctx, f.results.dataSvc, "project_surveys"), 2)
-	assert.Len(t, rows(t, ctx, f.results.dataSvc, "project_answers"), 2)
+	assert.Len(t, rows(t, ctx, f.results.dataSvc, "project_answers"), 3)
 
 	// The replay re-sent Dispatch's own values, and Dispatch's score is now
 	// the 13.25 the project returned in step 4. So the number has gone

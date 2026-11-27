@@ -1906,6 +1906,9 @@ class ImportReportModel {
     this.skipped = 0,
     this.fields = const [],
     this.truncated = false,
+    this.skippedErrors = 0,
+    this.fieldsSkipped = 0,
+    this.problems = const [],
   });
 
   factory ImportReportModel.fromJson(Map<String, dynamic> json) => ImportReportModel(
@@ -1915,14 +1918,83 @@ class ImportReportModel {
         skipped: (json['skipped'] as num?)?.toInt() ?? 0,
         fields: [for (final f in (json['fields'] as List? ?? const [])) f as String],
         truncated: json['truncated'] as bool? ?? false,
+        skippedErrors: (json['skipped_errors'] as num?)?.toInt() ?? 0,
+        fieldsSkipped: (json['fields_skipped'] as num?)?.toInt() ?? 0,
+        problems: [
+          for (final p in (json['problems'] as List? ?? const []))
+            ImportProblemModel.fromJson(Map<String, dynamic>.from(p as Map)),
+        ],
       );
   final int rows;
   final int added;
   final int updated;
+
+  /// Rows passed over without an error: an update's rows matching nothing.
   final int skipped;
   final List<String> fields;
   final bool truncated;
+
+  /// Records skipped due to errors, and values left out of the records
+  /// imported: the two counts of FileMaker's Import Summary (#231).
+  final int skippedErrors;
+  final int fieldsSkipped;
+
+  /// Each record skipped and value left out, in row order.
+  final List<ImportProblemModel> problems;
 }
+
+/// A record an import skipped, or a value it left out, and why (#231).
+class ImportProblemModel {
+  const ImportProblemModel({
+    required this.row,
+    required this.field,
+    required this.rule,
+    this.value = '',
+    this.message = '',
+    this.recordSkipped = false,
+  });
+
+  factory ImportProblemModel.fromJson(Map<String, dynamic> json) => ImportProblemModel(
+        row: (json['row'] as num?)?.toInt() ?? 0,
+        field: json['field'] as String? ?? '',
+        rule: json['rule'] as String? ?? '',
+        value: json['value'] as String? ?? '',
+        message: json['message'] as String? ?? '',
+        recordSkipped: json['record_skipped'] as bool? ?? false,
+      );
+
+  /// The 1-based row of the source.
+  final int row;
+  final String field;
+
+  /// `type` for a value the field's type cannot hold, otherwise the
+  /// validation rule broken.
+  final String rule;
+
+  /// The text left out, as the source had it.
+  final String value;
+  final String message;
+
+  /// Whether the whole record was skipped, not only the value.
+  final bool recordSkipped;
+
+  /// The rule as the Import Summary names it.
+  String get ruleLabel => importRuleLabel(rule);
+}
+
+/// How the Import Summary names a rule an import skipped a record or a value
+/// for.
+String importRuleLabel(String rule) => switch (rule) {
+      'type' => 'wrong type',
+      'not_empty' => 'not empty',
+      'calculation' => 'validation calculation',
+      'strict_type' => 'strict data type',
+      'max_length' => 'maximum length',
+      'range' => 'range',
+      'unique' => 'unique',
+      'existing_value' => 'existing value',
+      _ => rule.replaceAll('_', ' '),
+    };
 
 /// Transparent HTTP client wrapper that negotiates AES-256-GCM envelope
 /// encryption (`Accept-Encryption: aes-256-gcm` / `X-File4Base-Encrypted`)

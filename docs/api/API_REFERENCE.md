@@ -763,7 +763,8 @@ Brings the records in. Same body, plus `options`:
     "mappings": [{"column": 0, "field": "last_name"}, {"column": 1, "field": "city"}],
     "match_fields": ["last_name"],
     "add_unmatched": false,
-    "perform_auto_enter": true
+    "perform_auto_enter": true,
+    "abort_on_error": false
   }
 }
 ```
@@ -772,18 +773,30 @@ Brings the records in. Same body, plus `options`:
 - `date_order` — `iso` (default), `dmy` or `mdy`. `03/04/2011` cannot be read without being told.
 - `mappings` — which column goes to which field. A column not listed is left out.
 - `perform_auto_enter` — FileMaker's *Perform auto-enter options while importing* (default `false`): the fields' auto-enter options enter their values over the imported ones, except a calculated value with *Do not replace*, which keeps an imported value. Prohibit modification never stops an import.
+- `abort_on_error` — import nothing when a record would be skipped or a value left out (default `false`, see below).
 
-**One transaction.** The first row that cannot be read or stored takes the whole file with it; nothing is written and the error names the row and the column. The field validation rules apply, and calculation fields are worked out for imported records.
+**Validation skips, as FileMaker's import does (#231).** The rules validated *Always* apply; those validated only during data entry do not. As in FileMaker (*About validating data during import*), a value that breaks a rule checked as it is entered — strict data type, range, maximum length, unique, existing value — is **left out** of its record, which is imported without it, and a record that fails a rule checked on commit — *not empty*, a validation by calculation — is **skipped**. A value its field's type cannot hold (text sent to a number field, an unreadable date) is left out the same way: FileMaker would keep it as typed, which a typed column cannot. A value left out of a new record leaves the field empty, and of an updated record keeps what it held; the calculations reading it are worked out without it, and a field that must not be empty and lost its value skips the record, as does a new record's field whose column is not nullable. An update writes the fields mapped and validates those; a match field whose value cannot be read skips its row. With `abort_on_error`, any of these imports nothing and answers `422 Import Failed`, naming the first.
+
+**One transaction.** A row that cannot be stored for another reason takes the whole file with it; nothing is written and the error names the row. Calculation fields are worked out for imported records.
 
 A column sent to a **calculation** or a **summary** field is refused: the first's formula owns its value, the second has none in a record.
 
 #### Response `200 OK`
 ```json
-{"rows": 2, "added": 2, "updated": 0, "skipped": 0, "fields": ["last_name", "city"], "truncated": false}
+{
+  "rows": 3, "added": 2, "updated": 0, "skipped": 0, "fields": ["last_name", "city"], "truncated": false,
+  "skipped_errors": 1, "fields_skipped": 1,
+  "problems": [
+    {"row": 2, "field": "last_name", "rule": "not_empty", "message": "last_name requires a value", "record_skipped": true},
+    {"row": 3, "field": "fee_paid", "rule": "type", "value": "unpaid", "message": "fee_paid is not a number", "record_skipped": false}
+  ]
+}
 ```
 
+`skipped` counts the rows passed over without an error (an update's rows matching nothing, or with every match field empty). `skipped_errors` and `fields_skipped` are the two counts of FileMaker's Import Summary: records skipped due to errors, and values left out of the records imported. `problems` lists each in row order: `rule` is `type` for a value the field's type cannot hold, otherwise the rule broken (`not_empty`, `calculation`, `strict_type`, `max_length`, `range`, `unique`, `existing_value`); `value` quotes the text left out, at most 200 characters. A record skipped because a value left out made it fail *not empty* is reported once, with the cause's rule.
+
 #### Errors
-- `422 Import Failed` — a bad mapping, or a row that could not be read. The detail names the row and the column.
+- `422 Import Failed` — a bad mapping, a row that could not be stored, or, with `abort_on_error`, a record or value the import would have skipped. The detail names the row.
 - `422 Invalid Source File` — the file is not what it claims to be.
 - `413 Source File Too Large` — past the 25 MiB, 100 000-row or 256-column guard.
 
@@ -2705,7 +2718,7 @@ An **empty `database`** on either end means *the solution holding the definition
 | `mode` | `update_matching` (default), `add`, `replace_found_set` | `update_matching` finds the destination record whose match fields hold the same values and updates it; this is the mode that makes a transfer replayable. `add` makes every source record a new record, every run. `replace_found_set` is FileMaker's *Replace field contents in found set, in order* (`#191`): the n-th source record is written into the n-th record of the destination found set (the run must name it: without `destination_found_set` the run is refused with `422`, never widened to the whole table), and the source records left once it runs out are added under `on_unmatched: "add"` or passed over under `skip`. It matches on nothing, so `match_fields` is refused. |
 | `match_fields` | destination field names | The stable business keys. Required by `update_matching`, refused by `add`. Every one of them must be mapped, so the source always supplies the key it is matched on. |
 | `on_unmatched` | `add` (default), `skip` | What happens to a source record that matches no destination record. Consulted by `update_matching` only. |
-| `on_rejected` | `abort` (default), `skip` | What happens to a source value the destination field cannot hold. See the transaction contract below. |
+| `on_rejected` | `abort` (default), `skip` | What happens to a source value the destination field cannot hold or its validation refuses, and to a record the destination's validation skips. See the transaction contract below. |
 | `date_order` | `iso` (default), `dmy`, `mdy` | How a date written `03/04/2011` is to be read. There is no way to tell from the value, so the definition says. |
 | `perform_auto_enter` | `false` (default), `true` | Whether the destination's auto-enter options run on the records written, as the import option of the same name does. |
 | `auto_enter_fields` | destination field names | With `perform_auto_enter`, only these fields' auto-enter options run, as FileMaker's per-field choice in the import field mapping does. Absent (`null`) means every field's; an empty list means no field's, and is stored as such. Refused without `perform_auto_enter`. |
@@ -2760,16 +2773,20 @@ The destination is written as the account of the session that reaches it, so an 
   "on_unmatched": "add",
   "on_rejected": "skip",
   "rows": 3,
-  "added": 2,
+  "added": 3,
   "updated": 0,
   "skipped": 0,
+  "skipped_errors": 0,
+  "fields_skipped": 1,
   "rejected": [
     {
       "row": 3,
       "source_field": "score_text",
       "destination_field": "score",
       "value": "non renseigné",
-      "reason": "is not a number"
+      "reason": "score is not a number",
+      "rule": "type",
+      "record_skipped": false
     }
   ],
   "committed": true,
@@ -2783,7 +2800,9 @@ The destination is written as the account of the session that reaches it, so an 
 | `added` | Records created in the destination. |
 | `updated` | Destination records a match key found and updated. |
 | `skipped` | Records passed over for want of a match, under `on_unmatched: "skip"`. |
-| `rejected` | Rows the destination could not hold, each with its 1-based position in the source found set, the two fields, the value and the reason. |
+| `skipped_errors` | Records the destination's validation skipped (FileMaker's *records skipped due to errors*). |
+| `fields_skipped` | Values left out of the records written (FileMaker's *fields skipped due to errors*). |
+| `rejected` | Each record skipped and value left out, with its 1-based position in the source found set, the two fields, the value, the reason, the `rule` (`type` for a value the field's type cannot hold, otherwise the validation rule, as the import's `problems`) and `record_skipped`. |
 | `committed` | Whether the destination transaction was committed. |
 | `unpaired` | For a `match_by_name` transfer, the destination fields no source field was named as on this run, left out of it. Absent otherwise. |
 
@@ -2799,10 +2818,10 @@ The body is **the same report object**, with `committed: false` and an added `er
   "updated": 0,
   "skipped": 0,
   "rejected": [
-    { "row": 3, "source_field": "score_text", "destination_field": "score", "value": "non renseigné", "reason": "is not a number" }
+    { "row": 3, "source_field": "score_text", "destination_field": "score", "value": "non renseigné", "reason": "score is not a number", "rule": "type", "record_skipped": false }
   ],
   "committed": false,
-  "error": "transfer refused: rows the destination cannot hold: 1 of 3 rows were rejected and this transfer aborts on a rejected row, so the destination was left unchanged"
+  "error": "transfer refused: rows the destination cannot hold: 0 record(s) and 1 value(s) were rejected of 3 rows and this transfer aborts on a rejected row, so the destination was left unchanged"
 }
 ```
 
@@ -2813,9 +2832,9 @@ Other responses are RFC 9457 problem documents, not reports: `400 Bad Request` (
 One transfer writes **one destination table, inside one transaction**. A transfer of parents and children is two definitions run in order, and each commits on its own.
 
 - **A mapping or table that cannot be resolved blocks the run** before a single record moves: a field neither table has, or a destination table that is not in the far solution's catalog, answers `422` with `committed: false` and nothing written. An unresolved target is never guessed at and never partially applied.
-- **`on_rejected: "abort"` (the default) refuses the whole transfer.** Every rejected row is reported, the destination is left exactly as it was, and the run can be replayed once the source is corrected. This is the all-or-nothing contract a manual import already follows (`#38`).
-- **`on_rejected: "skip"` quarantines the rejected rows** and commits the rest in that one transaction. The rejected rows are still reported in full.
-- **A row the destination refuses for another reason** — a validation rule, a constraint — rolls the transaction back as it does for a manual import, and the run answers `422` with `committed: false`.
+- **`on_rejected: "abort"` (the default) refuses the whole transfer** on any rejection: a value the destination field cannot hold or its validation refuses, or a record the validation skips. Every one is reported, the destination is left exactly as it was, and the run can be replayed once the source is corrected. It is the all-or-nothing option, the import's `abort_on_error`.
+- **`on_rejected: "skip"` imports as FileMaker does (`#231`)**, the import's default: a value the destination field cannot hold, or that breaks strict data type, range, maximum length, unique or existing value, is left out of its record, which is written without it (a new record's field stays empty, or the record is not written when the column is not nullable; an updated record's keeps what it held); a record failing *not empty* or a validation by calculation is not written. The rest commits in that one transaction, and every rejection is reported. A transfer created for a migrated FileMaker *Import Records* step uses `skip`.
+- **A row the destination refuses for another reason** — a database constraint — rolls the transaction back as it does for a manual import, and the run answers `422` with `committed: false`.
 - **Retrying is replaying.** A refused run wrote nothing, so the same request can simply be sent again. A *committed* run can be sent again too: with `mode: "update_matching"` and stable match keys, a replay updates the same records instead of duplicating them, so a transfer of parents and then children neither duplicates a parent nor orphans a child. `mode: "add"` is deliberately not replayable — it is for an append-only destination — and the capability parity matrix says so.
 
 Values cross through the same conversion a manual import runs (`data.CoerceImportValue`), so a number keeps its exact decimal, text keeps its spaces and its accents, a date is read in the definition's `date_order`, and a container crosses as the same bytes.

@@ -201,6 +201,8 @@ Map<String, dynamic> _reportJson({
   bool committed = true,
   String? error,
   List<String> unpaired = const [],
+  int skippedErrors = 0,
+  int fieldsSkipped = 0,
 }) =>
     {
       'transfer': transfer,
@@ -214,6 +216,8 @@ Map<String, dynamic> _reportJson({
       'added': added,
       'updated': updated,
       'skipped': skipped,
+      'skipped_errors': skippedErrors,
+      'fields_skipped': fieldsSkipped,
       'rejected': rejected,
       'committed': committed,
       if (error != null) 'error': error,
@@ -729,6 +733,71 @@ void main() {
       expect(host.did, ['commit_records']);
       expect(host.notices.single,
           contains('Warning: no source field is named note or qty, so they were left out of this run'));
+    });
+
+    // FileMaker imports the rest, sets error 729 ("Errors occurred during
+    // import; records could not be imported") and the script goes on (#231).
+    group('records skipped due to errors', () {
+      final skipped = _reportJson(added: 2, skippedErrors: 1, fieldsSkipped: 1, rejected: [
+        {
+          'row': 2, 'source_field': 'code', 'destination_field': 'code', 'value': '',
+          'reason': 'code requires a value', 'rule': 'not_empty', 'record_skipped': true,
+        },
+        {
+          'row': 3, 'source_field': 'score_text', 'destination_field': 'score', 'value': 'n/a',
+          'reason': 'score is not a number', 'rule': 'type', 'record_skipped': false,
+        },
+      ]);
+
+      Future<(LayoutActionResult, LayoutActionRunner, _NoticeHost)> run(
+          Map<String, dynamic> report, {bool capture = false}) async {
+        final host = _NoticeHost();
+        final runner = _transferRunner(
+          host,
+          scripts: {
+            'sc1': _script('sc1', 'Sync', [
+              if (capture) _stepJson(0, 'set_error_capture', {'state': true}),
+              _stepJson(1, 'import_records', {'transfer': 'Send answers'}),
+              _stepJson(2, 'set_variable', {'name': r'$$err', 'value': 'Get(LastError)'}),
+              _stepJson(3, 'commit_records'),
+            ]),
+          },
+          transfers: {'Send answers': _transferJson()},
+          report: report,
+        );
+        return (await _runScript(runner, 'sc1', 'Sync'), runner, host);
+      }
+
+      test('set error 729, and the script goes on', () async {
+        final (result, runner, host) = await run(skipped, capture: true);
+        expect(result.completed, isTrue, reason: result.message);
+        expect(runner.globalVariables[r'$$err'], '729');
+        expect(host.did, ['commit_records'], reason: 'the records imported are kept, and the script goes on');
+        expect(runner.globalVariables[r'$$transferrejected'], '2');
+        expect(host.notices, isEmpty, reason: 'Set Error Capture keeps the summary to the script');
+      });
+
+      test('without error capture, show the import summary', () async {
+        final (result, runner, host) = await run(skipped);
+        expect(result.completed, isTrue, reason: result.message);
+        expect(runner.globalVariables[r'$$err'], '729');
+        final notice = host.notices.single;
+        expect(notice, contains('1 skipped due to errors'));
+        expect(notice, contains('1 value left out'));
+        expect(notice, contains('row 2: code, record skipped: code requires a value'));
+        expect(notice, contains('row 3: score_text → score "n/a", value left out'));
+      });
+
+      test('values left out of records imported set no error', () async {
+        final (result, runner, _) = await run(_reportJson(added: 3, fieldsSkipped: 1, rejected: [
+          {
+            'row': 3, 'source_field': 'score_text', 'destination_field': 'score', 'value': 'n/a',
+            'reason': 'score is not a number', 'rule': 'type', 'record_skipped': false,
+          },
+        ]));
+        expect(result.completed, isTrue, reason: result.message);
+        expect(runner.globalVariables[r'$$err'], '0');
+      });
     });
 
     test('a refused transfer stops the script and says which rows were rejected',

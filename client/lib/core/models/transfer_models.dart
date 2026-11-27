@@ -183,7 +183,8 @@ class TransferDefinitionModel {
   }
 }
 
-/// One source value the destination field would not hold.
+/// A source value the destination field would not hold, or a record the
+/// destination's validation skipped (#231).
 class TransferRejectionModel {
   const TransferRejectionModel({
     required this.row,
@@ -191,6 +192,8 @@ class TransferRejectionModel {
     required this.destinationField,
     required this.value,
     required this.reason,
+    this.rule = '',
+    this.recordSkipped = false,
   });
 
   factory TransferRejectionModel.fromJson(Map<String, dynamic> json) => TransferRejectionModel(
@@ -199,6 +202,8 @@ class TransferRejectionModel {
         destinationField: json['destination_field'] as String? ?? '',
         value: json['value'] as String? ?? '',
         reason: json['reason'] as String? ?? '',
+        rule: json['rule'] as String? ?? '',
+        recordSkipped: json['record_skipped'] as bool? ?? false,
       );
 
   /// The 1-based position of the record in the source found set.
@@ -208,7 +213,20 @@ class TransferRejectionModel {
   final String value;
   final String reason;
 
-  String describe() => 'row $row: $sourceField → $destinationField, "$value" $reason';
+  /// `type` for a value the field's type cannot hold, otherwise the
+  /// validation rule broken.
+  final String rule;
+
+  /// Whether the whole record was left out, not only the value.
+  final bool recordSkipped;
+
+  String describe() {
+    final fields = sourceField.isEmpty || sourceField == destinationField
+        ? destinationField
+        : '$sourceField → $destinationField';
+    final quoted = value.isEmpty ? '' : ' "$value"';
+    return 'row $row: $fields$quoted, ${recordSkipped ? 'record skipped' : 'value left out'}: $reason';
+  }
 }
 
 /// What one run of a transfer did.
@@ -225,6 +243,8 @@ class TransferRunReport {
     this.added = 0,
     this.updated = 0,
     this.skipped = 0,
+    this.skippedErrors = 0,
+    this.fieldsSkipped = 0,
     this.rejected = const [],
     this.committed = false,
     this.error,
@@ -244,6 +264,8 @@ class TransferRunReport {
         added: (json['added'] as num?)?.toInt() ?? 0,
         updated: (json['updated'] as num?)?.toInt() ?? 0,
         skipped: (json['skipped'] as num?)?.toInt() ?? 0,
+        skippedErrors: (json['skipped_errors'] as num?)?.toInt() ?? 0,
+        fieldsSkipped: (json['fields_skipped'] as num?)?.toInt() ?? 0,
         rejected: ((json['rejected'] as List<dynamic>?) ?? const [])
             .map((item) => TransferRejectionModel.fromJson(item as Map<String, dynamic>))
             .toList(),
@@ -269,6 +291,11 @@ class TransferRunReport {
   final int added;
   final int updated;
   final int skipped;
+
+  /// Records skipped due to errors, and values left out of the records
+  /// written: the two counts of FileMaker's Import Summary (#231).
+  final int skippedErrors;
+  final int fieldsSkipped;
   final List<TransferRejectionModel> rejected;
 
   /// Whether the destination transaction was committed. A refused transfer
@@ -289,10 +316,12 @@ class TransferRunReport {
 
   int get rejectedCount => rejected.length;
 
-  /// "2 added, 1 updated, 0 skipped, 1 rejected of 4 records", and the
-  /// warning on the fields a transfer pairing by name left out.
+  /// "2 added, 1 updated, 0 skipped, 1 skipped due to errors, 1 value left
+  /// out of 4 records", and the warning on the fields a transfer pairing by
+  /// name left out.
   String describeCounts() {
-    final counts = '$added added, $updated updated, $skipped skipped, $rejectedCount rejected of $rows records';
+    final counts = '$added added, $updated updated, $skipped skipped, $skippedErrors skipped due to errors, '
+        '$fieldsSkipped ${fieldsSkipped == 1 ? 'value' : 'values'} left out of $rows records';
     final warning = unpairedWarning();
     return warning.isEmpty ? counts : '$counts; $warning';
   }

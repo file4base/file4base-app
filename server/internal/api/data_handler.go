@@ -847,7 +847,11 @@ func (h *DataHandler) PreviewImport(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /api/v1/data/{table}/import
 //
-// It is one transaction: the first row that cannot be read or stored takes the
+// It is one transaction. As FileMaker imports, a value its field cannot hold
+// or that breaks a rule checked as it is entered is left out of its record,
+// and a record failing not empty or its validation by calculation is skipped;
+// the answer counts and lists them (#231). With abort_on_error, any of them
+// imports nothing. A row that cannot be stored for another reason takes the
 // whole file with it, and the answer says which row it was.
 func (h *DataHandler) ImportRows(w http.ResponseWriter, r *http.Request) {
 	table := requestTable(r)
@@ -882,6 +886,10 @@ func (h *DataHandler) ImportRows(w http.ResponseWriter, r *http.Request) {
 		"skipped":   report.Skipped,
 		"fields":    report.Fields,
 		"truncated": source.Truncated,
+
+		"skipped_errors": report.SkippedErrors,
+		"fields_skipped": report.FieldsSkipped,
+		"problems":       report.Problems,
 	}
 	if body.Options.ReturnRecordIDs {
 		ids := report.RecordIDs

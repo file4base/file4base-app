@@ -30,6 +30,7 @@ class _ImportApi extends ApiClient {
   final ImportPreviewModel preview;
   final List<Map<String, dynamic>> imports = [];
   Object? importError;
+  ImportReportModel? report;
 
   @override
   Future<ImportPreviewModel> previewImport(
@@ -60,7 +61,7 @@ class _ImportApi extends ApiClient {
     imports.add(options);
     if (importError != null) throw importError!;
     final mappings = (options['mappings'] as List).length;
-    return ImportReportModel(rows: 2, added: 2, fields: List.filled(mappings, 'f'));
+    return report ?? ImportReportModel(rows: 2, added: 2, fields: List.filled(mappings, 'f'));
   }
 }
 
@@ -92,6 +93,13 @@ Future<_ImportApi> _pump(WidgetTester tester, {ImportPreviewModel? preview}) asy
   await tester.pumpAndSettle();
   return api;
 }
+
+/// The labels and counts of the Import Summary, in order.
+List<String> _summary(WidgetTester tester) => [
+      for (final text in tester.widgetList<Text>(
+          find.descendant(of: find.byKey(const ValueKey('import-summary-counts')), matching: find.byType(Text))))
+        text.data ?? '',
+    ];
 
 void main() {
   testWidgets('the file is read and what is in it is reported', (tester) async {
@@ -162,8 +170,42 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('import-report')), findsOneWidget);
-    expect(find.text('2 record(s) added'), findsOneWidget);
+    expect(find.text('Import Summary'), findsOneWidget);
+    expect(_summary(tester), [
+      'Records added / updated', '2',
+      'Records skipped due to errors', '0',
+      'Total records in the source', '2',
+    ]);
+    expect(find.byKey(const ValueKey('import-problems')), findsNothing);
     expect(find.byKey(const ValueKey('import-done')), findsOneWidget);
+  });
+
+  // FileMaker's Import Summary: imported, skipped due to errors, total; and
+  // here each one skipped, with its row, field and rule (#231).
+  testWidgets('the summary counts and lists what was skipped', (tester) async {
+    final api = await _pump(tester);
+    api.report = const ImportReportModel(rows: 3, added: 1, skippedErrors: 1, fieldsSkipped: 1, problems: [
+      ImportProblemModel(row: 2, field: 'last_name', rule: 'not_empty',
+          message: 'last_name requires a value', recordSkipped: true),
+      ImportProblemModel(row: 3, field: 'fee_paid', rule: 'type', value: 'unpaid',
+          message: 'fee_paid is not a number'),
+    ]);
+    await tester.tap(find.byKey(const ValueKey('import-start')));
+    await tester.pumpAndSettle();
+
+    expect(_summary(tester), [
+      'Records added / updated', '1',
+      'Records skipped due to errors', '1',
+      'Fields skipped due to errors', '1',
+      'Total records in the source', '3',
+    ]);
+    final problems = find.byKey(const ValueKey('import-problems'));
+    expect(find.descendant(of: problems, matching: find.text('Row 2 · last_name · not empty — record skipped')),
+        findsOneWidget);
+    expect(
+        find.descendant(
+            of: problems, matching: find.text('Row 3 · fee_paid · wrong type — value left out: "unpaid"')),
+        findsOneWidget);
   });
 
   testWidgets('an import that fails says why and stays open', (tester) async {
