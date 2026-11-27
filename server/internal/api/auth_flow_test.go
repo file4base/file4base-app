@@ -48,6 +48,11 @@ func newAPIHarness(t *testing.T, opts api.Options) *apiHarness {
 	r := chi.NewRouter()
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	sessions := auth.NewStore(time.Hour)
+	// The operator's setup code, so that the tests can create the databases
+	// AdminDatabase and SuperOwnerSeed reserve (#236).
+	if opts.SetupCode == "" {
+		opts.SetupCode = testSetupCode
+	}
 	handler := api.Mount(r, mgr, sessions, opts)
 	return &apiHarness{t: t, router: handler, mgr: mgr, sessions: sessions}
 }
@@ -78,9 +83,12 @@ func (h *apiHarness) do(method, target, token string, body interface{}, out inte
 	return rec
 }
 
+// testSetupCode is the setup code of the harness's server.
+const testSetupCode = "TEST-SETUP-CODE-0236"
+
 func (h *apiHarness) createDatabase(name, user, password string) {
 	h.t.Helper()
-	rec := h.do(http.MethodPost, "/api/v1/databases", "", map[string]string{"database": name, "user": user, "password": password}, nil)
+	rec := h.do(http.MethodPost, "/api/v1/databases", "", map[string]string{"database": name, "user": user, "password": password, "setup_code": testSetupCode}, nil)
 	require.Equal(h.t, http.StatusCreated, rec.Code, rec.Body.String())
 	h.t.Cleanup(func() { _ = h.mgr.DropDatabase(context.Background(), name) })
 }

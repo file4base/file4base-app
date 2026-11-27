@@ -1205,7 +1205,7 @@
           "Solutions & Backup"
         ],
         "summary": "Create a database and its first owner account",
-        "description": "Public while ALLOW_PUBLIC_DATABASE_CREATION=true (default); otherwise requires an owner session. Never modifies an existing database.",
+        "description": "Public while ALLOW_PUBLIC_DATABASE_CREATION=true (default); otherwise requires an owner session. Never modifies an existing database. FILE4BASE_ADMIN_DATABASE and the databases of FILE4BASE_SUPER_OWNER are reserved (#236): only a super-owner session, or a request with the server's setup_code, can create them; the code also lifts the owner-session requirement for them, and a seeded database created with it must get one of its seeded usernames as user.",
         "security": [
           {},
           {
@@ -1230,13 +1230,13 @@
             "description": "A database with that name already exists"
           },
           "422": {
-            "description": "Missing name or owner credentials"
+            "description": "Missing name or owner credentials, or a seeded reserved database created with the setup code for another owner"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "$ref": "#/components/responses/Forbidden"
+            "description": "Only an owner can create databases on this server, or the database is reserved (title Reserved Database, with reserved_database and setup_code_required)"
           }
         }
       }
@@ -8257,6 +8257,11 @@
             "type": "string",
             "format": "password",
             "description": "Password of the first owner account"
+          },
+          "setup_code": {
+            "type": "string",
+            "description": "Setup code printed in the server log (or FILE4BASE_SETUP_CODE). Only read for a reserved database, by a caller who is not a super-owner. Case, spaces and dashes are ignored.",
+            "example": "ABCD-EFGH-IJKL-MNOP"
           }
         }
       },

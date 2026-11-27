@@ -117,6 +117,9 @@ type MigrationRequest struct {
 	TargetDatabase  string            `json:"target_database,omitempty"`
 	OwnerUser       string            `json:"owner_user,omitempty"`
 	OwnerPassword   string            `json:"owner_password,omitempty"`
+	// SetupCode lets the operator migrate into a new database reserved for
+	// bootstrapping a server administrator (#236). Never stored.
+	SetupCode string `json:"setup_code,omitempty"`
 
 	// NativeFileName is the filename of the attached .fmp12 copy when known
 	// (set by migration-preflight and multipart uploads for diagnostics).

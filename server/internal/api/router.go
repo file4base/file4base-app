@@ -40,6 +40,11 @@ type Options struct {
 	// super-owner can exist without another one to grant it. A super-owner has
 	// full, server-wide control regardless of AdminDatabase.
 	SuperOwnerSeed []string
+	// SetupCode (FILE4BASE_SETUP_CODE) lets the operator create a database
+	// that AdminDatabase or SuperOwnerSeed reserves without being a
+	// super-owner (#236). Empty: a random code is printed in the log at
+	// startup while such a database does not exist.
+	SetupCode string
 	// BackupsDir is where Server Tools keeps backup snapshots
 	// (default ./data/backups).
 	BackupsDir string
@@ -165,6 +170,8 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 	})
 	solutionHandler.throttle = throttle
 	solutionHandler.clientIP = ipResolver
+	solutionHandler.bootstrap = newBootstrapReservation(opts.AdminDatabase, opts.SuperOwnerSeed, opts.SetupCode)
+	solutionHandler.bootstrap.logStartup(dbMgr)
 	serverAdminHandler := NewServerAdminHandler(dbMgr, sessions, controlStore, opts.Version)
 	serverAdminHandler.ConfigureAccess(opts.AdminDatabase, opts.BackupsDir)
 	serverAdminHandler.ConfigureTLS(opts.TLSDir)

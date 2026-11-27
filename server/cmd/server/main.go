@@ -332,6 +332,7 @@ func main() {
 		Version:                     AppVersion,
 		AdminDatabase:               os.Getenv("FILE4BASE_ADMIN_DATABASE"),
 		SuperOwnerSeed:              splitList(os.Getenv("FILE4BASE_SUPER_OWNER")),
+		SetupCode:                   os.Getenv("FILE4BASE_SETUP_CODE"),
 		TrustedProxies:              trustedProxies,
 		TLSDir:                      tlsStore.Dir(),
 		MaxMigrationUploadBytes:     maxMigrationUpload,
