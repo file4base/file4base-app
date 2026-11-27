@@ -1673,9 +1673,12 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                                                   final layouts = res['layouts_restored'] ?? 0;
                                                   final colsDropped = res['columns_dropped'] ?? 0;
                                                   final colsCreated = res['columns_created'] ?? 0;
+                                                  final pre = res['pre_restore_backup']?.toString() ?? '';
                                                   _toast(
-                                                    'Restored $filename ($layouts layouts, -$colsDropped/+$colsCreated fields)',
+                                                    'Restored $filename ($layouts layouts, -$colsDropped/+$colsCreated fields)'
+                                                    '${pre.isEmpty ? '' : '. Restore $pre to undo it.'}',
                                                   );
+                                                  await _loadCurrentSection();
                                                 } catch (e) {
                                                   _toast(e.toString().replaceFirst('Exception: ', ''), isError: true);
                                                 }

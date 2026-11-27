@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"time"
@@ -2076,140 +2077,223 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 	if err != nil {
 		return nil, fmt.Errorf("failed listing tables: %w", err)
 	}
-	db := s.driver.DB()
-	dialect := s.driver.Dialect()
 	tablesData := make(map[string][]map[string]interface{}, len(tables))
-
 	for _, tbl := range tables {
 		if dbal.IsReservedTableName(tbl.Name) {
 			continue
 		}
-		types := make(map[string]dbal.AgnosticFieldType, len(tbl.Columns))
-		for _, c := range tbl.Columns {
-			types[c.Name] = c.FieldType
-		}
-		companions, err := s.companionColumns(ctx, tbl.Name)
-		if err != nil {
-			return nil, err
-		}
-		names := make([]string, 0, len(tbl.Columns))
-		repeats := map[string]ColumnMetadata{}
-		for _, c := range tbl.Columns {
-			names = append(names, dialect.QuoteIdentifier(c.Name))
-			// Repetitions from 2 travel as "field[n]" keys, as the data API
-			// returns them, so a restore loses none of them, including those
-			// a lowered maximum hides. The companion column is read under its
-			// own name: "$" is in no field name, and an alias "field[]" would
-			// be cut at the identifier limit for a long field name.
-			if companion := repetition.Column(c.Name); companions[companion] {
-				repeats[companion] = c
-				names = append(names, dialect.QuoteIdentifier(companion))
-			}
-		}
-		// Registered fields only, named explicitly (see data.selectList), in
-		// the order the records were created, which a restore inserts them in
-		// and so keeps: by id in a table not yet numbered in creation order,
-		// as its records are read.
-		order := " ORDER BY " + dialect.QuoteIdentifier("id")
-		hasRecordIDs, err := data.HasCreationOrder(ctx, s.driver, tbl.Name)
-		if err != nil {
-			return nil, err
-		}
-		hasModCount, err := data.HasModCount(ctx, s.driver, tbl.Name)
-		if err != nil {
-			return nil, err
-		}
-		if hasRecordIDs {
-			order = " ORDER BY " + dialect.QuoteIdentifier(dbal.CreationOrderColumn)
-			// Each record's identity travels with it, under
-			// RecordIdentityKey (#208).
-			names = append(names, dialect.QuoteIdentifier(dbal.CreationOrderColumn))
-			if hasModCount {
-				names = append(names, dialect.QuoteIdentifier(dbal.ModCountColumn))
-			}
-		}
-		rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT %s FROM %s%s`, strings.Join(names, ", "), dialect.QuoteIdentifier(tbl.Name), order))
-		if err != nil {
-			return nil, fmt.Errorf("failed reading table %s: %w", tbl.Name, err)
-		}
-		cols, err := rows.Columns()
-		if err != nil {
-			rows.Close()
-			return nil, err
-		}
 		tableRows := make([]map[string]interface{}, 0)
-		for rows.Next() {
-			vals := make([]interface{}, len(cols))
-			ptrs := make([]interface{}, len(cols))
-			for i := range vals {
-				ptrs[i] = &vals[i]
-			}
-			if err := rows.Scan(ptrs...); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("failed reading a record of %s: %w", tbl.Name, err)
-			}
-			row := make(map[string]interface{}, len(cols))
-			var identity data.Identity
-			for i, name := range cols {
-				switch name {
-				case dbal.CreationOrderColumn, dbal.ModCountColumn:
-					n, ok := wholeNumber(vals[i])
-					if !ok {
-						rows.Close()
-						return nil, fmt.Errorf("failed reading the identity of a record of %s", tbl.Name)
-					}
-					if name == dbal.CreationOrderColumn {
-						identity.RecordID = n
-					} else {
-						identity.ModID = n
-					}
-					continue
-				}
-				if c, ok := repeats[name]; ok {
-					if err := exportRepetitions(row, c, StorageType(c.FieldType, c.CalculationFormula), vals[i]); err != nil {
-						rows.Close()
-						return nil, fmt.Errorf("failed reading a record of %s: %w", tbl.Name, err)
-					}
-					continue
-				}
-				if b, ok := vals[i].([]byte); ok && types[name] == dbal.FieldTypeNumber {
-					row[name] = dbal.TrimNumericText(string(b))
-				} else if b, ok := vals[i].([]byte); ok && types[name] != dbal.FieldTypeContainer {
-					row[name] = string(b) // text the driver returned as bytes
-				} else if types[name] == dbal.FieldTypeBoolean {
-					row[name] = dbal.NormalizeBool(vals[i])
-				} else {
-					row[name] = vals[i]
-				}
-			}
-			if hasRecordIDs {
-				SetRecordIdentity(row, identity.RecordID, identity.ModID)
-			}
+		if err := s.exportTableRows(ctx, tbl, func(row map[string]interface{}) error {
 			tableRows = append(tableRows, row)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return nil, fmt.Errorf("failed reading table %s: %w", tbl.Name, err)
-		}
-		// Values kept with their original text travel with their records,
-		// so a restore shows what the source showed (#124).
-		texts, err := sourcetext.LoadTable(ctx, db, dialect, tbl.Name)
-		if err != nil {
+			return nil
+		}); err != nil {
 			return nil, err
 		}
-		sourcetext.Attach(tableRows, texts)
-		cMeta, err := containermeta.LoadTable(ctx, db, dialect, tbl.Name)
-		if err != nil {
-			return nil, err
-		}
-		containermeta.Attach(tableRows, cMeta)
 		tablesData[tbl.Name] = tableRows
 	}
 
 	return msgpack.Marshal(DatabaseDataBundle{
 		Format: DataFormat, Version: DataVersion, DatabaseName: dbName, ExportedAt: time.Now().UTC(), TablesData: tablesData,
 	})
+}
+
+// WriteDatabaseData writes what ExportDatabaseData returns to w, one record
+// at a time, so memory use does not grow with the database (#203). Each
+// table's records are counted before they are written, so the service must
+// read one snapshot (dbal.MultiDatabaseManager.OpenSnapshot): a count that
+// no longer matches fails the export.
+func (s *Service) WriteDatabaseData(ctx context.Context, dbName string, w io.Writer) error {
+	tables, err := s.ListTables(ctx)
+	if err != nil {
+		return fmt.Errorf("failed listing tables: %w", err)
+	}
+	userTables := make([]TableMetadata, 0, len(tables))
+	for _, tbl := range tables {
+		if !dbal.IsReservedTableName(tbl.Name) {
+			userTables = append(userTables, tbl)
+		}
+	}
+	enc := msgpack.NewEncoder(w)
+	// The fields of DatabaseDataBundle, in its order.
+	if err := enc.EncodeMapLen(5); err != nil {
+		return err
+	}
+	for _, kv := range []struct {
+		key string
+		val interface{}
+	}{{"format", DataFormat}, {"version", DataVersion}, {"database_name", dbName}, {"exported_at", time.Now().UTC()}} {
+		if err := enc.EncodeString(kv.key); err != nil {
+			return err
+		}
+		if err := enc.Encode(kv.val); err != nil {
+			return err
+		}
+	}
+	if err := enc.EncodeString("tables_data"); err != nil {
+		return err
+	}
+	if err := enc.EncodeMapLen(len(userTables)); err != nil {
+		return err
+	}
+	db := s.driver.DB()
+	for _, tbl := range userTables {
+		var count int
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+s.driver.Dialect().QuoteIdentifier(tbl.Name)).Scan(&count); err != nil {
+			return fmt.Errorf("failed counting the records of %s: %w", tbl.Name, err)
+		}
+		if err := enc.EncodeString(tbl.Name); err != nil {
+			return err
+		}
+		if err := enc.EncodeArrayLen(count); err != nil {
+			return err
+		}
+		written := 0
+		if err := s.exportTableRows(ctx, tbl, func(row map[string]interface{}) error {
+			if written++; written > count {
+				return fmt.Errorf("the records of %s changed while they were read", tbl.Name)
+			}
+			return enc.Encode(row)
+		}); err != nil {
+			return err
+		}
+		if written != count {
+			return fmt.Errorf("the records of %s changed while they were read", tbl.Name)
+		}
+	}
+	return nil
+}
+
+// exportTableRows reads every record of a user table, as the data bundle
+// carries it, and passes each one to emit.
+func (s *Service) exportTableRows(ctx context.Context, tbl TableMetadata, emit func(map[string]interface{}) error) error {
+	db := s.driver.DB()
+	dialect := s.driver.Dialect()
+	types := make(map[string]dbal.AgnosticFieldType, len(tbl.Columns))
+	for _, c := range tbl.Columns {
+		types[c.Name] = c.FieldType
+	}
+	companions, err := s.companionColumns(ctx, tbl.Name)
+	if err != nil {
+		return err
+	}
+	names := make([]string, 0, len(tbl.Columns))
+	repeats := map[string]ColumnMetadata{}
+	for _, c := range tbl.Columns {
+		names = append(names, dialect.QuoteIdentifier(c.Name))
+		// Repetitions from 2 travel as "field[n]" keys, as the data API
+		// returns them, so a restore loses none of them, including those
+		// a lowered maximum hides. The companion column is read under its
+		// own name: "$" is in no field name, and an alias "field[]" would
+		// be cut at the identifier limit for a long field name.
+		if companion := repetition.Column(c.Name); companions[companion] {
+			repeats[companion] = c
+			names = append(names, dialect.QuoteIdentifier(companion))
+		}
+	}
+	// Registered fields only, named explicitly (see data.selectList), in
+	// the order the records were created, which a restore inserts them in
+	// and so keeps: by id in a table not yet numbered in creation order,
+	// as its records are read.
+	order := " ORDER BY " + dialect.QuoteIdentifier("id")
+	hasRecordIDs, err := data.HasCreationOrder(ctx, s.driver, tbl.Name)
+	if err != nil {
+		return err
+	}
+	hasModCount, err := data.HasModCount(ctx, s.driver, tbl.Name)
+	if err != nil {
+		return err
+	}
+	if hasRecordIDs {
+		order = " ORDER BY " + dialect.QuoteIdentifier(dbal.CreationOrderColumn)
+		// Each record's identity travels with it, under
+		// RecordIdentityKey (#208).
+		names = append(names, dialect.QuoteIdentifier(dbal.CreationOrderColumn))
+		if hasModCount {
+			names = append(names, dialect.QuoteIdentifier(dbal.ModCountColumn))
+		}
+	}
+	// Loaded first: the rows are read through the same connection.
+	texts, err := sourcetext.LoadTable(ctx, db, dialect, tbl.Name)
+	if err != nil {
+		return err
+	}
+	cMeta, err := containermeta.LoadTable(ctx, db, dialect, tbl.Name)
+	if err != nil {
+		return err
+	}
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT %s FROM %s%s`, strings.Join(names, ", "), dialect.QuoteIdentifier(tbl.Name), order))
+	if err != nil {
+		return fmt.Errorf("failed reading table %s: %w", tbl.Name, err)
+	}
+	cols, err := rows.Columns()
+	if err != nil {
+		rows.Close()
+		return err
+	}
+	for rows.Next() {
+		vals := make([]interface{}, len(cols))
+		ptrs := make([]interface{}, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed reading a record of %s: %w", tbl.Name, err)
+		}
+		row := make(map[string]interface{}, len(cols))
+		var identity data.Identity
+		for i, name := range cols {
+			switch name {
+			case dbal.CreationOrderColumn, dbal.ModCountColumn:
+				n, ok := wholeNumber(vals[i])
+				if !ok {
+					rows.Close()
+					return fmt.Errorf("failed reading the identity of a record of %s", tbl.Name)
+				}
+				if name == dbal.CreationOrderColumn {
+					identity.RecordID = n
+				} else {
+					identity.ModID = n
+				}
+				continue
+			}
+			if c, ok := repeats[name]; ok {
+				if err := exportRepetitions(row, c, StorageType(c.FieldType, c.CalculationFormula), vals[i]); err != nil {
+					rows.Close()
+					return fmt.Errorf("failed reading a record of %s: %w", tbl.Name, err)
+				}
+				continue
+			}
+			if b, ok := vals[i].([]byte); ok && types[name] == dbal.FieldTypeNumber {
+				row[name] = dbal.TrimNumericText(string(b))
+			} else if b, ok := vals[i].([]byte); ok && types[name] != dbal.FieldTypeContainer {
+				row[name] = string(b) // text the driver returned as bytes
+			} else if types[name] == dbal.FieldTypeBoolean {
+				row[name] = dbal.NormalizeBool(vals[i])
+			} else {
+				row[name] = vals[i]
+			}
+		}
+		if hasRecordIDs {
+			SetRecordIdentity(row, identity.RecordID, identity.ModID)
+		}
+		// Values kept with their original text, and container file
+		// metadata, travel with their records, so a restore shows what
+		// the source showed (#124, #125).
+		one := []map[string]interface{}{row}
+		sourcetext.Attach(one, texts)
+		containermeta.Attach(one, cMeta)
+		if err := emit(row); err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return fmt.Errorf("failed reading table %s: %w", tbl.Name, err)
+	}
+	return nil
 }
 
 // DataImportReport describes what a data import restored.
