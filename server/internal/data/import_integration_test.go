@@ -248,6 +248,84 @@ func TestImportUpdateMatchingKeepsCalculationsOfUntouchedFields(t *testing.T) {
 		"the formula read the stored customer type, not an empty one")
 }
 
+// A stored calculation can be a match field, as FileMaker offers one "for
+// matching only": its value finds the record, and the formula, not the row,
+// keeps giving it (#191). An unstored one has no value to find a record by.
+func TestImportUpdateMatchingOnAStoredCalculation(t *testing.T) {
+	driver, ctx := relatedTestDriver(t)
+	if driver == nil {
+		return
+	}
+	f := newImportFixture(t, ctx, driver)
+
+	for _, row := range []map[string]interface{}{
+		{"last_name": "Durand", "city": "Paris", "customer_type": "Continuing"}, // pays 100
+		{"last_name": "Smith", "city": "Boston", "customer_type": "New"},        // pays 200
+	} {
+		_, err := f.dataSvc.InsertRow(ctx, f.table, row)
+		require.NoError(t, err)
+	}
+	opts := data.ImportOptions{
+		Action:      data.ImportUpdateMatching,
+		MatchFields: []string{"annual_fee"},
+		Mappings: []data.ImportMapping{
+			{Column: 0, Field: "annual_fee"},
+			{Column: 1, Field: "city"},
+		},
+		AddUnmatched: true,
+	}
+	report, err := f.dataSvc.ImportRecords(ctx, f.table, parseCSV(t, "Fee,Town\n200,Rome\n300,Oslo\n"), opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Updated)
+	assert.Equal(t, 1, report.Added)
+	assert.Equal(t, []string{"city"}, report.Fields, "the calculation matched on is not reported as written")
+
+	rows, err := f.dataSvc.ListRows(ctx, f.table, data.QueryOptions{})
+	require.NoError(t, err)
+	byCity := map[string]map[string]interface{}{}
+	for _, r := range rows {
+		byCity[fmt.Sprint(r["city"])] = r
+	}
+	require.Contains(t, byCity, "Rome", "the record whose fee is 200 was found by it")
+	assert.Equal(t, "Smith", byCity["Rome"]["last_name"])
+	assert.Equal(t, "200", fmt.Sprint(byCity["Rome"]["annual_fee"]))
+	assert.Equal(t, "Paris", byCity["Paris"]["city"], "the record whose fee is 100 is left alone")
+	require.Contains(t, byCity, "Oslo", "a row matching nothing is added")
+	assert.Equal(t, "200", fmt.Sprint(byCity["Oslo"]["annual_fee"]),
+		"the formula gives the added record its fee, not the row's 300")
+
+	t.Run("adding into the calculation is still refused", func(t *testing.T) {
+		add := opts
+		add.Action, add.MatchFields = data.ImportAdd, nil
+		_, err := f.dataSvc.ImportRecords(ctx, f.table, parseCSV(t, "Fee,Town\n1,X\n"), add)
+		assert.ErrorIs(t, err, data.ErrImport)
+	})
+
+	t.Run("an unstored calculation is refused as a match field", func(t *testing.T) {
+		tables, err := f.schemaSvc.ListTables(ctx)
+		require.NoError(t, err)
+		tableID := ""
+		for _, t2 := range tables {
+			if t2.Name == f.table {
+				tableID = t2.ID
+			}
+		}
+		require.NotEmpty(t, tableID)
+		twice := `{"formula":"fee_paid * 2","result_type":"Number","stored":false}`
+		_, err = f.schemaSvc.AddColumn(ctx, tableID, schema.ColumnMetadata{
+			Name: "fee_twice", DisplayName: "Fee Twice", FieldType: dbal.FieldTypeCalculation,
+			IsNullable: true, CalculationFormula: &twice,
+		})
+		require.NoError(t, err)
+		unstored := opts
+		unstored.MatchFields = []string{"fee_twice"}
+		unstored.Mappings = []data.ImportMapping{{Column: 0, Field: "fee_twice"}, {Column: 1, Field: "city"}}
+		_, err = f.dataSvc.ImportRecords(ctx, f.table, parseCSV(t, "Fee,Town\n1,X\n"), unstored)
+		require.ErrorIs(t, err, data.ErrImport)
+		assert.Contains(t, err.Error(), "unstored calculation")
+	})
+}
+
 func TestImportRefusesABadSetup(t *testing.T) {
 	driver, ctx := relatedTestDriver(t)
 	if driver == nil {

@@ -355,6 +355,11 @@ type Transfer struct {
 	// whole table.
 	FoundSet bool `json:"found_set" xml:"found_set,attr"`
 
+	// MatchByName says the mappings are paired again by name at each run,
+	// as FileMaker's matching names: each source field is the one the names
+	// paired when the transfer was saved.
+	MatchByName bool `json:"match_by_name,omitempty" xml:"match_by_name,attr,omitempty"`
+
 	Mappings []TransferMapping `json:"mappings" xml:"mappings>mapping"`
 }
 

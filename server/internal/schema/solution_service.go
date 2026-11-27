@@ -325,6 +325,7 @@ type BundleTransfer struct {
 
 	PerformAutoEnter bool     `msgpack:"perform_auto_enter,omitempty"`
 	AutoEnterFields  []string `msgpack:"auto_enter_fields"`
+	MatchByName      bool     `msgpack:"match_by_name,omitempty"`
 }
 
 // BundleFileReference carries a named link to another solution (#107). The
@@ -575,7 +576,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 			FoundSet: t.FoundSet, Sort: t.Sort, Mappings: t.Mappings,
 			MatchFields: t.MatchFields, Mode: t.Mode, OnUnmatched: t.OnUnmatched,
 			OnRejected: t.OnRejected, DateOrder: t.DateOrder,
-			PerformAutoEnter: t.PerformAutoEnter, AutoEnterFields: t.AutoEnterFields,
+			PerformAutoEnter: t.PerformAutoEnter, AutoEnterFields: t.AutoEnterFields, MatchByName: t.MatchByName,
 		})
 	}
 	for _, f := range fileReferences {
@@ -1436,7 +1437,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			FoundSet: t.FoundSet, Sort: t.Sort, Mappings: t.Mappings,
 			MatchFields: t.MatchFields, Mode: t.Mode, OnUnmatched: t.OnUnmatched,
 			OnRejected: t.OnRejected, DateOrder: t.DateOrder,
-			PerformAutoEnter: t.PerformAutoEnter, AutoEnterFields: t.AutoEnterFields,
+			PerformAutoEnter: t.PerformAutoEnter, AutoEnterFields: t.AutoEnterFields, MatchByName: t.MatchByName,
 		}, "")
 		if err != nil {
 			return nil, rollback(fmt.Errorf("restoring the transfer %q: %w", t.Name, err))

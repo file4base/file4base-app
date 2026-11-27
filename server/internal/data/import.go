@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -365,15 +366,31 @@ func (s *Service) ImportRecords(
 	if err != nil {
 		return nil, err
 	}
-	calculated := map[string]bool{}
-	for _, c := range calculations {
-		calculated[c.field] = true
+	calculated := map[string]*calculation{}
+	for i := range calculations {
+		calculated[calculations[i].field] = &calculations[i]
 	}
+	// A stored calculation can be a match field, as in FileMaker, which
+	// offers one "for matching only" (#191): its value finds the record and
+	// is never written, since the formula owns it. An unstored calculation
+	// is computed as a record is read and has no stored value to look a
+	// record up by.
+	matchOnly := map[string]bool{}
 	for _, field := range written {
-		if calculated[field] {
-			return nil, fmt.Errorf("%w: %q is a calculation field, and its formula owns its value",
-				ErrImport, field)
+		c := calculated[field]
+		if c == nil {
+			continue
 		}
+		if opts.Action == ImportUpdateMatching && slices.Contains(opts.MatchFields, field) {
+			if c.unstored {
+				return nil, fmt.Errorf("%w: records are matched on %q, an unstored calculation, which has "+
+					"no stored value to find a record by", ErrImport, field)
+			}
+			matchOnly[field] = true
+			continue
+		}
+		return nil, fmt.Errorf("%w: %q is a calculation field, and its formula owns its value",
+			ErrImport, field)
 	}
 
 	var ae *autoEnter
@@ -438,7 +455,17 @@ func (s *Service) ImportRecords(
 
 	dialect := s.driver.Dialect()
 	db := s.driver.DB()
-	report := &ImportReport{Rows: len(source.Rows), Fields: written}
+	// A calculation matched on is not written: the report leaves it out.
+	reported := written
+	if len(matchOnly) > 0 {
+		reported = make([]string, 0, len(written))
+		for _, field := range written {
+			if !matchOnly[field] {
+				reported = append(reported, field)
+			}
+		}
+	}
+	report := &ImportReport{Rows: len(source.Rows), Fields: reported}
 	// An updated record loses the original texts of the fields it is given
 	// (#124); the table they are kept in has to exist before the transaction.
 	if opts.Action != ImportAdd {
@@ -622,6 +649,11 @@ func (s *Service) ImportRecords(
 						ids = append(ids, id)
 					}
 				}
+			}
+			// A calculation matched on found the record; the formula, not
+			// the row, gives its value.
+			for field := range matchOnly {
+				delete(record, field)
 			}
 			if len(ids) > 0 {
 				for _, id := range ids {

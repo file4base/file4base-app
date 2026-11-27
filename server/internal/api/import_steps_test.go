@@ -444,8 +444,11 @@ func TestAPI_ImportStepsReviewGuards(t *testing.T) {
 		require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 
 		// Position 2 is still the deleted field, not the remark after it.
+		// Days is then the only table FileMaker could import from, its date
+		// going into the number, which a person has to accept (#191).
 		out := infer(ledger)
-		assert.Empty(t, out.Steps[0].Table)
+		assert.Equal(t, "days", out.Steps[0].Table)
+		assert.Equal(t, transfer.ConfidenceLow, out.Steps[0].Confidence)
 		var weighed *transfer.SourceCandidate
 		for i := range out.Steps[0].Candidates {
 			if out.Steps[0].Candidates[i].Table == "entries" {

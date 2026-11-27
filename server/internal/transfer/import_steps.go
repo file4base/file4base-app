@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 )
@@ -37,6 +38,10 @@ const (
 	// ConfidenceMedium: the only table whose fields fit every imported
 	// position by type; the names do not confirm it.
 	ConfidenceMedium = "medium"
+	// ConfidenceLow: no table fits every imported position by type, and
+	// this is the only one FileMaker could import from at all, some values
+	// going into fields of another type. It is never confirmed in bulk.
+	ConfidenceLow = "low"
 )
 
 // ImportStep is what a migrated Import Records step says about the import
@@ -67,12 +72,26 @@ type ImportStep struct {
 	// PathIsCalculation: the file is chosen as the script runs, which a
 	// transfer, bound to one solution, cannot follow.
 	PathIsCalculation bool
+	// MatchByName: FileMaker pairs the fields by matching names each time
+	// the step runs, not by position.
+	MatchByName bool
+	// DeletedTargets counts the fields the step imported into or matched
+	// on that were deleted from the target table in FileMaker, or whose
+	// table was: FileMaker no longer names them, and imports nothing there.
+	DeletedTargets int
+	// TargetFromLayout: the step was saved without its target, and the
+	// migration took the table of the layout the Go to Layout before it
+	// goes to. A person confirms it on its own, never in bulk.
+	TargetFromLayout bool
 }
 
 // Problem says why the step cannot be given a transfer as it was saved,
 // or "" when it can.
 func (s ImportStep) Problem() string {
 	switch {
+	case len(s.Maps) == 0 && s.DeletedTargets > 0:
+		return fmt.Sprintf("the %d field(s) the step imports into or matches on were deleted from the target "+
+			"table in FileMaker, or the table itself was: FileMaker imports nothing either", s.DeletedTargets)
 	case s.Unresolved > 0:
 		return fmt.Sprintf("%d field(s) the step imports or matches on were saved without their source position",
 			s.Unresolved)
@@ -130,6 +149,9 @@ func ParseImportStep(params map[string]interface{}) (step ImportStep, ok bool) {
 	step.AutoEnter, _ = params["auto_enter"].(bool)
 	step.SplitRepetitions, _ = params["split_repetitions"].(bool)
 	step.PathIsCalculation, _ = source["path_is_calculation"].(bool)
+	step.MatchByName, _ = params["match_field_names"].(bool)
+	step.DeletedTargets = intOf(params["deleted_target_fields"])
+	step.TargetFromLayout, _ = params["target_table_from_layout"].(bool)
 	for _, raw := range listOf(params["field_mappings"]) {
 		m, _ := raw.(map[string]interface{})
 		if m == nil {
@@ -141,7 +163,7 @@ func ParseImportStep(params map[string]interface{}) (step ImportStep, ok bool) {
 		}
 		pos := intOf(m["source_position"])
 		name, _ := m["target_field"].(string)
-		if pos <= 0 || strings.TrimSpace(name) == "" {
+		if (pos <= 0 && !step.MatchByName) || strings.TrimSpace(name) == "" {
 			step.Unresolved++
 			continue
 		}
@@ -234,6 +256,32 @@ type PositionedField struct {
 type PositionedTable struct {
 	Name   string            `json:"name"`
 	Fields []PositionedField `json:"fields"`
+	// Named is every field of the table, whether it came from FileMaker or
+	// not, as a transfer pairing fields by name reads them at each run.
+	// Nil means Fields.
+	Named []PositionedField `json:"-"`
+}
+
+// namedFields are the fields a step matching names pairs with.
+func (t PositionedTable) namedFields() []PositionedField {
+	if t.Named != nil {
+		return t.Named
+	}
+	return t.Fields
+}
+
+// pairingOf indexes a table's field names for a step matching names.
+func pairingOf(t PositionedTable) (namePairing, map[string]dbal.AgnosticFieldType) {
+	fields := t.namedFields()
+	names := make([]string, 0, len(fields))
+	types := make(map[string]dbal.AgnosticFieldType, len(fields))
+	for _, f := range fields {
+		if !f.Deleted {
+			names = append(names, f.Name)
+			types[f.Name] = f.Type
+		}
+	}
+	return newNamePairing(names), types
 }
 
 // PositionTable orders a table's fields by the FileMaker id the migration
@@ -246,7 +294,9 @@ func PositionTable(t schema.TableMetadata, deleted ...string) PositionedTable {
 		field PositionedField
 	}
 	var withID []idField
+	named := make([]PositionedField, 0, len(t.Columns))
 	for _, c := range t.Columns {
+		named = append(named, PositionedField{Name: c.Name, Type: schema.StorageType(c.FieldType, c.CalculationFormula)})
 		id, err := strconv.Atoi(strings.TrimSpace(c.SourceFieldID))
 		if err != nil || id <= 0 || c.IsPrimaryKey {
 			continue
@@ -268,7 +318,7 @@ func PositionTable(t schema.TableMetadata, deleted ...string) PositionedTable {
 		withID = append(withID, idField{id, PositionedField{Deleted: true}})
 	}
 	sort.SliceStable(withID, func(i, j int) bool { return withID[i].id < withID[j].id })
-	out := PositionedTable{Name: t.Name, Fields: make([]PositionedField, 0, len(withID))}
+	out := PositionedTable{Name: t.Name, Fields: make([]PositionedField, 0, len(withID)), Named: named}
 	for _, f := range withID {
 		out.Fields = append(out.Fields, f.field)
 	}
@@ -281,12 +331,14 @@ type TargetColumns struct {
 	byID   map[string][]string
 	byName map[string]string
 	types  map[string]dbal.AgnosticFieldType
+	// calculations are the calculation fields, true for a stored one.
+	calculations map[string]bool
 }
 
 // NewTargetColumns reads the target table's fields.
 func NewTargetColumns(t schema.TableMetadata) TargetColumns {
 	tc := TargetColumns{byID: map[string][]string{}, byName: map[string]string{},
-		types: map[string]dbal.AgnosticFieldType{}}
+		types: map[string]dbal.AgnosticFieldType{}, calculations: map[string]bool{}}
 	for _, c := range t.Columns {
 		if c.IsPrimaryKey {
 			continue
@@ -296,8 +348,30 @@ func NewTargetColumns(t schema.TableMetadata) TargetColumns {
 		}
 		tc.byName[strings.ToLower(c.Name)] = c.Name
 		tc.types[c.Name] = schema.StorageType(c.FieldType, c.CalculationFormula)
+		if c.FieldType == dbal.FieldTypeCalculation {
+			tc.calculations[c.Name] = c.CalculationFormula == nil ||
+				data.ReadStoredCalculation(*c.CalculationFormula).IsStored()
+		}
 	}
 	return tc
+}
+
+// matchOnly says why a calculation cannot be what a step does with it, or
+// "": a stored calculation is matched on, as FileMaker matches on one "for
+// matching only", and never written; FileMaker imports into none, and an
+// unstored one has no stored value to find a record by.
+func (tc TargetColumns) matchOnly(column string, match bool) string {
+	stored, isCalculation := tc.calculations[column]
+	switch {
+	case !isCalculation:
+		return ""
+	case !match:
+		return fmt.Sprintf("%s is a calculation field, which an import writes nothing into", column)
+	case !stored:
+		return fmt.Sprintf("records are matched on %s, an unstored calculation, which has no stored value to "+
+			"find a record by", column)
+	}
+	return ""
 }
 
 // Resolve answers the column a step's field is, or "" when the table has none.
@@ -322,9 +396,17 @@ type SourceCandidate struct {
 	TypesMatched int `json:"types_matched"`
 	// NamesMatched is how many imported positions hold a field named as the
 	// target field (or as the source field FileMaker named).
-	NamesMatched int  `json:"names_matched"`
-	Positions    int  `json:"positions"`
-	Fits         bool `json:"fits"`
+	NamesMatched int `json:"names_matched"`
+	Positions    int `json:"positions"`
+	// Fits: the table has a field of the target field's type at every
+	// position the step reads.
+	Fits bool `json:"fits"`
+	// Possible: FileMaker could import from the table, every position the
+	// step reads holding a field, whatever its type, but container data
+	// into a field that is not one, or the other way round. FileMaker does
+	// not convert a value it imports into a field of another type: it
+	// keeps it, and text in a number field is flagged as not valid (#191).
+	Possible bool `json:"possible"`
 	// DeletedPositions is how many positions the step reads hold a field
 	// deleted since the migration.
 	DeletedPositions int `json:"deleted_positions,omitempty"`
@@ -341,8 +423,29 @@ type PositionPair struct {
 	Match       bool   `json:"match,omitempty"`
 	// Deleted: the field at this position was deleted since the migration.
 	Deleted bool `json:"deleted,omitempty"`
-	// Missing: the table has no field at this position.
+	// Missing: the table has no field at this position, or, for a step
+	// matching names, no field named as the target field.
 	Missing bool `json:"missing,omitempty"`
+	// SourceType and TargetType are given when they differ: the value goes
+	// into a field of another type, which a person has to accept.
+	SourceType dbal.AgnosticFieldType `json:"source_type,omitempty"`
+	TargetType dbal.AgnosticFieldType `json:"target_type,omitempty"`
+	// Incompatible: container data and a field that is not a container,
+	// which FileMaker does not import between.
+	Incompatible bool `json:"incompatible,omitempty"`
+}
+
+// Describe is the pair as a person reads it: "2 amount (TEXT) → total
+// (NUMBER)" for one whose types differ.
+func (p PositionPair) Describe() string {
+	from := p.SourceField
+	if p.Position > 0 {
+		from = strconv.Itoa(p.Position) + " " + from
+	}
+	if p.SourceType != "" {
+		return fmt.Sprintf("%s (%s) → %s (%s)", from, p.SourceType, p.TargetField, p.TargetType)
+	}
+	return from + " → " + p.TargetField
 }
 
 // Inference is what the source tables of a solution say about a step.
@@ -351,6 +454,9 @@ type Inference struct {
 	Table      string `json:"table,omitempty"`
 	Confidence string `json:"confidence,omitempty"`
 	Reason     string `json:"reason"`
+	// ByName: the step pairs its fields by matching names, and the
+	// candidates were weighed by name, not by position.
+	ByName bool `json:"by_name,omitempty"`
 	// Candidates are every table of the solution weighed, best first, for
 	// a person to pick from.
 	Candidates []SourceCandidate `json:"candidates"`
@@ -365,53 +471,108 @@ type Inference struct {
 // step reads and the field at each of them has the type of the target field
 // it is imported into or matched on. A tie between several fitting tables is
 // broken only by field names agreeing on at least half the positions, and
-// only when one table alone does. exclude is a table that cannot be the
+// only when one table alone does. When no table fits by type, the only table
+// FileMaker could import from at all is inferred with low confidence, the
+// positions whose types differ named. exclude is a table that cannot be the
 // source, the target itself when the source is the same solution.
+//
+// A step matching names pairs its fields by name, not position, and is
+// weighed so: see inferByName.
 func InferSource(step ImportStep, target TargetColumns, tables []PositionedTable, exclude string) Inference {
-	inf := Inference{Candidates: []SourceCandidate{}}
+	inf := Inference{Candidates: []SourceCandidate{}, ByName: step.MatchByName}
 	if len(step.Maps) == 0 {
 		inf.Reason = "the step imports no field"
 		return inf
 	}
 	maxPos := step.MaxPosition()
+	var gone []string
+	for _, m := range step.Maps {
+		if target.Resolve(m.Target) == "" {
+			gone = append(gone, m.Target.Name)
+		}
+	}
 	for _, t := range tables {
 		if exclude != "" && t.Name == exclude {
 			continue
 		}
 		c := SourceCandidate{Table: t.Name, Fields: len(t.Fields), Positions: len(step.Maps), Pairs: []PositionPair{}}
+		var names namePairing
+		var nameTypes map[string]dbal.AgnosticFieldType
+		if step.MatchByName {
+			names, nameTypes = pairingOf(t)
+		}
 		for _, m := range step.Maps {
 			column := target.Resolve(m.Target)
 			pair := PositionPair{Position: m.Position, TargetField: column, Match: m.Match}
 			if pair.TargetField == "" {
 				pair.TargetField = m.Target.Name
 			}
-			if m.Position > len(t.Fields) {
+			var src PositionedField
+			switch {
+			case step.MatchByName:
+				// Paired as the transfer pairs them at each run: the
+				// destination field's name, whatever its case.
+				pair.Position = 0
+				name, ok := "", false
+				if column != "" {
+					name, ok = names.pair(column)
+				}
+				if !ok {
+					pair.Missing = true
+					c.Pairs = append(c.Pairs, pair)
+					continue
+				}
+				src = PositionedField{Name: name, Type: nameTypes[name]}
+				c.NamesMatched++
+			case m.Position > len(t.Fields):
 				pair.Missing = true
 				c.Pairs = append(c.Pairs, pair)
 				continue
+			default:
+				src = t.Fields[m.Position-1]
 			}
-			src := t.Fields[m.Position-1]
 			pair.SourceField, pair.Deleted = src.Name, src.Deleted
-			c.Pairs = append(c.Pairs, pair)
 			if src.Deleted {
 				c.DeletedPositions++
+				c.Pairs = append(c.Pairs, pair)
 				continue
 			}
-			if column != "" && sameKind(src.Type, target.Type(column)) {
+			targetType := target.Type(column)
+			if column != "" && sameKind(src.Type, targetType) {
 				c.TypesMatched++
+			} else {
+				pair.SourceType, pair.TargetType = src.Type, targetType
+				pair.Incompatible = column == "" || !importable(src.Type, targetType)
 			}
-			if sameName(src.Name, column) || sameName(src.Name, m.Target.Name) ||
-				(m.SourceName != "" && sameName(src.Name, m.SourceName)) {
+			if !step.MatchByName && (sameName(src.Name, column) || sameName(src.Name, m.Target.Name) ||
+				(m.SourceName != "" && sameName(src.Name, m.SourceName))) {
 				c.NamesMatched++
 			}
+			c.Pairs = append(c.Pairs, pair)
 		}
-		c.Fits = len(t.Fields) >= maxPos && c.TypesMatched == c.Positions
+		reached := step.MatchByName || len(t.Fields) >= maxPos
+		c.Fits = reached && c.TypesMatched == c.Positions
+		c.Possible = c.Fits
+		if reached && !c.Fits && c.DeletedPositions == 0 {
+			c.Possible = true
+			for _, p := range c.Pairs {
+				if p.Missing || p.Incompatible {
+					c.Possible = false
+				}
+			}
+		}
 		inf.Candidates = append(inf.Candidates, c)
 	}
 	sort.SliceStable(inf.Candidates, func(i, j int) bool {
 		a, b := inf.Candidates[i], inf.Candidates[j]
 		if a.Fits != b.Fits {
 			return a.Fits
+		}
+		if a.Possible != b.Possible {
+			return a.Possible
+		}
+		if step.MatchByName && a.NamesMatched != b.NamesMatched {
+			return a.NamesMatched > b.NamesMatched
 		}
 		if a.TypesMatched != b.TypesMatched {
 			return a.TypesMatched > b.TypesMatched
@@ -421,9 +582,23 @@ func InferSource(step ImportStep, target TargetColumns, tables []PositionedTable
 		}
 		return a.Table < b.Table
 	})
+	if len(gone) > 0 {
+		// No source table is at fault: the step's own target is.
+		inf.Reason = fmt.Sprintf("the target table %s has no field %s any more: it was deleted or renamed since "+
+			"the migration, so no source table can be paired with the step", step.TargetTable,
+			strings.Join(quoted(gone), ", "))
+		return inf
+	}
+	if step.MatchByName {
+		inferByName(&inf, len(step.Maps))
+		return inf
+	}
 
-	var fitting, named []SourceCandidate
+	var fitting, named, possible []SourceCandidate
 	for _, c := range inf.Candidates {
+		if c.Possible {
+			possible = append(possible, c)
+		}
 		if !c.Fits {
 			continue
 		}
@@ -433,16 +608,17 @@ func InferSource(step ImportStep, target TargetColumns, tables []PositionedTable
 		}
 	}
 	switch {
+	case len(fitting) == 0 && len(possible) == 1:
+		inf.Table, inf.Confidence = possible[0].Table, ConfidenceLow
+		inf.Reason = "no table has a field of the target field's type at every position; this is the only one " +
+			"FileMaker could import from, and " + differing(possible[0])
+	case len(fitting) == 0 && len(possible) > 1:
+		inf.Reason = fmt.Sprintf("no table has a field of the target field's type at every position, and %d "+
+			"tables FileMaker could import from with values going into fields of another type; pick the source "+
+			"table", len(possible))
 	case len(fitting) == 0:
-		inf.Reason = fmt.Sprintf("no table of the solution has a field of the right type at each of the %d "+
-			"position(s) the step reads (up to position %d); pick the source table", len(step.Maps), maxPos)
-		for _, c := range inf.Candidates {
-			if c.DeletedPositions > 0 && c.TypesMatched+c.DeletedPositions == c.Positions {
-				inf.Reason += fmt.Sprintf("; %s would fit, but %d of the fields the step reads were deleted from it "+
-					"since the migration", c.Table, c.DeletedPositions)
-				break
-			}
-		}
+		inf.Reason = fmt.Sprintf("no table of the solution has a field at each of the %d position(s) the step "+
+			"reads (up to position %d) that FileMaker could import from; pick the source table", len(step.Maps), maxPos)
 	case len(named) == 1:
 		inf.Table, inf.Confidence = named[0].Table, ConfidenceHigh
 		inf.Reason = fmt.Sprintf("the only table whose fields fit every position by type and agree by name on %d of %d",
@@ -456,7 +632,73 @@ func InferSource(step ImportStep, target TargetColumns, tables []PositionedTable
 	default:
 		inf.Reason = fmt.Sprintf("%d tables fit every position by type; pick the source table", len(fitting))
 	}
+	if len(fitting) == 0 {
+		for _, c := range inf.Candidates {
+			if c.DeletedPositions > 0 && c.TypesMatched+c.DeletedPositions == c.Positions {
+				inf.Reason += fmt.Sprintf("; %s would fit, but %d of the fields the step reads were deleted from it "+
+					"since the migration", c.Table, c.DeletedPositions)
+				break
+			}
+		}
+	}
 	return inf
+}
+
+// inferByName infers the source of a step matching names: the only table
+// with a field named as each target field, which FileMaker can import from.
+// Its confidence is high when every pair has the same type, low when values
+// go into fields of another type. A table naming only some of them is left
+// for a person to pick: FileMaker would import those it names and leave the
+// others out, as the transfer does at each run.
+func inferByName(inf *Inference, fields int) {
+	var possible []SourceCandidate
+	for _, c := range inf.Candidates {
+		if c.Possible {
+			possible = append(possible, c)
+		}
+	}
+	switch {
+	case len(possible) == 1 && possible[0].Fits:
+		inf.Table, inf.Confidence = possible[0].Table, ConfidenceHigh
+		inf.Reason = fmt.Sprintf("the step pairs its fields by matching names, and this is the only table with "+
+			"a field named as each of its %d target field(s), of the same type", fields)
+	case len(possible) == 1:
+		inf.Table, inf.Confidence = possible[0].Table, ConfidenceLow
+		inf.Reason = fmt.Sprintf("the step pairs its fields by matching names, and this is the only table with "+
+			"a field named as each of its %d target field(s); ", fields) + differing(possible[0])
+	case len(possible) > 1:
+		inf.Reason = fmt.Sprintf("the step pairs its fields by matching names, and %d tables have a field named "+
+			"as each of its target fields; pick the source table", len(possible))
+	default:
+		inf.Reason = fmt.Sprintf("the step pairs its fields by matching names, and no table has a field named "+
+			"as each of its %d target field(s) that FileMaker could import from; pick the source table, and the "+
+			"fields it does not name are left out at each run, as FileMaker leaves them", fields)
+		if len(inf.Candidates) > 0 && inf.Candidates[0].NamesMatched > 0 {
+			inf.Reason += fmt.Sprintf(" (%s names %d of them)", inf.Candidates[0].Table, inf.Candidates[0].NamesMatched)
+		}
+	}
+}
+
+func quoted(names []string) []string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = strconv.Quote(n)
+	}
+	return out
+}
+
+// differing says which pairs of a candidate put a value into a field of
+// another type.
+func differing(c SourceCandidate) string {
+	var pairs []string
+	for _, p := range c.Pairs {
+		if p.SourceType != "" || p.TargetType != "" {
+			pairs = append(pairs, p.Describe())
+		}
+	}
+	return fmt.Sprintf("%d value(s) go into a field of another type, which FileMaker keeps unconverted and "+
+		"File4Base converts, passing over and reporting a record whose value does not convert: %s",
+		len(pairs), strings.Join(pairs, ", "))
 }
 
 // sameKind compares a source field's type with a target field's, both as
@@ -464,6 +706,14 @@ func InferSource(step ImportStep, target TargetColumns, tables []PositionedTable
 // a timestamp compare equal, as the field types FileMaker imports between.
 func sameKind(a, b dbal.AgnosticFieldType) bool {
 	return a != "" && a == b
+}
+
+// importable says whether FileMaker imports a field of type a into one of
+// type b. It imports any type into any other but container data, which goes
+// only into a container field, and a container field takes nothing else
+// from another FileMaker file.
+func importable(a, b dbal.AgnosticFieldType) bool {
+	return (a == dbal.FieldTypeContainer) == (b == dbal.FieldTypeContainer)
 }
 
 func sameName(a, b string) bool {
@@ -502,7 +752,43 @@ func PlanTransfer(
 	if problem := step.Problem(); problem != "" {
 		return in, fmt.Errorf("%w: %s", ErrImportStep, problem)
 	}
+	var names namePairing
+	paired := 0
+	if step.MatchByName {
+		names, _ = pairingOf(source)
+	}
 	for _, m := range step.Maps {
+		column := target.Resolve(m.Target)
+		if column == "" {
+			return in, fmt.Errorf("%w: %s has no field %q", ErrImportStep, step.TargetTable, m.Target.Name)
+		}
+		if problem := target.matchOnly(column, m.Match && step.Method == "update"); problem != "" {
+			return in, fmt.Errorf("%w: %s", ErrImportStep, problem)
+		}
+		if step.MatchByName {
+			// The transfer pairs the names again at each run, as below;
+			// the source field kept is the one they pair now, or the
+			// name sought when the table has none yet, which the run
+			// leaves out until it has.
+			sourceField, ok := names.pair(column)
+			switch {
+			case names.twice[strings.ToLower(column)]:
+				return in, fmt.Errorf("%w: the step pairs fields by name, and %s has two fields named %q whatever "+
+					"their case", ErrImportStep, source.Name, column)
+			case !ok && m.Match && step.Method == "update":
+				return in, fmt.Errorf("%w: the step pairs fields by name and matches records on %s, and %s has "+
+					"no field of that name", ErrImportStep, column, source.Name)
+			case !ok:
+				sourceField = column
+			default:
+				paired++
+			}
+			in.Mappings = append(in.Mappings, schema.TransferMapping{SourceField: sourceField, DestinationField: column})
+			if m.Match {
+				in.MatchFields = append(in.MatchFields, column)
+			}
+			continue
+		}
 		if m.Position > len(source.Fields) {
 			return in, fmt.Errorf("%w: the step reads source field %d and %s has %d field(s) from FileMaker",
 				ErrImportStep, m.Position, source.Name, len(source.Fields))
@@ -511,16 +797,16 @@ func PlanTransfer(
 			return in, fmt.Errorf("%w: the step reads source field %d, which was deleted from %s since the migration",
 				ErrImportStep, m.Position, source.Name)
 		}
-		column := target.Resolve(m.Target)
-		if column == "" {
-			return in, fmt.Errorf("%w: %s has no field %q", ErrImportStep, step.TargetTable, m.Target.Name)
-		}
 		in.Mappings = append(in.Mappings, schema.TransferMapping{
 			SourceField: source.Fields[m.Position-1].Name, DestinationField: column,
 		})
 		if m.Match {
 			in.MatchFields = append(in.MatchFields, column)
 		}
+	}
+	if step.MatchByName && paired == 0 {
+		return in, fmt.Errorf("%w: the step pairs fields by name, and %s has no field named as any of its "+
+			"target fields", ErrImportStep, source.Name)
 	}
 	switch step.Method {
 	case "update":
@@ -535,6 +821,7 @@ func PlanTransfer(
 		in.Mode = schema.TransferModeAdd
 		in.MatchFields = nil
 	}
+	in.MatchByName = step.MatchByName
 	in.OnUnmatched = schema.TransferUnmatchedSkip
 	if step.AddRemaining {
 		in.OnUnmatched = schema.TransferUnmatchedAdd

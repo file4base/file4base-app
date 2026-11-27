@@ -715,3 +715,64 @@ func TestRun_ValidatesTheDestinationAsItsAccount(t *testing.T) {
 	assert.True(t, report.Committed)
 	assert.Len(t, rows(t, ctx, f.results.dataSvc, "project_surveys"), 2)
 }
+
+// A transfer matching names pairs each destination field with the source
+// field of the same name at every run, as FileMaker's "matching names"
+// import order does (#191). A destination field no source field is named as
+// is left out and reported; a match field so left refuses the run.
+func TestRun_PairsFieldsByNameAtEachRun(t *testing.T) {
+	mgr, ctx := transferTestManager(t)
+	if mgr == nil {
+		return
+	}
+	f := newFixture(t, ctx, mgr)
+
+	def, err := f.dispatch.schemaSvc.CreateTransfer(ctx, schema.TransferInput{
+		Name:        "By name",
+		Source:      schema.TransferEnd{Table: "surveys"},
+		Destination: schema.TransferEnd{Database: f.results.name, Table: "project_surveys"},
+		Mappings: []schema.TransferMapping{
+			{SourceField: "issued_on", DestinationField: "issued_on"},
+			{SourceField: "title", DestinationField: "label"},
+			{SourceField: "quota", DestinationField: "quota"},
+		},
+		Mode:        schema.TransferModeAdd,
+		MatchByName: true,
+	}, "")
+	require.NoError(t, err)
+	stored, err := f.dispatch.schemaSvc.GetTransfer(ctx, def.ID)
+	require.NoError(t, err)
+	require.True(t, stored.MatchByName, "the option is kept with the definition")
+
+	report, err := f.run(ctx, stored)
+	require.NoError(t, err)
+	assert.Equal(t, 2, report.Added)
+	assert.Equal(t, []string{"label"}, report.Unpaired, "no source field is named label")
+	assert.Equal(t, []string{"issued_on", "quota"}, report.Fields)
+	for _, r := range rows(t, ctx, f.results.dataSvc, "project_surveys") {
+		assert.Nil(t, r["label"], "label was not written from title")
+		assert.NotNil(t, r["quota"])
+	}
+
+	t.Run("a match field no source field is named as refuses the run", func(t *testing.T) {
+		keyed, err := f.dispatch.schemaSvc.CreateTransfer(ctx, schema.TransferInput{
+			Name:        "By name, keyed",
+			Source:      schema.TransferEnd{Table: "surveys"},
+			Destination: schema.TransferEnd{Database: f.results.name, Table: "project_surveys"},
+			Mappings: []schema.TransferMapping{
+				{SourceField: "survey_code", DestinationField: "code"},
+				{SourceField: "quota", DestinationField: "quota"},
+			},
+			MatchFields: []string{"code"},
+			Mode:        schema.TransferModeUpdateMatching,
+			MatchByName: true,
+		}, "")
+		require.NoError(t, err)
+		before := len(rows(t, ctx, f.results.dataSvc, "project_surveys"))
+		report, err := f.run(ctx, keyed)
+		require.ErrorIs(t, err, transfer.ErrTransfer)
+		assert.Contains(t, err.Error(), "matches records on \"code\"")
+		assert.False(t, report.Committed)
+		assert.Len(t, rows(t, ctx, f.results.dataSvc, "project_surveys"), before)
+	})
+}

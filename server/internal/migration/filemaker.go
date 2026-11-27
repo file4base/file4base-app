@@ -887,6 +887,10 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// 5. Extract Layouts (their script triggers are kept, disabled)
 	layoutNodes := catalogDefinitions(root, []string{"LayoutCatalog", "layouts"}, "Layout", "layout")
 	layoutCtx := newLayoutObjectContext(root, bundle, binding, req.NativeDateOrder)
+	// layoutTables maps a layout's FileMaker id to the table of this
+	// solution it shows, for the Import Records steps saved without their
+	// target (see layoutTargetTable).
+	layoutTables := map[string]string{}
 	layoutMenu := newMenuBuilder(schema.CatalogLayouts, schema.MenuLayout)
 	layoutIDBySource := map[string]string{}
 	for _, ln := range layoutNodes {
@@ -900,6 +904,9 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 			layoutID = lay.ID
 			if id := firstAttr(ln, "id", "ID"); id != "" {
 				layoutIDBySource[id] = lay.ID
+				if table := layoutTargetTable(ln, lay, bundle.TableOccurrences, occTableByName); table != "" {
+					layoutTables[strings.TrimSpace(id)] = table
+				}
 			}
 		}
 		if ref := findFirstChild(ln, "TableOccurrenceReference"); ref != nil {
@@ -924,7 +931,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		if firstAttr(sn, "where") != "" && len(sn.Children) == 0 {
 			continue
 		}
-		sc, items := convertScriptNode(sn, defaultContextTable, occTableByName)
+		sc, items := convertScriptNode(sn, defaultContextTable, occTableByName, layoutTables)
 		for _, it := range items {
 			addReportItem(report, it)
 		}
@@ -2375,10 +2382,73 @@ func layoutOccurrenceDetail(occName string, occurrences []schema.BundleOccurrenc
 	return fmt.Sprintf("Layout bound to table occurrence %q", occName)
 }
 
+// layoutTargetTable is the table of this solution a migrated layout shows,
+// as an Import Records step saved without its target imports into it, or ""
+// when it cannot be said before the script runs: the layout was saved without
+// its occurrence (the migration then shows the first one, which FileMaker
+// does not), its occurrence is of another file's table, or it has a trigger
+// that runs a script as the layout is entered or a record loaded, which may
+// go to another layout before the import.
+func layoutTargetTable(
+	ln *xmlNode, lay *schema.BundleLayout, occurrences []schema.BundleOccurrence, occTableByName map[string]string,
+) string {
+	occName := firstAttr(ln, "table_occurrence", "table", "tableOccurrence")
+	if occName == "" && findFirstChild(ln, "Table", "TableOccurrenceReference") == nil {
+		return ""
+	}
+	for _, st := range readLayoutTriggers(ln) {
+		if st.object != nil {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(st.event)) {
+		case "onlayoutenter", "onlayoutload", "onrecordload", "onmodeenter":
+			return ""
+		}
+	}
+	for _, o := range occurrences {
+		if o.ID == lay.TableOccurrenceID {
+			if o.External != nil {
+				return ""
+			}
+			return occTableByName[strings.ToLower(o.Name)]
+		}
+	}
+	return ""
+}
+
+// nextLayoutTable is the table of the layout a script is on once a step has
+// run, as far as it is fixed before the script runs: a Go to Layout to a
+// layout it names fixes it, found by the layout's FileMaker id, as two
+// layouts can share a name. A branch, a loop, a pause (the user may go to
+// another layout), another window, another script, or a step File4Base does
+// not recognise makes it unknown again, since which way it goes is decided
+// only as the script runs.
+func nextLayoutTable(current, canonical string, params map[string]interface{}, layoutTables map[string]string) string {
+	switch canonical {
+	case "Go to Layout":
+		id, _ := params["filemaker_layout_id"].(string)
+		if params["layout_destination"] != "selected" || strings.TrimSpace(id) == "" {
+			return ""
+		}
+		return layoutTables[strings.TrimSpace(id)]
+	case "", "If", "Else If", "Else", "End If", "Loop", "Exit Loop If", "End Loop",
+		"Perform Script", "Pause/Resume Script", "Go to Related Record",
+		"New Window", "Select Window", "Close Window":
+		return ""
+	}
+	return current
+}
+
 // occTableByName maps a lower-cased table occurrence name to the File4Base
 // table it shows, so a step naming an occurrence can say which table it
 // writes.
-func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName map[string]string) (*schema.BundleScript, []ReportItem) {
+//
+// layoutTables maps a layout's FileMaker id to the table of this solution it
+// shows: an Import Records step saved without its target occurrence imports
+// into the table of the layout a Go to Layout just before it fixes.
+func convertScriptNode(
+	sn *xmlNode, defaultContextTable string, occTableByName, layoutTables map[string]string,
+) (*schema.BundleScript, []ReportItem) {
 	var items []ReportItem
 	name := firstAttr(sn, "name", "Name")
 	if name == "" || nativeFolderMarker(sn) || nativeSeparatorMarker(sn) {
@@ -2391,6 +2461,9 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName m
 
 	stepNodes := findDirectOrCatalogChildren(sn, "StepList", "steps", "Step", "step")
 	steps := make([]schema.BundleStep, 0, len(stepNodes))
+	// layoutTable is the table of the layout the script is known to be on,
+	// "" when that is not known before it runs.
+	layoutTable := ""
 
 	for idx, stNode := range stepNodes {
 		rawStepName := strings.TrimSpace(firstAttr(stNode, "name", "type", "Name"))
@@ -2447,12 +2520,21 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName m
 			})
 		}
 
+		if canonical == "Import Records" && enabled {
+			if occ, _ := params["target_occurrence"].(string); occ == "" && layoutTable != "" {
+				params["current_layout_table"] = layoutTable
+			}
+		}
+		if enabled {
+			layoutTable = nextLayoutTable(layoutTable, canonical, params, layoutTables)
+		}
 		if isSupported {
 			for _, it := range stepOptionItems(canonical, params, occTableByName) {
 				it.SourceName = fmt.Sprintf("%s > %s (step %d)", name, rawStepName, idx+1)
 				it.TargetName = name
 				items = append(items, it)
 			}
+			delete(params, "current_layout_table")
 			if _, done := params["migration_note"]; !done && needsTransferDefinition(canonical) {
 				items = append(items, ReportItem{
 					Category:   CategoryManualActionRequired,

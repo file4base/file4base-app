@@ -184,14 +184,19 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
   }
 
   /// The steps a bulk confirmation covers: inferred over every table of the
-  /// solution, the inferred table still the one picked, and nothing in the
-  /// way.
+  /// solution, with high or medium confidence, the inferred table still the
+  /// one picked, the target saved in FileMaker, and nothing in the way. A
+  /// low-confidence inference puts values into fields of another type, and a
+  /// target taken from the Go to Layout before the step is the migration's
+  /// reading: each is confirmed one step at a time, as the server requires.
   List<(ImportStepModel, _FileGroup)> get _unambiguous => [
     for (final g in _groups)
       if (g.solution != null && !g.inferring)
         for (final s in g.steps)
           if (s.problem.isEmpty &&
+              !s.targetFromLayout &&
               (_inference[s.stepId]?.isInferred ?? false) &&
+              !_inference[s.stepId]!.isLowConfidence &&
               _inference[s.stepId]!.tablesHidden == 0 &&
               _picked[s.stepId] == _inference[s.stepId]!.table &&
               !_creating.contains(s.stepId))
@@ -277,9 +282,9 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Each step below gets a transfer from the table File4Base inferred, reading the source '
-                  'fields paired below by position, and runs it from now on. Check each pairing.',
+                  'fields paired below${_pairingWords(items)}, and runs it from now on. Check each pairing.',
                 ),
                 if (high.isNotEmpty) ..._dialogSection('High confidence: one table fits by type and names agree', high),
                 if (medium.isNotEmpty)
@@ -299,6 +304,14 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
       ),
     );
     if (ok == true && mounted) await _create(items);
+  }
+
+  /// How the steps of a bulk confirmation pair their fields.
+  static String _pairingWords(List<(ImportStepModel, _FileGroup)> items) {
+    final byName = items.where((i) => i.$1.matchByName).length;
+    if (byName == 0) return ' by position';
+    if (byName == items.length) return ' by matching names, again at each run';
+    return ' by position, or by matching names again at each run where a step says so';
   }
 
   List<Widget> _dialogSection(String title, List<(ImportStepModel, _FileGroup)> items) => [
@@ -412,8 +425,9 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
             const Text(
               'FileMaker saved these steps with their source fields by position only ("source field 3") and '
               'without the source table. Each one stays disabled until it has a transfer. Choose the solution '
-              'each file became: File4Base proposes the table whose fields fit every position by type, and '
-              'creates a transfer only for the steps you confirm.',
+              'each file became: File4Base proposes the table whose fields fit every position by type or, when '
+              'none does, the only one FileMaker could import from (low confidence), and creates a transfer '
+              'only for the steps you confirm.',
               style: TextStyle(color: Colors.white70, fontSize: 11.5),
             ),
             if (_created > 0)
@@ -528,8 +542,9 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
                 ),
                 TextSpan(
                   text:
-                      '  into ${s.targetTable}: ${s.describeMethod()}; ${s.mappings.length} field(s) from '
-                      'source position(s) up to $positions'
+                      '  into ${s.targetTable}${s.targetFromLayout ? ' (target taken from the preceding Go to Layout)' : ''}'
+                      ': ${s.describeMethod()}; ${s.mappings.length} field(s) '
+                      '${s.matchByName ? 'paired by matching names' : 'from source position(s) up to $positions'}'
                       '${s.autoEnterFields.isEmpty ? '' : ', auto-enter on ${s.autoEnterFields.contains('*') ? 'every field' : s.autoEnterFields.join(', ')}'}',
                   style: const TextStyle(color: Colors.white70),
                 ),
@@ -559,8 +574,16 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
               children: [
                 if (inf.isInferred) ...[
                   _badge(
-                    inf.confidence == 'high' ? 'Inferred, high confidence' : 'Inferred, medium confidence',
-                    inf.confidence == 'high' ? Colors.greenAccent : Colors.lightBlueAccent,
+                    switch (inf.confidence) {
+                      'high' => 'Inferred, high confidence',
+                      'low' => 'Inferred, low confidence: confirm on its own',
+                      _ => 'Inferred, medium confidence',
+                    },
+                    switch (inf.confidence) {
+                      'high' => Colors.greenAccent,
+                      'low' => Colors.orangeAccent,
+                      _ => Colors.lightBlueAccent,
+                    },
                   ),
                   const SizedBox(width: 6),
                 ] else ...[
@@ -609,14 +632,35 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
             ),
             if (inf.candidate(picked)?.pairs.isNotEmpty ?? false)
               Text(
-                'Source position → target field: ${inf.candidate(picked)!.describePairs()}',
+                '${inf.byName ? 'Source field (by name)' : 'Source position'} → target field: '
+                '${inf.candidate(picked)!.describePairs()}',
                 key: Key('import-step-pairs-${s.stepId}'),
                 style: TextStyle(
-                  color: inf.candidate(picked)!.pairs.any((p) => p.deleted || p.missing)
+                  color: inf.candidate(picked)!.pairs.any((p) => p.deleted || p.missing || p.converted)
                       ? Colors.orangeAccent
                       : Colors.white70,
                   fontSize: 11.5,
                 ),
+              ),
+            if (inf.candidate(picked)?.pairs.any((p) => p.converted && !p.incompatible) ?? false)
+              Text(
+                'Values marked (TYPE) go into a field of another type. FileMaker keeps them unconverted; the '
+                'transfer converts them, and passes over and reports a record whose value does not convert.',
+                key: Key('import-step-converted-${s.stepId}'),
+                style: const TextStyle(color: Colors.orangeAccent, fontSize: 11),
+              ),
+            if (s.targetFromLayout)
+              Text(
+                'FileMaker saved this step without its target: it imports into the table of the current layout, '
+                'which the Go to Layout before it fixes. Check the target, and confirm this step on its own.',
+                key: Key('import-step-target-from-layout-${s.stepId}'),
+                style: const TextStyle(color: Colors.amberAccent, fontSize: 11),
+              ),
+            if (s.matchByName)
+              const Text(
+                "FileMaker pairs this step's fields by matching names each time it runs; so does its transfer, "
+                'leaving out a field the source table no longer has a field named as.',
+                style: TextStyle(color: Colors.white60, fontSize: 11),
               ),
             if (picked != null && inf.isInferred && picked != inf.table)
               const Text(
