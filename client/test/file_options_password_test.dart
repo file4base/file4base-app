@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/models/file_options_model.dart';
 import 'package:file4base_client/features/solution_manager/file_options_dialog.dart';
@@ -31,9 +33,10 @@ Future<GlobalKey<State>> _pump(WidgetTester tester, Future<http.Response> Functi
   return key;
 }
 
-Future<void> _changePassword(WidgetTester tester, String password) async {
+Future<void> _changePassword(WidgetTester tester, String password, {String current = 'old-pass'}) async {
   await tester.tap(find.text('Change password...'));
   await tester.pumpAndSettle();
+  await tester.enterText(find.widgetWithText(TextFormField, 'Current Password'), current);
   await tester.enterText(find.widgetWithText(TextFormField, 'New Password'), password);
   await tester.enterText(find.widgetWithText(TextFormField, 'Confirm New Password'), password);
   await tester.tap(find.text('Update Password'));
@@ -77,6 +80,34 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Password updated successfully.'), findsNothing);
     expect(find.text('Sign in to the database to change the password.'), findsOneWidget);
+  });
+
+  testWidgets('the current password is required and sent with the new one (#209)', (tester) async {
+    final bodies = <Map<String, dynamic>>[];
+    await _pump(tester, (r) async {
+      bodies.add(jsonDecode(r.body) as Map<String, dynamic>);
+      return http.Response('{"id":"u1","status":"updated"}', 200, headers: {'content-type': 'application/json'});
+    });
+    await _changePassword(tester, 'new-secret', current: '');
+    expect(bodies, isEmpty, reason: 'no request without the current password');
+    expect(find.text('Please enter your current password'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextFormField, 'Current Password'), 'old-pass');
+    await tester.tap(find.text('Update Password'));
+    await tester.pumpAndSettle();
+    expect(bodies.single['password'], 'new-secret');
+    expect(bodies.single['current_password'], 'old-pass');
+    expect(find.text('Password updated successfully.'), findsOneWidget);
+  });
+
+  testWidgets('a wrong current password says so and keeps the form open (#209)', (tester) async {
+    await _pump(tester, (_) async => http.Response(
+        '{"title":"Forbidden","status":403,"detail":"the current password is incorrect"}', 403,
+        headers: {'content-type': 'application/problem+json'}));
+    await _changePassword(tester, 'new-secret', current: 'not-it');
+    expect(find.text('The current password is incorrect.'), findsOneWidget);
+    expect(find.text('Update Password'), findsOneWidget);
+    expect(find.text('Password updated successfully.'), findsNothing);
+    expect(_rememberedPassword(tester), 'old-pass');
   });
 
   testWidgets('a password accepted by the server updates the remembered password', (tester) async {

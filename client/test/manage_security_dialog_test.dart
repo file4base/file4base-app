@@ -224,6 +224,15 @@ void main() {
       expect(find.byTooltip('Super-owner — click to revoke server-wide control'), findsNothing);
     });
 
+    testWidgets("an ordinary owner cannot open a super-owner's password (#209)", (tester) async {
+      await pumpDialog(tester, twoOwnersClient(),
+          const UserModel(id: 'owner-2', username: 'deputy', role: 'owner'));
+      final key = find.byTooltip('Only a super-owner can manage a super-owner account');
+      expect(key, findsOneWidget, reason: 'only the super-owner row');
+      final button = tester.widget<IconButton>(find.ancestor(of: key, matching: find.byType(IconButton)).first);
+      expect(button.onPressed, isNull);
+    });
+
     testWidgets('scopes API requests to databaseName and calls onModified on changes', (tester) async {
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1.0;

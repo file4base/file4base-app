@@ -3967,9 +3967,12 @@ class ApiClient {
     return UserModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  /// Updates an account. [currentPassword] is required by the server when the
+  /// account is the caller's own and [password] changes it.
   Future<void> updateUser(
     String id, {
     required String role, String? password,
+    String? currentPassword,
     bool? isActive,
     String? database,
   }) async {
@@ -3979,6 +3982,9 @@ class ApiClient {
     }
     if (password != null && password.isNotEmpty) {
       body['password'] = password;
+      if (currentPassword != null && currentPassword.isNotEmpty) {
+        body['current_password'] = currentPassword;
+      }
     }
     if (isActive != null) {
       body['is_active'] = isActive;

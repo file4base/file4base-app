@@ -446,7 +446,7 @@ func TestAPI_RolesAndLayoutPermissions(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, rec.Code, "someone else's account")
 
 		otherSession := h.login(db, "uma", "user-secret")
-		rec = h.do(http.MethodPut, "/api/v1/security/users/"+plainUser.ID, user, map[string]string{"role": "user", "password": "user-secret-2"}, nil)
+		rec = h.do(http.MethodPut, "/api/v1/security/users/"+plainUser.ID, user, map[string]string{"role": "user", "password": "user-secret-2", "current_password": "user-secret"}, nil)
 		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 		rec = h.do(http.MethodGet, "/api/v1/schemas/tables", user, nil, nil)
@@ -1057,7 +1057,7 @@ func TestAPI_SessionsFromBeforeAnAccountChangeAreRejected(t *testing.T) {
 	id := newUser("selfie", "user")
 	current := h.login(db, "selfie", "selfie-secret")
 	other := h.login(db, "selfie", "selfie-secret")
-	rec := h.do(http.MethodPut, "/api/v1/security/users/"+id, current, map[string]string{"password": "selfie-new-secret"}, nil)
+	rec := h.do(http.MethodPut, "/api/v1/security/users/"+id, current, map[string]string{"password": "selfie-new-secret", "current_password": "selfie-secret"}, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.True(t, usable(current), "the session used for the change stays valid")
 	assert.False(t, usable(other), "other sessions of the account are closed")

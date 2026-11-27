@@ -206,6 +206,29 @@ func (s *Service) Authenticate(ctx context.Context, username, password string, t
 	}, nil
 }
 
+// VerifyUserPassword checks password against the stored hash of the account
+// with this id. It returns ErrInvalidCredentials when the password does not
+// match or the account does not exist, and spends a bcrypt comparison either
+// way.
+func (s *Service) VerifyUserPassword(ctx context.Context, id, password string) error {
+	q := `SELECT password_hash FROM sys_users WHERE id = $1`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT password_hash FROM sys_users WHERE id = ?`
+	}
+	var hash string
+	if err := s.driver.DB().QueryRowContext(ctx, q, id).Scan(&hash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			burnPasswordCheck(password)
+			return ErrInvalidCredentials
+		}
+		return err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
+		return ErrInvalidCredentials
+	}
+	return nil
+}
+
 // CountUsers returns the number of accounts registered in sys_users.
 func (s *Service) CountUsers(ctx context.Context) (int, error) {
 	var count int
