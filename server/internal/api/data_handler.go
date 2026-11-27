@@ -944,6 +944,10 @@ func (h *DataHandler) ExportRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The found set exported may be found by a related field, as by a find.
+	if !h.authorizeFindRelations(w, r, svc, table, body.ExportOptions.Requests) {
+		return
+	}
 	source, err := svc.ExportRecords(r.Context(), table, body.ExportOptions)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Export Failed", err)

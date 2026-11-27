@@ -61,11 +61,14 @@ func TestAPI_UnstoredCalculationRespectsTableAccess(t *testing.T) {
 			}
 		}
 	}
+	var relationship struct {
+		ID string `json:"id"`
+	}
 	rec := h.do(http.MethodPost, "/api/v1/schemas/relationships", owner, map[string]interface{}{
 		"name": "staff_payroll", "operator": "=",
 		"left_occurrence_id": occurrence["staff"], "left_column_id": columns["staff.code"],
 		"right_occurrence_id": occurrence["payroll"], "right_column_id": columns["payroll.code"],
-	}, nil)
+	}, &relationship)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	formula := fmt.Sprintf(`{"formula":"Sum ( %s::salary )","result_type":"Number","stored":false}`, payrollOccurrence)
 	addColumn("staff", "pay", "CALCULATION", &formula)
@@ -124,6 +127,16 @@ func TestAPI_UnstoredCalculationRespectsTableAccess(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Len(t, listed, 1)
 	assert.Nil(t, listed[0]["pay"])
+
+	// An export found by a payroll field reads payroll, as that find would,
+	// so it is refused to her too.
+	rec = h.do(http.MethodPost, "/api/v1/data/staff/export", carolToken, map[string]interface{}{
+		"format": "csv", "sort": []map[string]interface{}{{"field": "pay"}},
+		"requests": []map[string]interface{}{{"criteria": []map[string]interface{}{{
+			"field_name": "salary", "value": ">1000", "relationship_id": relationship.ID, "occurrence": payrollOccurrence,
+		}}}},
+	}, nil)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 
 	// Past the most records it computes, the find is refused, saying so.
 	require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/staff", owner, map[string]interface{}{"code": "S-2"}, nil).Code)

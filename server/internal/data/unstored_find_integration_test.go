@@ -68,6 +68,8 @@ func newUnstoredFindFixture(t *testing.T) *unstoredFindFixture {
 	add(f.companies, "since", dbal.FieldTypeCalculation,
 		unstoredCalcJSON(fmt.Sprintf("If ( Count ( %s::fee ) > 0 ; Date ( 1 ; Count ( %s::fee ) ; 2026 ) ; \"\" )", customers, customers), "Date"))
 	add(f.companies, "record_number", dbal.FieldTypeCalculation, unstoredCalcJSON("Get ( RecordID )", "Number"))
+	// It names the field it reads only when it runs.
+	add(f.companies, "by_name", dbal.FieldTypeCalculation, unstoredCalcJSON(`GetField ( "company" )`, "Text"))
 	add(f.companies, "stored_total", dbal.FieldTypeNumber, nil)
 	add(f.companies, "stored_headline", dbal.FieldTypeText, nil)
 	add(f.companies, "stored_since", dbal.FieldTypeDate, nil)
@@ -299,6 +301,13 @@ func TestUnstoredFind_AsOnAStoredField(t *testing.T) {
 		names := f.companiesOf(all)
 		slices.Reverse(names)
 		assert.Equal(t, names, f.companiesOf(got), "by record ID, the order they were created in, reversed")
+
+		// GetField reads a field no formula names.
+		got, err = f.dataSvc.ExecuteFind(ctx, f.companies, []data.FindRequest{
+			{Criteria: []data.FindCriterion{crit("by_name", "==Gamma Garage")}},
+		}, data.QueryOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"Gamma Garage"}, f.companiesOf(got))
 	})
 
 	t.Run("bounded", func(t *testing.T) {
@@ -313,6 +322,12 @@ func TestUnstoredFind_AsOnAStoredField(t *testing.T) {
 		_, err = f.dataSvc.Summarize(ctx, f.companies, data.SummaryRequest{Fields: []string{"fees_total"}})
 		require.ErrorIs(t, err, data.ErrTooManyToCompute)
 		assert.Contains(t, err.Error(), "this summary needs")
+		// A misspelt field is answered as such, before anything is counted.
+		_, err = f.dataSvc.ExecuteFind(ctx, f.companies, []data.FindRequest{
+			{Criteria: []data.FindCriterion{crit("total_fees", ">1")}},
+			{Criteria: []data.FindCriterion{crit("no_such_field", "x")}},
+		}, data.QueryOptions{})
+		require.ErrorIs(t, err, data.ErrUnknownField)
 
 		// A criterion on a stored field narrows what is computed.
 		got, err := f.dataSvc.ExecuteFind(ctx, f.companies, finds["and a stored one"], data.QueryOptions{})
@@ -396,10 +411,10 @@ func TestUnstoredFindTiming(t *testing.T) {
 		})
 
 		engine := driver.Dialect().Engine()
-		find := func(extra ...data.FindCriterion) func() error {
+		find := func(over string, extra ...data.FindCriterion) func() error {
 			return func() error {
 				rows, err := f.dataSvc.ExecuteFind(ctx, f.companies, []data.FindRequest{
-					{Criteria: append(extra, data.FindCriterion{FieldName: "total_fees", Value: ">2000"})},
+					{Criteria: append(extra, data.FindCriterion{FieldName: "total_fees", Value: ">" + over})},
 				}, data.QueryOptions{Limit: 500})
 				if err == nil && len(rows) == 0 {
 					err = fmt.Errorf("found nothing")
@@ -413,7 +428,7 @@ func TestUnstoredFindTiming(t *testing.T) {
 			t.Logf("%s, %d companies, %s (%s): %s, %v", engine, n, what, index, time.Since(started).Round(time.Millisecond), err)
 		}
 		all := func(index string) {
-			measure(index, "find total_fees > 2000, first 500", find())
+			measure(index, "find total_fees > 2000, first 500", find("2000"))
 			measure(index, "sort by total_fees descending, first 500", func() error {
 				_, err := f.dataSvc.ListRows(ctx, f.companies, data.QueryOptions{Sort: []data.SortField{{Field: "total_fees", Descending: true}}, Limit: 500})
 				return err
@@ -422,7 +437,7 @@ func TestUnstoredFindTiming(t *testing.T) {
 				_, err := f.dataSvc.Summarize(ctx, f.companies, data.SummaryRequest{Fields: []string{"fees_total"}})
 				return err
 			})
-			measure(index, "same find narrowed to 1% by a stored field", find(data.FindCriterion{FieldName: "company", Value: "Company 0000*"}))
+			measure(index, "find total_fees > 500 narrowed to 1% by a stored field", find("500", data.FindCriterion{FieldName: "company", Value: "Company 0000*"}))
 		}
 		// Without an index on the match field, every page of 500 companies
 		// reads Customers once per company: quadratic, so measured at 10,000
@@ -431,24 +446,24 @@ func TestUnstoredFindTiming(t *testing.T) {
 			all("match field not indexed")
 		} else {
 			data.SetUnstoredFindLimits(data.DefaultUnstoredFindLimits)
-			measure("match field not indexed, default limits", "find total_fees > 2000", find())
+			measure("match field not indexed, default limits", "find total_fees > 2000", find("2000"))
 			data.SetUnstoredFindLimits(data.UnstoredFindLimits{Records: 1_000_000, Duration: time.Hour, Bytes: 1 << 30})
 		}
 		// The index multikey.go documents for PostgreSQL; on MariaDB a
 		// field of one line is compared whole, which a prefix index serves.
-		index := fmt.Sprintf("CREATE INDEX f4b_timing_company ON %s ((array_remove(string_to_array(replace(%s, E'\\r', E'\\n'), E'\\n'), ''))) ",
-			driver.Dialect().QuoteIdentifier(f.customers), driver.Dialect().QuoteIdentifier("company"))
+		index := fmt.Sprintf("CREATE INDEX f4b_timing_company_%d ON %s ((array_remove(string_to_array(replace(%s, E'\\r', E'\\n'), E'\\n'), ''))) ",
+			n, driver.Dialect().QuoteIdentifier(f.customers), driver.Dialect().QuoteIdentifier("company"))
 		if engine == dbal.EnginePostgres {
 			index = strings.Replace(index, "((", "USING gin ((", 1)
 		} else {
-			index = fmt.Sprintf("CREATE INDEX f4b_timing_company ON %s (%s(191))", driver.Dialect().QuoteIdentifier(f.customers), driver.Dialect().QuoteIdentifier("company"))
+			index = fmt.Sprintf("CREATE INDEX f4b_timing_company_%d ON %s (%s(191))", n, driver.Dialect().QuoteIdentifier(f.customers), driver.Dialect().QuoteIdentifier("company"))
 		}
 		_, err = driver.DB().ExecContext(ctx, index)
 		require.NoError(t, err)
 		_, _ = driver.DB().ExecContext(ctx, "ANALYZE "+driver.Dialect().QuoteIdentifier(f.customers))
 		all("match field indexed")
 		data.SetUnstoredFindLimits(data.DefaultUnstoredFindLimits)
-		measure("match field indexed, default limits", "find total_fees > 2000", find())
+		measure("match field indexed, default limits", "find total_fees > 2000", find("2000"))
 		data.SetUnstoredFindLimits(data.UnstoredFindLimits{Records: 1_000_000, Duration: time.Hour, Bytes: 1 << 30})
 	}
 }

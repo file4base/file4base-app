@@ -93,8 +93,10 @@ var ErrTooManyToCompute = errors.New("too many records to compute")
 // unstoredPage is how many candidates are computed at a time.
 const unstoredPage = 500
 
-// boundTable is the name of the table of computed values in a statement.
-const boundTable = "f4b_u"
+// boundTable is the name of the table of computed values in a statement. It
+// holds a $, which no table name does (dbal.CheckIdentifier), so it can never
+// hide one.
+const boundTable = "f4b$u"
 
 // unstoredBinding is the values of the unstored calculations of a table
 // computed for one statement: cte defines the table of values from the
@@ -129,6 +131,11 @@ func (s *Service) findClauses(
 		return findClauses{}, err
 	}
 	if err := s.refuseUnstoredCriteria(ctx, requests, related); err != nil {
+		return findClauses{}, err
+	}
+	// Every criterion is checked as written, a misspelt field answered as
+	// such, before any record is counted or computed.
+	if _, err := buildFindClauses(s.driver.Dialect(), fields, tableName, requests, related); err != nil {
 		return findClauses{}, err
 	}
 	bound, err := s.bindUnstored(ctx, tableName, fields, requests, related, extra, what)
@@ -189,11 +196,21 @@ func (s *Service) bindUnstored(
 	if c.seq, err = s.creationOrder(ctx, tableName); err != nil {
 		return nil, err
 	}
-	if err := c.count(ctx); err != nil {
-		return nil, err
+	// The time limit stops a count or a page still being read or computed,
+	// so that no one statement can take the request past it.
+	limited, cancel := context.WithDeadline(ctx, c.started.Add(c.limits.Duration))
+	defer cancel()
+	timedOut := func(err error) error {
+		if limited.Err() != nil && ctx.Err() == nil {
+			return c.tooLong()
+		}
+		return err
 	}
-	if err := c.compute(ctx, calculations); err != nil {
-		return nil, err
+	if err := c.count(limited); err != nil {
+		return nil, timedOut(err)
+	}
+	if err := c.compute(limited, calculations); err != nil {
+		return nil, timedOut(err)
 	}
 	return c.binding(), nil
 }
@@ -298,7 +315,16 @@ func (c *unstoredCompute) compute(ctx context.Context, calculations []calculatio
 	dialect := c.s.driver.Dialect()
 	quoted := dialect.QuoteIdentifier(c.table)
 	seqColumn := quoted + "." + dialect.QuoteIdentifier(c.seq)
-	read := pageFields(c.fields, neededCalculations(calculations, c.want))
+	// A formula naming its fields at run time (GetField, Evaluate) may read
+	// any of them, so the page computes every calculation, as a read does.
+	want, needed := c.want, neededCalculations(calculations, c.want)
+	if slices.ContainsFunc(calculations, func(calc calculation) bool {
+		fns := calc.expr.Functions()
+		return needed[calc.field] && (slices.Contains(fns, "GETFIELD") || slices.Contains(fns, "EVALUATE"))
+	}) {
+		want, needed = nil, nil
+	}
+	read := pageFields(c.fields, needed)
 	list := selectList(dialect, read)
 	const seqKey = "f4b$seq"
 	if c.seq != "id" {
@@ -344,7 +370,7 @@ func (c *unstoredCompute) compute(ctx context.Context, calculations []calculatio
 			seqs[i] = sequenceNumber(r[seqKey])
 			delete(r, seqKey)
 		}
-		if err := reader.fill(ctx, c.table, records, c.want); err != nil {
+		if err := reader.fill(ctx, c.table, records, want); err != nil {
 			return err
 		}
 		reader.forgetRecords()
@@ -361,17 +387,17 @@ func (c *unstoredCompute) compute(ctx context.Context, calculations []calculatio
 				return err
 			}
 			c.done++
+			if c.rows.Len() >= maxBytes {
+				return c.tooBig(maxBytes)
+			}
 		}
 		last = seqs[len(seqs)-1]
 		switch {
 		case c.done > c.limits.Records:
 			// Records added since they were counted.
 			return c.refuse(fmt.Sprintf("for more than %d records of %s, the most it computes", c.limits.Records, c.table))
-		case c.rows.Len() > maxBytes:
-			return c.refuse(fmt.Sprintf("for %d records of %s, into more than %d bytes of values, the most it binds", c.total, c.table, maxBytes))
 		case time.Since(c.started) > c.limits.Duration:
-			return c.refuse(fmt.Sprintf("for %d records of %s, and had computed it for %d after %s, the longest it takes",
-				c.total, c.table, c.done, c.limits.Duration))
+			return c.tooLong()
 		}
 		if len(records) < unstoredPage {
 			break
@@ -379,6 +405,17 @@ func (c *unstoredCompute) compute(ctx context.Context, calculations []calculatio
 	}
 	c.rows.WriteByte(']')
 	return nil
+}
+
+// tooBig refuses values past the most bytes a statement binds.
+func (c *unstoredCompute) tooBig(maxBytes int) error {
+	return c.refuse(fmt.Sprintf("for %d records of %s, into more than %d bytes of values, the most it binds", c.total, c.table, maxBytes))
+}
+
+// tooLong refuses a computing that went past the time limit.
+func (c *unstoredCompute) tooLong() error {
+	return c.refuse(fmt.Sprintf("for %d records of %s, and had computed it for %d after %s, the longest it takes",
+		c.total, c.table, c.done, c.limits.Duration))
 }
 
 // maxBytes is the most bytes of values one statement binds: the limit, and
@@ -403,7 +440,7 @@ func pageFields(fields fieldSet, needed map[string]bool) fieldSet {
 	out := make(fieldSet, len(fields))
 	for key, kind := range fields {
 		base := strings.TrimSuffix(key, "[]")
-		if fields[base] == dbal.FieldTypeContainer && !needed[base] {
+		if needed != nil && fields[base] == dbal.FieldTypeContainer && !needed[base] {
 			continue
 		}
 		out[key] = kind
@@ -492,11 +529,12 @@ func (c *unstoredCompute) binding() *unstoredBinding {
 	quote := dialect.QuoteIdentifier
 	b := &unstoredBinding{value: c.rows.String(), columns: map[string]string{}, quote: quote}
 	seqName := quote("f4b$seq")
+	table := quote(boundTable)
 	names := []string{seqName}
 	for i, field := range c.want {
 		name := quote(fmt.Sprintf("f4b$u%d", i))
 		names = append(names, name)
-		b.columns[field] = boundTable + "." + name
+		b.columns[field] = table + "." + name
 	}
 	if dialect.Engine() == dbal.EngineMariaDB {
 		columns := make([]string, len(names))
@@ -504,16 +542,16 @@ func (c *unstoredCompute) binding() *unstoredBinding {
 			columns[i] = fmt.Sprintf("%s %s PATH '$[%d]'", name, c.mariaType(i), i)
 		}
 		b.cte = fmt.Sprintf("%s AS (SELECT * FROM JSON_TABLE(%s, '$[*]' COLUMNS (%s)) AS f4b_e)",
-			boundTable, dialect.Placeholder(1), strings.Join(columns, ", "))
+			table, dialect.Placeholder(1), strings.Join(columns, ", "))
 	} else {
 		reads := make([]string, len(names))
 		for i := range names {
 			reads[i] = c.postgresRead(i)
 		}
 		b.cte = fmt.Sprintf("%s (%s) AS (SELECT %s FROM json_array_elements(CAST(%s AS json)) AS f4b_e)",
-			boundTable, strings.Join(names, ", "), strings.Join(reads, ", "), dialect.Placeholder(1))
+			table, strings.Join(names, ", "), strings.Join(reads, ", "), dialect.Placeholder(1))
 	}
-	b.join = fmt.Sprintf(" JOIN %s ON %s.%s = %s.%s", boundTable, boundTable, seqName, quote(c.table), quote(c.seq))
+	b.join = fmt.Sprintf(" JOIN %s ON %s.%s = %s.%s", table, table, seqName, quote(c.table), quote(c.seq))
 	return b
 }
 
@@ -550,7 +588,9 @@ func (c *unstoredCompute) mariaType(i int) string {
 	case dbal.FieldTypeNumber, dbal.FieldTypeDate, dbal.FieldTypeTimestamp, dbal.FieldTypeBoolean:
 		return c.s.driver.Dialect().MapType(kind)
 	}
-	return "LONGTEXT"
+	// The character set user tables are created with, so the text compares
+	// and groups under the same collation as a stored field's.
+	return "LONGTEXT CHARACTER SET utf8mb4"
 }
 
 // forgetRecords drops what was computed and read for the records of one
