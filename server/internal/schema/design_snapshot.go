@@ -34,6 +34,11 @@ type DesignSnapshot struct {
 	userIDs       map[string]bool
 	fileRefIDs    map[string]bool
 	functionIDs   map[string]bool
+	menus         menuState // the layout and script menus, exactly
+	// Each account's layout and table permissions, exactly: re-importing
+	// the bundle can only restrict an existing account's (ImportSolution).
+	permissions      map[string][]UserLayoutPermission
+	tablePermissions map[string][]UserTablePermission
 }
 
 // SnapshotDesign records the design of the active database so that
@@ -57,6 +62,9 @@ func (s *Service) SnapshotDesign(ctx context.Context, solutionName string) (*Des
 		functionIDs:   map[string]bool{},
 	}
 
+	if snap.menus, err = s.readMenuState(ctx); err != nil {
+		return nil, err
+	}
 	tables, err := s.ListTables(ctx)
 	if err != nil {
 		return nil, err
@@ -103,8 +111,16 @@ func (s *Service) SnapshotDesign(ctx context.Context, solutionName string) (*Des
 	if err != nil {
 		return nil, err
 	}
+	snap.permissions = map[string][]UserLayoutPermission{}
+	snap.tablePermissions = map[string][]UserTablePermission{}
 	for _, u := range users {
 		snap.userIDs[u.ID] = true
+		if snap.permissions[u.ID], err = s.GetUserPermissions(ctx, u.ID); err != nil {
+			return nil, err
+		}
+		if snap.tablePermissions[u.ID], err = s.GetUserTablePermissions(ctx, u.ID); err != nil {
+			return nil, err
+		}
 	}
 	refs, err := s.ListFileReferences(ctx)
 	if err != nil {
@@ -236,6 +252,15 @@ func (s *Service) RestoreDesign(ctx context.Context, snap *DesignSnapshot) error
 		if _, err := s.ImportSolution(ctx, snap.Bundle); err != nil {
 			fail("the recorded design", err)
 		}
+	}
+	// The menus as they were, which a file does not say of the items it
+	// lists by name.
+	fail("the layout and script menus", s.writeMenuState(ctx, snap.menus))
+	for id, perms := range snap.permissions {
+		fail("an account's layout permissions", s.SetUserPermissions(ctx, id, perms))
+	}
+	for id, perms := range snap.tablePermissions {
+		fail("an account's table permissions", s.SetUserTablePermissions(ctx, id, perms))
 	}
 	return firstErr
 }

@@ -93,7 +93,7 @@ func (s *Service) ensureExternalOccurrenceColumns(ctx context.Context) error {
 	db := s.driver.DB()
 	mariadb := s.driver.Dialect().Engine() == dbal.EngineMariaDB
 	q := `SELECT table_name, column_name, is_nullable FROM information_schema.columns
-		WHERE table_name IN ('sys_table_occurrences', 'sys_file_references', 'sys_value_lists', 'sys_columns', 'sys_relationships', '` +
+		WHERE table_name IN ('sys_table_occurrences', 'sys_file_references', 'sys_value_lists', 'sys_columns', 'sys_relationships', 'sys_layouts', 'sys_scripts', 'sys_catalog_items', '` +
 		RelationshipPredicatesTable + `') AND table_schema = `
 	if mariadb {
 		q += `DATABASE()`
@@ -124,13 +124,18 @@ func (s *Service) ensureExternalOccurrenceColumns(ctx context.Context) error {
 		return err
 	}
 
-	for _, c := range slices.Concat(externalOccurrenceColumns, relationshipSideColumns) {
+	for _, c := range slices.Concat(externalOccurrenceColumns, relationshipSideColumns, layoutCatalogColumns) {
 		if !tables[c.table] || columns[c.table+"."+c.column] {
 			continue
 		}
 		stmt := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s`, c.table, c.column, c.typ)
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("failed adding %s.%s: %w", c.table, c.column, err)
+		}
+	}
+	if tables["sys_layouts"] && !tables["sys_catalog_items"] {
+		if _, err := db.ExecContext(ctx, catalogItemsSQL(s.driver.Dialect().TimestampColumn())); err != nil {
+			return fmt.Errorf("failed creating sys_catalog_items: %w", err)
 		}
 	}
 	for _, key := range required {

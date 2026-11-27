@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -145,4 +146,55 @@ func TestServerTools_BackupFailsWhenTheRecordsCannotBeExported(t *testing.T) {
 	var list backupList
 	s.do(http.MethodGet, "/api/v1/server/backups", s.aliceToken, nil, &list)
 	assert.Empty(t, list.Backups, "no backup was written")
+}
+
+// A restore keeps a script in its menu folder, and puts back a field's
+// FileMaker id and type.
+func TestServerTools_RestoreKeepsScriptFoldersAndSourceFacts(t *testing.T) {
+	s := newServerToolsHarness(t, false)
+	ctx, svc, _, echo, _ := backupFixture(t, s)
+	sc, err := svc.CreateScript(ctx, "Tidy", "samples", nil, true, nil)
+	require.NoError(t, err)
+	file, err := svc.ExportSolution(ctx, schema.ExportOptions{SolutionName: "Menus"})
+	require.NoError(t, err)
+	bundle, err := schema.DecodeSolutionBundle(file)
+	require.NoError(t, err)
+	bundle.Catalog = []schema.BundleCatalogEntry{
+		{Catalog: schema.CatalogScripts, Kind: schema.MenuFolder, ID: "f1", Name: "Tools"},
+		{Catalog: schema.CatalogScripts, Kind: schema.MenuScript, ID: sc.ID, FolderID: "f1"},
+	}
+	withMenu, err := msgpack.Marshal(bundle)
+	require.NoError(t, err)
+	_, err = svc.ImportSolution(ctx, withMenu)
+	require.NoError(t, err)
+	timed, err := svc.AddColumn(ctx, echo.TableID, schema.ColumnMetadata{
+		Name: "starts", DisplayName: "starts", FieldType: dbal.FieldTypeTimestamp, IsNullable: true,
+		SourceFieldID: "12", SourceType: schema.SourceTypeTime})
+	require.NoError(t, err)
+
+	code, backupID := s.backup(s.aliceToken, nil)
+	require.Equal(t, http.StatusCreated, code)
+	require.NoError(t, svc.DeleteColumn(ctx, echo.TableID, timed.ID))
+
+	rec := s.do(http.MethodPost, "/api/v1/server/backups/"+backupID+"/restore", s.aliceToken, nil, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	menu, err := svc.Menu(ctx, schema.CatalogScripts)
+	require.NoError(t, err)
+	require.Len(t, menu, 1)
+	assert.Equal(t, "Tools", menu[0].Name)
+	require.Len(t, menu[0].Items, 1, "the script is in its folder again")
+	assert.Equal(t, "Tidy", menu[0].Items[0].Name)
+	tables, err := svc.ListTables(ctx)
+	require.NoError(t, err)
+	found := false
+	for _, tb := range tables {
+		for _, c := range tb.Columns {
+			if c.Name == "starts" {
+				found = true
+				assert.Equal(t, "12", c.SourceFieldID)
+				assert.Equal(t, schema.SourceTypeTime, c.SourceType)
+			}
+		}
+	}
+	assert.True(t, found, "the field is back")
 }

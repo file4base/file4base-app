@@ -202,7 +202,7 @@ type nativeLayout struct {
 	buttonIcons    int             // icons dropped from buttons that have a label
 	portalsFar     int             // portals of an occurrence several relationships away, listed along the path
 	portalFilter   int             // portal filters that could not be bound, the portal kept empty
-	portalSort     int             // portal sort fields of another occurrence, left out of the sort
+	portalSort     int             // portal sort fields of another occurrence or in a value list's order, left out of the sort
 	formatsLeft    int             // conditional formats not kept
 	formatsDiffer  int             // "Value is" conditions kept as a calculation that compares with other values
 	formatsOff     int             // conditional formats switched off in FileMaker, left out
@@ -294,8 +294,42 @@ func convertNativeLayout(ln *xmlNode, ctx *layoutObjectContext, def map[string]i
 		}
 		l.objects = append(under, over...)
 	}
+	markOutsidePortals(l.objects)
 	def["objects"] = l.objects
 	return l.report()
+}
+
+// markOutsidePortals says `"portal": ""` on each object that lies within a
+// portal's bounds, on its panel, without being one of its row objects: a
+// client would otherwise take it for one, as an object's bounds are all
+// that tell where a layout drawn in the designer puts it.
+func markOutsidePortals(objects []map[string]interface{}) {
+	num := func(o map[string]interface{}, k string) float64 { f, _ := o[k].(float64); return f }
+	panel := func(o map[string]interface{}) string {
+		if p, _ := o["panel"].(map[string]interface{}); p != nil {
+			return fmt.Sprint(p["control"], "#", p["index"])
+		}
+		return ""
+	}
+	var portals []map[string]interface{}
+	for _, o := range objects {
+		if o["type"] == "portal" {
+			portals = append(portals, o)
+		}
+	}
+	for _, o := range objects {
+		if _, said := o["portal"]; said || o["type"] == "portal" {
+			continue
+		}
+		for _, p := range portals {
+			if panel(o) == panel(p) && num(o, "x") >= num(p, "x") && num(o, "y") >= num(p, "y") &&
+				num(o, "x")+num(o, "width") <= num(p, "x")+num(p, "width") &&
+				num(o, "y")+num(o, "height") <= num(p, "y")+num(p, "height") {
+				o["portal"] = ""
+				break
+			}
+		}
+	}
 }
 
 // nativeLayoutView reads the view a layout opens in from its options.
@@ -1070,10 +1104,19 @@ func (l *nativeLayout) field(obj *xmlNode, kind string, out map[string]interface
 			}
 			binding["repetitions_shown"] = n
 		}
-		if vl := findFirstChild(display, "ValueListReference"); vl != nil && control[0] != "edit_box" && control[0] != "drop_down_calendar" {
+		// Kept for every control, as FileMaker keeps it: an edit box's
+		// value list is the one it auto-completes from and the Data API
+		// names it, though only a list control shows it here.
+		if vl := findFirstChild(display, "ValueListReference"); vl != nil {
 			if id := l.ctx.valueLists[strings.ToLower(firstAttr(vl, "name"))]; id != "" {
 				binding["value_list_id"] = id
 			}
+		}
+		// Display Style 5 is taken as the concealed edit box, the one
+		// style number no other control uses (unverified: no export seen
+		// has one).
+		if control[0] == "edit_box" && kind == "Edit Box" && firstAttr(display, "Style") == "5" {
+			binding["concealed"] = true
 		}
 		if ph := findFirstChild(display, "Placeholder"); ph != nil {
 			if text, ok := calcLiteral(calculationText(ph)); ok && text != "" {
@@ -1344,7 +1387,7 @@ func (l *nativeLayout) report() []ReportItem {
 		review = append(review, plural(l.portalFilter, "portal")+" whose filter calculation could not be bound, showing no records until it is set again")
 	}
 	if l.portalSort > 0 {
-		review = append(review, plural(l.portalSort, "portal sort field")+" of another occurrence, left out of the portal's sort")
+		review = append(review, plural(l.portalSort, "portal sort field")+" of another occurrence or in a value list's order, left out of the portal's sort")
 	}
 	if l.formatsLeft > 0 {
 		review = append(review, plural(l.formatsLeft, "conditional format")+" not kept (a condition that could not be bound, or on an object other than a field, a text or a button)")
@@ -1659,24 +1702,52 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 		}
 	}
 	if spec := findFirstChild(p, "SortSpecification"); spec != nil {
+		// sort is what the portal sorts its rows by here: fields of its own
+		// occurrence, ascending or descending. sort_fields is FileMaker's
+		// whole sort order, fields of another occurrence and value list
+		// orders included.
 		var keys []string
+		var fields []interface{}
 		for _, sort := range findNodes(spec, "Sort") {
 			ref := childPath(sort, "PrimaryField", "FieldReference")
 			if ref == nil {
 				continue
 			}
 			column, at, ok := l.column(ref)
-			if !ok || at.id != occ.id {
+			if !ok {
 				l.portalSort++
 				continue
 			}
-			if firstAttr(sort, "type") == "Descending" {
+			order := "ascending"
+			switch firstAttr(sort, "type") {
+			case "Descending":
+				order = "descending"
+			case "Custom":
+				order = "custom"
+			}
+			field := map[string]interface{}{"field_name": column, "table_occurrence": at.name, "order": order}
+			if order == "custom" {
+				if vl := findFirstChild(sort, "ValueListReference"); vl != nil {
+					if id := l.ctx.valueLists[strings.ToLower(firstAttr(vl, "name"))]; id != "" {
+						field["value_list_id"] = id
+					}
+				}
+			}
+			fields = append(fields, field)
+			if at.id != occ.id || order == "custom" {
+				l.portalSort++
+				continue
+			}
+			if order == "descending" {
 				column = "-" + column
 			}
 			keys = append(keys, column)
 		}
 		if len(keys) > 0 {
 			config["sort"] = strings.Join(keys, ",")
+		}
+		if len(fields) > 0 {
+			config["sort_fields"] = fields
 		}
 	}
 	if c := findFirstChild(p, "Calculation"); c != nil {
@@ -1713,10 +1784,17 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 	l.objects = append(l.objects, base)
 	l.ctx.count("Portal").Migrated++
 	if list := findFirstChild(p, "ObjectList"); list != nil {
-		outer := l.inPortal
+		outer, first := l.inPortal, len(l.objects)
 		l.inPortal = true
 		l.convertList(list)
 		l.inPortal = outer
+		// The portal's row objects say they are its, as FileMaker nests
+		// them in it: their bounds alone do not tell.
+		for _, o := range l.objects[first:] {
+			if _, ok := o["portal"]; !ok {
+				o["portal"] = base["id"]
+			}
+		}
 	}
 }
 

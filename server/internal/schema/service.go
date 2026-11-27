@@ -182,6 +182,9 @@ type ColumnMetadata struct {
 	// migration, so another solution's occurrences that name the field only
 	// by id find it (#107). Empty for a field not migrated from FileMaker.
 	SourceFieldID string `json:"source_field_id,omitempty"`
+	// SourceType is FileMaker's type of a migrated field where File4Base's
+	// own does not say it (see SourceType), empty otherwise.
+	SourceType string `json:"source_type,omitempty"`
 }
 
 // RelationshipMetadata represents an occurrence join in sys_relationships.
@@ -269,6 +272,9 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		`ALTER TABLE sys_columns ADD COLUMN IF NOT EXISTS max_repetitions INT NOT NULL DEFAULT 1;`,
 		// FileMaker field ids (see migrations/005_external_occurrences.sql).
 		`ALTER TABLE sys_columns ADD COLUMN IF NOT EXISTS source_field_id VARCHAR(32);`,
+		// FileMaker's type of a migrated field where File4Base's does not
+		// say it (see migrations/012_layout_catalog.sql).
+		`ALTER TABLE sys_columns ADD COLUMN IF NOT EXISTS source_type VARCHAR(32);`,
 		`CREATE TABLE IF NOT EXISTS sys_table_occurrences (
 			id VARCHAR(36) PRIMARY KEY,
 			base_table_id VARCHAR(36) REFERENCES sys_tables(id) ON DELETE CASCADE,
@@ -311,6 +317,10 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			created_at ` + ts + `,
 			updated_at ` + ts + `
 		);`,
+		// The layout menu's order and folders (see
+		// migrations/012_layout_catalog.sql).
+		`ALTER TABLE sys_layouts ADD COLUMN IF NOT EXISTS folder_id VARCHAR(36);`,
+		`ALTER TABLE sys_layouts ADD COLUMN IF NOT EXISTS position INT;`,
 		`CREATE TABLE IF NOT EXISTS sys_value_lists (
 			id VARCHAR(36) PRIMARY KEY,
 			name VARCHAR(128) NOT NULL UNIQUE,
@@ -499,6 +509,10 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			created_at ` + ts + `,
 			updated_at ` + ts + `
 		);`,
+		// The script menu's order; folder_id is a folder of sys_catalog_items
+		// (see migrations/012_layout_catalog.sql).
+		`ALTER TABLE sys_scripts ADD COLUMN IF NOT EXISTS position INT;`,
+		catalogItemsSQL(ts),
 		`CREATE TABLE IF NOT EXISTS sys_script_steps (
 			id VARCHAR(36) PRIMARY KEY,
 			script_id VARCHAR(36) NOT NULL REFERENCES sys_scripts(id) ON DELETE CASCADE,
@@ -792,6 +806,9 @@ func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetad
 	if !ValidSourceFieldID(col.SourceFieldID) {
 		return nil, fmt.Errorf("%w: source_field_id is a FileMaker field id, digits only", ErrInvalidFieldOptions)
 	}
+	if !ValidSourceType(col.SourceType) {
+		return nil, fmt.Errorf("%w: source_type %q is not a FileMaker field type File4Base keeps", ErrInvalidFieldOptions, col.SourceType)
+	}
 
 	// Retrieve target table name
 	db := s.driver.DB()
@@ -862,11 +879,11 @@ func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetad
 	}
 
 	// Insert into sys_columns
-	insertColSQL := `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, source_field_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+	insertColSQL := `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, source_field_id, source_type) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 	if dialect.Engine() == dbal.EngineMariaDB {
-		insertColSQL = `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, source_field_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		insertColSQL = `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, source_field_id, source_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	}
-	if _, err := tx.ExecContext(ctx, insertColSQL, col.ID, col.TableID, col.Name, col.DisplayName, string(col.FieldType), col.IsNullable, col.IsPrimaryKey, col.DefaultValue, col.CalculationFormula, col.ValidationRules, col.CreatedAt, col.MaxRepetitions, nullable(col.SourceFieldID)); err != nil {
+	if _, err := tx.ExecContext(ctx, insertColSQL, col.ID, col.TableID, col.Name, col.DisplayName, string(col.FieldType), col.IsNullable, col.IsPrimaryKey, col.DefaultValue, col.CalculationFormula, col.ValidationRules, col.CreatedAt, col.MaxRepetitions, nullable(col.SourceFieldID), nullable(col.SourceType)); err != nil {
 		return nil, fmt.Errorf("failed registering column in sys_columns: %w", err)
 	}
 	if err := s.syncUniqueIndex(ctx, tx, tableName, col.Name, col.FieldType, rules); err != nil {
@@ -1266,9 +1283,9 @@ func (s *Service) TableByName(ctx context.Context, name string) (table *TableMet
 // tableColumns reads the columns of a registered table, with their
 // source_field_id (#107), in the order they were created.
 func (s *Service) tableColumns(ctx context.Context, tableID string) ([]ColumnMetadata, error) {
-	colQuery := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, '') FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
+	colQuery := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, ''), COALESCE(source_type, '') FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
 	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
-		colQuery = `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, '') FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
+		colQuery = `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, ''), COALESCE(source_type, '') FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
 	}
 	rows, err := s.driver.DB().QueryContext(ctx, colQuery, tableID)
 	if err != nil {
@@ -1279,7 +1296,7 @@ func (s *Service) tableColumns(ctx context.Context, tableID string) ([]ColumnMet
 	for rows.Next() {
 		var c ColumnMetadata
 		var fType string
-		if err := rows.Scan(&c.ID, &c.TableID, &c.Name, &c.DisplayName, &fType, &c.IsNullable, &c.IsPrimaryKey, &c.DefaultValue, &c.CalculationFormula, &c.ValidationRules, &c.CreatedAt, &c.MaxRepetitions, &c.SourceFieldID); err != nil {
+		if err := rows.Scan(&c.ID, &c.TableID, &c.Name, &c.DisplayName, &fType, &c.IsNullable, &c.IsPrimaryKey, &c.DefaultValue, &c.CalculationFormula, &c.ValidationRules, &c.CreatedAt, &c.MaxRepetitions, &c.SourceFieldID, &c.SourceType); err != nil {
 			return nil, err
 		}
 		c.FieldType = dbal.AgnosticFieldType(fType)

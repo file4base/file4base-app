@@ -5,9 +5,12 @@
 #                                  for the known cause tracked by ISSUE
 #   FIXTURE STEP KIND [ENGINE]     FIXTURE first fails at STEP, with a KIND difference
 #
-# The /fmi/data skeleton serves sessions, productInfo and databases (P1);
-# every other endpoint answers code 3, so its fixtures stop at their first
-# step that needs it.
+# The /fmi/data skeleton serves sessions, productInfo and databases (P1),
+# and the layout and script menus and layout descriptions (P3); every other
+# endpoint answers code 3, so its fixtures stop at their first step that
+# needs it. A layout description has no valueLists yet: layout_metadata
+# stops at the first layout with value lists, and TestDataAPIConformanceLayoutContract
+# checks the rest of every description.
 
 containers/upload_download@v1 upload-png status
 containers/upload_download@v2 upload-png status
@@ -33,18 +36,9 @@ globals/patch@vLatest set-text status
 locking/record_lock@v1 edit-while-uploading background.status
 locking/record_lock@v2 edit-while-uploading background.status
 locking/record_lock@vLatest edit-while-uploading background.status
-metadata/layout_metadata_old@v1 api-customers status
-metadata/layout_metadata_old@v2 api-customers status
-metadata/layout_metadata_old@vLatest api-customers status
-metadata/layout_metadata@v1 api-customers status
-metadata/layout_metadata@v2 api-customers status
-metadata/layout_metadata@vLatest api-customers status
-metadata/layouts_list@v1 layouts-rw status
-metadata/layouts_list@v2 layouts-rw status
-metadata/layouts_list@vLatest layouts-rw status
-metadata/scripts_list@v1 scripts-rw status
-metadata/scripts_list@v2 scripts-rw status
-metadata/scripts_list@vLatest scripts-rw status
+metadata/layout_metadata@v1 api-customers body
+metadata/layout_metadata@v2 api-customers body
+metadata/layout_metadata@vLatest api-customers body
 privileges/access@v1 ro-create body
 privileges/access@v2 ro-create body
 privileges/access@vLatest ro-create body
@@ -75,9 +69,6 @@ scripts/on_reads@vLatest script status
 sessions/login_variants@v1 account-without-fmrest status
 sessions/login_variants@v2 account-without-fmrest status
 sessions/login_variants@vLatest account-without-fmrest status
-sessions/token_lifecycle@v1 layouts-lowercase-bearer status
-sessions/token_lifecycle@v2 layouts-lowercase-bearer status
-sessions/token_lifecycle@vLatest layouts-lowercase-bearer status
 writes/create@v1 create-minimal status
 writes/create@v2 create-minimal status
 writes/create@vLatest create-minimal status

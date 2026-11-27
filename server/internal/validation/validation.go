@@ -235,7 +235,13 @@ func (c *Checker) checkField(ctx context.Context, recordID string, f Field, valu
 		return c.checkCalculation(ctx, recordID, f, values)
 	}
 	if r.StrictTypeEnabled {
-		if !matchesStrictType(r.StrictType, text) {
+		strictText := text
+		if t, ok := value.(time.Time); ok && r.StrictType == "Time of Day" {
+			// A migrated time field is kept as a timestamp: its value is
+			// the time of day it holds.
+			strictText = t.Format("15:04:05.999999999")
+		}
+		if !matchesStrictType(r.StrictType, strictText) {
 			return c.fail(f, "strict_type", fmt.Sprintf("%s must be %s", f.Name, strictTypeDescription(r.StrictType)))
 		}
 	}

@@ -643,10 +643,15 @@ func (s *Service) GetUserPermissions(ctx context.Context, userID string) ([]User
 	perms := make([]UserLayoutPermission, 0)
 	for rows.Next() {
 		var p UserLayoutPermission
+		// A permission that cannot be read is not a missing one: that would
+		// read as the read_write default.
 		if err := rows.Scan(&p.ID, &p.UserID, &p.LayoutID, &p.LayoutName, &p.AccessLevel); err != nil {
-			continue
+			return nil, fmt.Errorf("failed reading user permissions: %w", err)
 		}
 		perms = append(perms, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed reading user permissions: %w", err)
 	}
 	return perms, nil
 }
