@@ -135,7 +135,16 @@ of values (on MariaDB, under the server's `max_allowed_packet`), set by
 `FILE4BASE_UNSTORED_FIND_MAX_RECORDS`, `FILE4BASE_UNSTORED_FIND_TIMEOUT` and
 `FILE4BASE_UNSTORED_FIND_MAX_BYTES`. Past one, the request is refused with
 `422 Too Many Records to Compute`, naming the field and the number of records,
-rather than cut short: a criterion on a stored field narrows it. A criterion
+rather than cut short: a criterion on a stored field narrows it. Computing
+costs what reading the records does: a calculation reading related records
+reads them a page at a time, each record's related records looked up by its
+match field. On PostgreSQL that wants the GIN index of
+`server/internal/data/multikey.go` on the related match field: 10,000
+companies of three customers each take about 3 seconds to find, sort or total
+by `Sum ( Customers::Fee )` with it, 50,000 about 11 seconds, and 10,000 about
+70 seconds without it. MariaDB has no index on lines, so it takes about 100
+seconds for 10,000 such companies, past the default time limit: narrow such a
+find by a stored field first. A criterion
 on a related table's unstored calculation (`Lines::Total` where `Total` is
 unstored) is still refused with `422 Unstored Calculation`.
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -357,7 +358,8 @@ func TestUnstoredFind_AsOnAStoredField(t *testing.T) {
 // TestUnstoredFindTiming times a find, a sort and a summary on an unstored
 // Sum ( Customers::fee ) over 10,000 and 50,000 companies of three customers
 // each, every company a candidate. It is a measurement, not a check, so it
-// runs only when F4B_UNSTORED_TIMING is set:
+// runs only when F4B_UNSTORED_TIMING is set, to 1 for both sizes or to the
+// one size wanted:
 //
 //	F4B_UNSTORED_TIMING=1 go test -run TestUnstoredFindTiming -v ./internal/data/
 func TestUnstoredFindTiming(t *testing.T) {
@@ -373,7 +375,11 @@ func TestUnstoredFindTiming(t *testing.T) {
 	data.SetUnstoredFindLimits(data.UnstoredFindLimits{Records: 1_000_000, Duration: time.Hour, Bytes: 1 << 30})
 	defer data.SetUnstoredFindLimits(data.DefaultUnstoredFindLimits)
 
-	for _, n := range []int{10000, 50000} {
+	sizes := []int{10000, 50000}
+	if only, err := strconv.Atoi(os.Getenv("F4B_UNSTORED_TIMING")); err == nil && only > 1 {
+		sizes = []int{only}
+	}
+	for _, n := range sizes {
 		f := newRelatedFixture(t, ctx, driver, false, false, "")
 		occurrences, err := f.schemaSvc.ListTableOccurrences(ctx)
 		require.NoError(t, err)
@@ -449,16 +455,15 @@ func TestUnstoredFindTiming(t *testing.T) {
 			measure("match field not indexed, default limits", "find total_fees > 2000", find("2000"))
 			data.SetUnstoredFindLimits(data.UnstoredFindLimits{Records: 1_000_000, Duration: time.Hour, Bytes: 1 << 30})
 		}
-		// The index multikey.go documents for PostgreSQL; on MariaDB a
-		// field of one line is compared whole, which a prefix index serves.
-		index := fmt.Sprintf("CREATE INDEX f4b_timing_company_%d ON %s ((array_remove(string_to_array(replace(%s, E'\\r', E'\\n'), E'\\n'), ''))) ",
-			n, driver.Dialect().QuoteIdentifier(f.customers), driver.Dialect().QuoteIdentifier("company"))
-		if engine == dbal.EnginePostgres {
-			index = strings.Replace(index, "((", "USING gin ((", 1)
-		} else {
-			index = fmt.Sprintf("CREATE INDEX f4b_timing_company_%d ON %s (%s(191))", n, driver.Dialect().QuoteIdentifier(f.customers), driver.Dialect().QuoteIdentifier("company"))
+		// MariaDB has no index on lines (multikey.go), so the rest, quadratic
+		// there, is measured on PostgreSQL only.
+		if engine != dbal.EnginePostgres {
+			continue
 		}
-		_, err = driver.DB().ExecContext(ctx, index)
+		// The index multikey.go documents for PostgreSQL.
+		_, err = driver.DB().ExecContext(ctx, fmt.Sprintf(
+			"CREATE INDEX f4b_timing_company_%d ON %s USING gin ((array_remove(string_to_array(replace(%s, E'\\r', E'\\n'), E'\\n'), '')))",
+			n, driver.Dialect().QuoteIdentifier(f.customers), driver.Dialect().QuoteIdentifier("company")))
 		require.NoError(t, err)
 		_, _ = driver.DB().ExecContext(ctx, "ANALYZE "+driver.Dialect().QuoteIdentifier(f.customers))
 		all("match field indexed")
