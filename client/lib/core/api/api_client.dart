@@ -3703,14 +3703,26 @@ class ApiClient {
     _checkResponse(response);
   }
 
-  Future<List<Map<String, dynamic>>> listServerSchedules() async {
+  /// The server schedules, with `schedules`, the server `time_zone` and
+  /// whether this server process runs them (`scheduler_running`).
+  Future<Map<String, dynamic>> listServerSchedules() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/api/v1/server/schedules'),
       headers: _headers(),
     );
     _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  /// The latest runs of a schedule, newest first.
+  Future<List<Map<String, dynamic>>> listServerScheduleRuns(String id) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/schedules/${Uri.encodeComponent(id)}/runs'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
     final body = jsonDecode(response.body) as Map<String, dynamic>;
-    return (body['schedules'] as List<dynamic>? ?? const [])
+    return (body['runs'] as List<dynamic>? ?? const [])
         .whereType<Map>()
         .map(Map<String, dynamic>.from)
         .toList();

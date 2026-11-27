@@ -4,6 +4,7 @@ import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:file4base_client/features/about/about_dialog.dart';
 import 'package:file4base_client/features/server_tools/mail_profiles_panel.dart';
+import 'package:file4base_client/features/server_tools/server_schedules_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -143,9 +144,6 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
 
   // 5. Sessions state
   List<Map<String, dynamic>> _sessions = [];
-
-  // 6. Schedules state
-  List<Map<String, dynamic>> _schedules = [];
 
   // 7. Audit Logs state
   List<Map<String, dynamic>> _auditEvents = [];
@@ -301,12 +299,8 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
             _loading = false;
           });
         case ServerToolSection.schedules:
-          final list = await widget.apiClient.listServerSchedules();
-          if (!mounted) return;
-          setState(() {
-            _schedules = list;
-            _loading = false;
-          });
+          // The panel loads its own list.
+          setState(() => _loading = false);
         case ServerToolSection.auditLogs:
           final list = await widget.apiClient.listServerAuditLogs();
           if (!mounted) return;
@@ -687,7 +681,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
       (ServerToolSection.domainTls, Icons.https_outlined, 'Domain & SSL/TLS (ACME)', "Let's Encrypt & custom certs"),
       (ServerToolSection.telemetry, Icons.insights_outlined, 'API Telemetry & Charts', 'RPM, latency & top endpoints'),
       (ServerToolSection.sessions, Icons.people_alt_outlined, 'Connected Clients', 'Active sessions & revoke'),
-      (ServerToolSection.schedules, Icons.schedule_outlined, 'Scheduled Tasks (Cron)', 'Automated backups & scripts'),
+      (ServerToolSection.schedules, Icons.schedule_outlined, 'Schedules', 'Scheduled backups & maintenance'),
       (ServerToolSection.auditLogs, Icons.policy_outlined, 'Audit & Security Logs', 'Auth, MFA & admin trail'),
       (ServerToolSection.maintenance, Icons.build_circle_outlined, 'Database Maintenance', 'VACUUM ANALYZE & catalog'),
       (ServerToolSection.notifications, Icons.notifications_active_outlined, 'Alerts, SMTP & Webhooks', 'Server alert channels'),
@@ -2649,293 +2643,9 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
   }
 
   // ===========================================================================
-  // 6. SCHEDULED TASKS & CRON SCRIPTS VIEW
+  // 6. SCHEDULES VIEW (server_schedules_panel.dart)
   // ===========================================================================
-  Widget _buildSchedulesView() {
-    return Padding(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Scheduled Server Tasks & Cron Jobs', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 2),
-                    Text('Automate nightly database snapshots, maintenance, and server scripts. Toggle the switch to enable or pause any schedule.', style: TextStyle(fontSize: 12, color: _mutedText)),
-                  ],
-                ),
-              ),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _primaryBlue,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                ),
-                onPressed: _promptNewSchedule,
-                icon: const Icon(Icons.add_alarm, size: 16),
-                label: const Text('New Scheduled Task'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: _cardBg,
-                border: Border.all(color: _borderColor),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Column(
-                  children: [
-                    Container(
-                      color: _tableHeaderBg,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      child: Row(
-                        children: [
-                          SizedBox(width: 120, child: Text('STATUS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: _mutedText))),
-                          Expanded(flex: 3, child: Text('TASK NAME & TARGET', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: _mutedText))),
-                          Expanded(flex: 2, child: Text('CRON SCHEDULE', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: _mutedText))),
-                          Expanded(flex: 2, child: Text('LAST EXECUTION', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: _mutedText))),
-                          SizedBox(width: 170, child: Text('ACTIONS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: _mutedText))),
-                        ],
-                      ),
-                    ),
-                    Divider(height: 1, color: _borderColor),
-                    Expanded(
-                      child: ListView.separated(
-                        itemCount: _schedules.length,
-                        separatorBuilder: (_, _) => Divider(height: 1, color: _borderColor),
-                        itemBuilder: (ctx, i) {
-                          final job = _schedules[i];
-                          final id = job['id']?.toString() ?? '';
-                          final name = job['name']?.toString() ?? '';
-                          final cron = job['cron_expr']?.toString() ?? '';
-                          final target = job['target']?.toString() ?? '';
-                          final lastRun = job['last_run_at']?.toString() ?? 'Never';
-                          final status = job['last_status']?.toString() ?? 'scheduled';
-                          final enabled = job['enabled'] as bool? ?? true;
-
-                          return Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                            color: i.isEven ? Colors.transparent : _subtleBg,
-                            child: Row(
-                              children: [
-                                SizedBox(
-                                  width: 120,
-                                  child: Row(
-                                    children: [
-                                      SizedBox(
-                                        width: 42,
-                                        height: 26,
-                                        child: FittedBox(
-                                          child: Switch(
-                                            value: enabled,
-                                            activeThumbColor: Colors.green,
-                                            onChanged: (val) async {
-                                              setState(() {
-                                                _schedules[i] = {...job, 'enabled': val};
-                                              });
-                                              try {
-                                                await widget.apiClient.updateServerSchedule(id, {'enabled': val});
-                                                _toast('Schedule "$name" ${val ? "enabled" : "paused"}.');
-                                              } catch (e) {
-                                                _toast(e.toString().replaceFirst('Exception: ', ''), isError: true);
-                                                await _loadCurrentSection(silent: true);
-                                              }
-                                            },
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        enabled ? 'Active' : 'Paused',
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.bold,
-                                          color: enabled ? Colors.green.shade700 : _mutedText,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                Expanded(
-                                  flex: 3,
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                                      Text('Target: $target', style: TextStyle(fontSize: 11, color: _mutedText)),
-                                    ],
-                                  ),
-                                ),
-                                Expanded(
-                                  flex: 2,
-                                  child: Text(cron, style: const TextStyle(fontSize: 12, fontFamily: 'monospace', fontWeight: FontWeight.w600)),
-                                ),
-                                Expanded(
-                                  flex: 2,
-                                  child: Text('$lastRun\n($status)', style: TextStyle(fontSize: 11, color: _mutedText, fontFamily: 'monospace')),
-                                ),
-                                SizedBox(
-                                  width: 170,
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.end,
-                                    children: [
-                                      OutlinedButton.icon(
-                                        style: OutlinedButton.styleFrom(
-                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                        ),
-                                        onPressed: () async {
-                                          try {
-                                            await widget.apiClient.runServerScheduleNow(id);
-                                            _toast('Executed task "$name"');
-                                            await _loadCurrentSection();
-                                          } catch (e) {
-                                            _toast(e.toString().replaceFirst('Exception: ', ''), isError: true);
-                                          }
-                                        },
-                                        icon: const Icon(Icons.play_arrow, size: 15, color: _primaryBlue),
-                                        label: const Text('Run Now', style: TextStyle(fontSize: 11.5)),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      IconButton(
-                                        tooltip: 'Delete schedule',
-                                        icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                                        onPressed: () async {
-                                          await widget.apiClient.deleteServerSchedule(id);
-                                          _toast('Deleted schedule "$name"');
-                                          await _loadCurrentSection();
-                                        },
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _promptNewSchedule() async {
-    final nameCtrl = TextEditingController();
-    final cronCtrl = TextEditingController(text: '0 2 * * *');
-    final targetCtrl = TextEditingController(text: 'Full SQL Snapshot');
-    var jobType = 'backup';
-
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlgState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          title: const Row(
-            children: [
-              Icon(Icons.add_alarm, color: _primaryBlue, size: 22),
-              SizedBox(width: 8),
-              Text('New Scheduled Server Task', style: TextStyle(fontSize: 16)),
-            ],
-          ),
-          content: SizedBox(
-            width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Task Name',
-                    hintText: 'Hourly Recipe Backup',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: jobType,
-                  decoration: const InputDecoration(
-                    labelText: 'Task Type',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 'backup', child: Text('Automated Database Backup')),
-                    DropdownMenuItem(value: 'script', child: Text('Server Script Execution')),
-                    DropdownMenuItem(value: 'maintenance', child: Text('VACUUM ANALYZE Maintenance')),
-                  ],
-                  onChanged: (v) {
-                    if (v == null) return;
-                    setDlgState(() {
-                      jobType = v;
-                      if (v == 'backup') targetCtrl.text = 'Full SQL Snapshot';
-                      if (v == 'maintenance') targetCtrl.text = 'VACUUM ANALYZE';
-                    });
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: cronCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Cron Expression (UTC)',
-                    hintText: '0 2 * * *',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: targetCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Target Script / Action',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _primaryBlue,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () async {
-                if (nameCtrl.text.trim().isEmpty) return;
-                await widget.apiClient.createServerSchedule({
-                  'name': nameCtrl.text.trim(),
-                  'job_type': jobType,
-                  'cron_expr': cronCtrl.text.trim(),
-                  'target': targetCtrl.text.trim(),
-                  'database': widget.activeDatabase ?? '*',
-                });
-                if (!ctx.mounted) return;
-                Navigator.pop(ctx);
-                _toast('Created schedule "${nameCtrl.text.trim()}"');
-                await _loadCurrentSection();
-              },
-              child: const Text('Create Schedule'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _buildSchedulesView() => ServerSchedulesPanel(apiClient: widget.apiClient);
 
   // ===========================================================================
   // 7. AUDIT & SECURITY LOGS VIEW

@@ -95,37 +95,10 @@ type BackupRecord struct {
 	SizeBytes   int64  `json:"size_bytes"`
 	TablesCount int    `json:"tables_count"`
 	Notes       string `json:"notes"`
-	Type        string `json:"type"` // "manual", "pre_update", "pre_restore", "uploaded"
+	Type        string `json:"type"` // "manual", "scheduled", "pre_update", "pre_restore", "uploaded"
+	// ScheduleID is the schedule that made a "scheduled" backup.
+	ScheduleID string `json:"schedule_id,omitempty"`
 }
-
-// ScheduledJob represents a recurring server task (backup, script, or maintenance).
-//
-// These jobs are a plan, not a runner: this server keeps them in memory and
-// executes none of them. Executed is false and LastStatus says
-// "not executed" so the panel never reports work that did not happen (#108).
-// Scheduled record transfers, which do run, are served at
-// /api/v1/transfer-schedules.
-type ScheduledJob struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Database    string `json:"database"`
-	JobType     string `json:"job_type"` // "backup", "script", "maintenance"
-	Target      string `json:"target"`   // script name or maintenance op
-	CronExpr    string `json:"cron_expr"`
-	Enabled     bool   `json:"enabled"`
-	Executed    bool   `json:"executed"`
-	LastRunAt   string `json:"last_run_at,omitempty"`
-	LastStatus  string `json:"last_status"`
-	NextRunDesc string `json:"next_run_desc"`
-}
-
-// scheduledJobNotExecuted is the status of every Server Tools job: none of
-// them is run by this server.
-const scheduledJobNotExecuted = "not executed"
-
-// scheduledJobNote is what the panel shows instead of a next run that will
-// not happen.
-const scheduledJobNote = "Not executed by this server"
 
 // NotificationConfig holds SMTP and outgoing webhook settings for server alerts.
 type NotificationConfig struct {
@@ -160,7 +133,6 @@ type ServerAdminHandler struct {
 
 	mu                     sync.RWMutex
 	tlsConfig              DomainTLSConfig
-	schedules              []ScheduledJob
 	auditLogs              []AuditEvent
 	notifications          NotificationConfig
 	restartedAt            map[string]time.Time
@@ -180,6 +152,9 @@ type ServerAdminHandler struct {
 
 	// adminDatabase: owners of this database are server administrators.
 	adminDatabase string
+
+	// scheduler runs the server schedules (server_schedules.go).
+	scheduler *serverScheduler
 
 	// restoring holds the databases a restore is running on (lockRestore).
 	// backingUp counts the backups being taken of each (beginBackup).
@@ -313,41 +288,6 @@ func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Stor
 		currentVersion: curVer,
 		latestVersion:  curVer,
 		releaseURL:     "https://github.com/file4base/file4base-app/releases",
-		schedules: []ScheduledJob{
-			{
-				ID:          "sched-daily-backup",
-				Name:        "Nightly Full Database Snapshot",
-				Database:    "*",
-				JobType:     "backup",
-				Target:      "Full SQL + Catalog Snapshot",
-				CronExpr:    "0 2 * * *",
-				Enabled:     true,
-				LastStatus:  scheduledJobNotExecuted,
-				NextRunDesc: scheduledJobNote,
-			},
-			{
-				ID:          "sched-weekly-vacuum",
-				Name:        "Weekly Database VACUUM & Optimizer",
-				Database:    "*",
-				JobType:     "maintenance",
-				Target:      "VACUUM ANALYZE",
-				CronExpr:    "0 3 * * 0",
-				Enabled:     true,
-				LastStatus:  scheduledJobNotExecuted,
-				NextRunDesc: scheduledJobNote,
-			},
-			{
-				ID:          "sched-version-check",
-				Name:        "Container Image & Release Update Check",
-				Database:    "*",
-				JobType:     "maintenance",
-				Target:      "Check Docker Hub & GitHub Releases",
-				CronExpr:    "0 */6 * * *",
-				Enabled:     true,
-				LastStatus:  scheduledJobNotExecuted,
-				NextRunDesc: scheduledJobNote,
-			},
-		},
 		notifications: NotificationConfig{
 			SMTPEnabled:    false,
 			SMTPHost:       "smtp.example.com",
@@ -360,6 +300,7 @@ func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Stor
 		},
 	}
 
+	h.scheduler = newServerScheduler(h)
 	h.initDefaultTLS()
 	h.recordAudit("system", "Server Startup", "system", "*", "file4base-api", "success", "File4Base Server Admin Console initialized")
 	return h
@@ -571,6 +512,7 @@ func (h *ServerAdminHandler) registerServerWideRoutes(r chi.Router) {
 		r.Post("/schedules", h.CreateSchedule)
 		r.Put("/schedules/{id}", h.UpdateSchedule)
 		r.Post("/schedules/{id}/run", h.RunScheduleNow)
+		r.Get("/schedules/{id}/runs", h.ListScheduleRuns)
 		r.Delete("/schedules/{id}", h.DeleteSchedule)
 
 		r.Get("/audit-logs", h.ListAuditLogs)
@@ -1135,6 +1077,7 @@ func (h *ServerAdminHandler) ListBackups(w http.ResponseWriter, r *http.Request)
 				rec.Type = hdr.Type
 			}
 			rec.TablesCount = hdr.TablesCount
+			rec.ScheduleID = hdr.ScheduleID
 		}
 		// Only the backups of the session's own database (all of them for a
 		// server administrator).
@@ -1659,176 +1602,6 @@ func (h *ServerAdminHandler) RevokeActiveSession(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ListSchedules returns all configured server cron tasks.
-func (h *ServerAdminHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
-	h.mu.RLock()
-	list := make([]ScheduledJob, len(h.schedules))
-	copy(list, h.schedules)
-	h.mu.RUnlock()
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"schedules": list})
-}
-
-// CreateSchedule adds a new scheduled cron task to the server.
-func (h *ServerAdminHandler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
-	sess := currentSession(r)
-	var job ScheduledJob
-	if err := json.NewDecoder(r.Body).Decode(&job); err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", err.Error())
-		return
-	}
-	if strings.TrimSpace(job.Name) == "" {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Validation Failed", "schedule name is required")
-		return
-	}
-	if job.ID == "" {
-		job.ID = fmt.Sprintf("sched-%d", time.Now().UnixNano())
-	}
-	if job.Database == "" {
-		job.Database = sess.Database
-	}
-	if job.CronExpr == "" {
-		job.CronExpr = "0 2 * * *"
-	}
-	job.Enabled = true
-	// Nothing runs these jobs, so a new one is said to be what it is, and
-	// whatever the caller sent about runs is not taken on trust.
-	job.Executed = false
-	job.LastRunAt = ""
-	job.LastStatus = scheduledJobNotExecuted
-	job.NextRunDesc = scheduledJobNote
-
-	h.mu.Lock()
-	h.schedules = append(h.schedules, job)
-	h.mu.Unlock()
-
-	h.recordAudit("schedule", "Create Scheduled Job", sess.Username, sess.Database, job.Name, "success", fmt.Sprintf("Created schedule '%s' (%s)", job.Name, job.CronExpr))
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(job)
-}
-
-// UpdateSchedule updates or toggles the enabled state of an existing scheduled task.
-func (h *ServerAdminHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	sess := currentSession(r)
-
-	var patch struct {
-		Name        *string `json:"name"`
-		Database    *string `json:"database"`
-		JobType     *string `json:"job_type"`
-		Target      *string `json:"target"`
-		CronExpr    *string `json:"cron_expr"`
-		Enabled     *bool   `json:"enabled"`
-		NextRunDesc *string `json:"next_run_desc"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", err.Error())
-		return
-	}
-
-	h.mu.Lock()
-	var updated *ScheduledJob
-	for i := range h.schedules {
-		if h.schedules[i].ID == id {
-			if patch.Name != nil && strings.TrimSpace(*patch.Name) != "" {
-				h.schedules[i].Name = strings.TrimSpace(*patch.Name)
-			}
-			if patch.Database != nil && strings.TrimSpace(*patch.Database) != "" {
-				h.schedules[i].Database = strings.TrimSpace(*patch.Database)
-			}
-			if patch.JobType != nil && *patch.JobType != "" {
-				h.schedules[i].JobType = *patch.JobType
-			}
-			if patch.Target != nil && *patch.Target != "" {
-				h.schedules[i].Target = *patch.Target
-			}
-			if patch.CronExpr != nil && strings.TrimSpace(*patch.CronExpr) != "" {
-				h.schedules[i].CronExpr = strings.TrimSpace(*patch.CronExpr)
-			}
-			if patch.Enabled != nil {
-				h.schedules[i].Enabled = *patch.Enabled
-			}
-			// next_run_desc is not taken from the caller: a job that never
-			// runs has no next run to describe.
-			cp := h.schedules[i]
-			updated = &cp
-			break
-		}
-	}
-	h.mu.Unlock()
-
-	if updated == nil {
-		telemetry.WriteProblem(w, r, http.StatusNotFound, "Schedule Not Found", "no scheduled job matches that ID")
-		return
-	}
-
-	stateLabel := "enabled"
-	if !updated.Enabled {
-		stateLabel = "paused"
-	}
-	h.recordAudit("schedule", "Update Scheduled Job", sess.Username, sess.Database, updated.Name, "success", fmt.Sprintf("Scheduled job '%s' is now %s (%s)", updated.Name, stateLabel, updated.CronExpr))
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(updated)
-}
-
-// RunScheduleNow is refused: this server has no runner for these jobs.
-//
-// It used to mark the job "success" and stamp a run time without running
-// anything, so the panel reported backups and maintenance that never
-// happened (#108). It now says plainly that nothing was run, and the audit
-// log records the attempt as such.
-func (h *ServerAdminHandler) RunScheduleNow(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	sess := currentSession(r)
-
-	h.mu.RLock()
-	var found *ScheduledJob
-	for i := range h.schedules {
-		if h.schedules[i].ID == id {
-			cp := h.schedules[i]
-			found = &cp
-			break
-		}
-	}
-	h.mu.RUnlock()
-
-	if found == nil {
-		telemetry.WriteProblem(w, r, http.StatusNotFound, "Schedule Not Found", "no scheduled job matches that ID")
-		return
-	}
-
-	h.recordAudit("schedule", "Run Scheduled Job", sess.Username, sess.Database, found.Name, "warning",
-		"Run requested but not executed: this server has no runner for "+found.JobType+" jobs")
-
-	telemetry.WriteProblem(w, r, http.StatusConflict, "Job Not Executed",
-		"the "+found.JobType+" job \""+found.Name+"\" was not run: this server keeps Server Tools schedules "+
-			"as a plan and executes none of them. Scheduled record transfers do run; they are managed at "+
-			"/api/v1/transfer-schedules.")
-}
-
-// DeleteSchedule removes a scheduled task.
-func (h *ServerAdminHandler) DeleteSchedule(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	sess := currentSession(r)
-
-	h.mu.Lock()
-	filtered := make([]ScheduledJob, 0, len(h.schedules))
-	for _, s := range h.schedules {
-		if s.ID != id {
-			filtered = append(filtered, s)
-		}
-	}
-	h.schedules = filtered
-	h.mu.Unlock()
-
-	h.recordAudit("schedule", "Delete Scheduled Job", sess.Username, sess.Database, id, "warning", "Deleted scheduled job "+id)
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // ListAuditLogs returns the security and administrative audit trail.
 func (h *ServerAdminHandler) ListAuditLogs(w http.ResponseWriter, r *http.Request) {
 	h.mu.RLock()
@@ -1928,28 +1701,21 @@ func (h *ServerAdminHandler) RunDatabaseOptimize(w http.ResponseWriter, r *http.
 	}
 	op := strings.TrimSpace(req.Operation)
 	if op == "" {
-		op = "vacuum_analyze"
+		op = maintenanceVacuumAnalyze
 	}
-
-	driver, err := h.dbMgr.DriverFor(r.Context(), dbName)
-	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusServiceUnavailable, "Database Unavailable", err.Error())
+	if op != maintenanceVacuumAnalyze && op != maintenanceAnalyze {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Validation Failed",
+			fmt.Sprintf("the operation is %q or %q", maintenanceVacuumAnalyze, maintenanceAnalyze))
+		return
+	}
+	if err := h.optimizeDatabase(r.Context(), dbName, op); err != nil {
+		h.recordAudit("maintenance", "Optimize & Analyze Database", sess.Username, dbName, dbName, "error", err.Error())
+		telemetry.WriteProblem(w, r, http.StatusInternalServerError, "Maintenance Failed", err.Error())
 		return
 	}
 
-	svc := schema.NewService(driver)
-	_ = svc.EnsureSystemTables(r.Context())
-
-	if h.dbMgr.Engine() == dbal.EnginePostgres {
-		if op == "vacuum_analyze" {
-			_, _ = driver.DB().ExecContext(r.Context(), "VACUUM ANALYZE")
-		} else {
-			_, _ = driver.DB().ExecContext(r.Context(), "ANALYZE")
-		}
-	}
-
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-	h.recordAudit("maintenance", "Optimize & Analyze Database", sess.Username, dbName, dbName, "success", fmt.Sprintf("Completed %s and catalog integrity check in %.2f ms", strings.ToUpper(op), durationMs))
+	h.recordAudit("maintenance", "Optimize & Analyze Database", sess.Username, dbName, dbName, "success", fmt.Sprintf("Completed %s in %.2f ms", strings.ToUpper(op), durationMs))
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{

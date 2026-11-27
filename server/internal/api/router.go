@@ -78,6 +78,10 @@ type Options struct {
 	// DataAPI configures the FileMaker Data API at /fmi/data (#208). It is
 	// mounted only when it serves at least one database.
 	DataAPI *fmdapi.Config
+	// Schedules runs the server schedules, backups and maintenance (#188,
+	// #204), while its Context lasts. Without one they are stored and
+	// listed but not run, and Run Now is refused.
+	Schedules *ScheduleOptions
 }
 
 // nodeOnlyMethods are the methods Node's HTTP parser accepts that chi does
@@ -177,6 +181,9 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 	serverAdminHandler.ConfigureTLS(opts.TLSDir)
 	if opts.MailSender != nil {
 		serverAdminHandler.mailSender = opts.MailSender
+	}
+	if opts.Schedules != nil && opts.Schedules.Context != nil {
+		serverAdminHandler.StartSchedules(*opts.Schedules)
 	}
 
 	hub := opts.Hub

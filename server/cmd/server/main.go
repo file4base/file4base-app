@@ -325,6 +325,20 @@ func main() {
 	// the Web Client's Nginx (which mounts the same volume read-only).
 	tlsStore := localca.New(localca.DefaultDir())
 
+	// Server schedules (#188, #204): backups and maintenance, run by one
+	// goroutine of this process. FILE4BASE_SERVER_SCHEDULER=false keeps a
+	// process from running them, as when another process over the same
+	// control store does.
+	var serverSchedules *api.ScheduleOptions
+	serverSchedulesCtx, stopServerSchedules := context.WithCancel(context.Background())
+	defer stopServerSchedules()
+	if envBool("FILE4BASE_SERVER_SCHEDULER", true) {
+		serverSchedules = &api.ScheduleOptions{Context: serverSchedulesCtx}
+		log.Printf("Server schedules running (time zone %s)", time.Local)
+	} else {
+		log.Println("Server schedules disabled (FILE4BASE_SERVER_SCHEDULER=false): backup and maintenance schedules do not run in this process")
+	}
+
 	handler := api.Mount(r, dbMgr, sessions, api.Options{
 		AllowPublicDatabaseCreation: allowPublicCreate,
 		ControlStore:                controlStore,
@@ -338,6 +352,7 @@ func main() {
 		MaxMigrationUploadBytes:     maxMigrationUpload,
 		MigrationUploadDir:          migrationUploadDir,
 		DataAPI:                     dataAPI,
+		Schedules:                   serverSchedules,
 	})
 
 	srv := &http.Server{
@@ -418,7 +433,9 @@ func main() {
 	}
 
 	// 4. Stop starting scheduled transfers and let the running ones finish
-	// their transaction, within the same shutdown deadline.
+	// their transaction, within the same shutdown deadline. A server
+	// schedule running now is stopped; the next start records it as such.
+	stopServerSchedules()
 	stopScheduler()
 	select {
 	case <-schedulerDone:

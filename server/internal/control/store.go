@@ -179,7 +179,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 			return fmt.Errorf("failed initializing control store schema: %w", err)
 		}
 	}
-	return nil
+	return s.initScheduleSchema(ctx)
 }
 
 // Close closes the underlying SQLite connection.

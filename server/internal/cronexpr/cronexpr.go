@@ -5,7 +5,8 @@
 // month, day of week — with `*`, lists (`1,15`), ranges (`1-5`) and steps
 // (`*/15`, `0-30/10`), and nothing else: no seconds field, no names, no `L`,
 // `W` or `#`. An expression it does not understand is refused when it is
-// saved, never guessed at when it runs. Times are UTC.
+// saved, never guessed at when it runs. Times are UTC, or with NextIn the
+// wall clock of a time zone.
 //
 // When both the day of month and the day of week are restricted, a day
 // matches if either does, which is what cron has always meant.
@@ -150,9 +151,49 @@ func parseField(text string, f field) ([]int, bool, error) {
 const maxSearch = 5 * 366 * 24 * time.Hour
 
 // Next is the first time strictly after `after`, to the minute, at which the
-// schedule is due. It returns the zero time for an expression that is never
-// due, such as 0 0 30 2 *.
-func (s *Schedule) Next(after time.Time) time.Time {
+// schedule is due, read in UTC. It returns the zero time for an expression
+// that is never due, such as 0 0 30 2 *.
+func (s *Schedule) Next(after time.Time) time.Time { return s.next(after) }
+
+// NextIn is Next with the expression read as wall-clock time in loc, as
+// the server schedules are (#188). A time a change to daylight saving time
+// skips is not due that day, and one a change back repeats is due once, at
+// its first occurrence. The time returned is in UTC.
+func (s *Schedule) NextIn(after time.Time, loc *time.Location) time.Time {
+	if loc == nil || loc == time.UTC {
+		return s.next(after)
+	}
+	// The search runs on the wall clock, as if it were UTC, where every day
+	// has all its minutes once; each time found is then placed in loc.
+	a := after.In(loc)
+	wall := time.Date(a.Year(), a.Month(), a.Day(), a.Hour(), a.Minute(), a.Second(), a.Nanosecond(), time.UTC)
+	for i := 0; i < 4*24*60; i++ {
+		n := s.next(wall)
+		if n.IsZero() {
+			return n
+		}
+		t := time.Date(n.Year(), n.Month(), n.Day(), n.Hour(), n.Minute(), 0, 0, loc)
+		// time.Date may give either occurrence of a repeated time: take the
+		// first one still to come.
+		for _, back := range []time.Duration{time.Hour, 30 * time.Minute} {
+			if e := t.Add(-back); sameWallMinute(e.In(loc), n) && e.After(after) {
+				t = e
+				break
+			}
+		}
+		if sameWallMinute(t, n) && t.After(after) {
+			return t.UTC()
+		}
+		wall = n // skipped (or already past, as the first of a repeated hour)
+	}
+	return time.Time{}
+}
+
+func sameWallMinute(t, wall time.Time) bool {
+	return t.Day() == wall.Day() && t.Hour() == wall.Hour() && t.Minute() == wall.Minute()
+}
+
+func (s *Schedule) next(after time.Time) time.Time {
 	t := after.UTC().Truncate(time.Minute).Add(time.Minute)
 	limit := t.Add(maxSearch)
 	for t.Before(limit) {

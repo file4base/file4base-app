@@ -29,10 +29,19 @@ type serverToolsHarness struct {
 
 func newServerToolsHarness(t *testing.T, adminDatabase bool) *serverToolsHarness {
 	t.Helper()
+	return newServerToolsHarnessWith(t, adminDatabase, nil)
+}
+
+// newServerToolsHarnessWith lets tune change the server options first.
+func newServerToolsHarnessWith(t *testing.T, adminDatabase bool, tune func(*api.Options)) *serverToolsHarness {
+	t.Helper()
 	s := &serverToolsHarness{adminDB: uniqueDB("srvadmin"), aliceDB: uniqueDB("alice"), bobDB: uniqueDB("bob")}
 	opts := api.Options{AllowPublicDatabaseCreation: true, BackupsDir: t.TempDir(), TLSDir: filepath.Join(t.TempDir(), "tls")}
 	if adminDatabase {
 		opts.AdminDatabase = s.adminDB
+	}
+	if tune != nil {
+		tune(&opts)
 	}
 	s.apiHarness = newAPIHarness(t, opts)
 	s.createDatabase(s.adminDB, "root", "root-pass-1")

@@ -77,3 +77,38 @@ func TestString_IsTheExpressionNormalized(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "0 2 * * *", s.String())
 }
+
+// A server schedule reads its expression in the server's time zone, and a
+// change of daylight saving time neither runs it twice nor shifts it.
+func TestNextIn_ReadsTheWallClockOfItsZone(t *testing.T) {
+	paris, err := time.LoadLocation("Europe/Paris")
+	require.NoError(t, err)
+	local := func(text string) time.Time {
+		v, err := time.ParseInLocation("2006-01-02 15:04", text, paris)
+		require.NoError(t, err)
+		return v
+	}
+	daily, err := cronexpr.Parse("0 2 * * *")
+	require.NoError(t, err)
+	assert.Equal(t, local("2026-11-11 02:00").UTC(), daily.NextIn(local("2026-11-10 21:13"), paris))
+	assert.Equal(t, at("2026-11-11 01:00"), daily.NextIn(local("2026-11-10 21:13"), paris), "02:00 in Paris is 01:00 UTC in winter")
+	assert.Equal(t, local("2026-07-01 02:00").UTC(), daily.NextIn(local("2026-06-30 12:00"), paris))
+
+	// 29 March 2026: 02:00 to 03:00 does not exist in Paris, so a 02:30 job
+	// does not run that day.
+	gap, err := cronexpr.Parse("30 2 * * *")
+	require.NoError(t, err)
+	assert.Equal(t, local("2026-03-30 02:30").UTC(), gap.NextIn(local("2026-03-29 00:00"), paris))
+
+	// 25 October 2026: 02:00 to 03:00 happens twice; a 02:30 job runs once.
+	repeat, err := cronexpr.Parse("30 2 * * *")
+	require.NoError(t, err)
+	first := repeat.NextIn(local("2026-10-25 00:00"), paris)
+	assert.Equal(t, at("2026-10-25 00:30"), first, "the first 02:30, still summer time")
+	assert.Equal(t, local("2026-10-26 02:30").UTC(), repeat.NextIn(first, paris), "not again an hour later")
+	hourly, err := cronexpr.Parse("0 * * * *")
+	require.NoError(t, err)
+	assert.Equal(t, at("2026-10-25 02:00"), hourly.NextIn(at("2026-10-25 00:00"), paris), "03:00 local, after the repeated hour")
+
+	assert.Equal(t, daily.Next(at("2026-11-10 21:13")), daily.NextIn(at("2026-11-10 21:13"), time.UTC))
+}

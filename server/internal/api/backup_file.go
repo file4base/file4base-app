@@ -25,18 +25,20 @@ import (
 
 // backupHeader is what a backup says about itself.
 type backupHeader struct {
-	ID          string `json:"id"`
-	Database    string `json:"database"`
-	Engine      string `json:"engine,omitempty"`
-	CreatedAt   string `json:"created_at"`
-	CreatedBy   string `json:"created_by"`
-	Notes       string `json:"notes"`
-	Type        string `json:"type"`
+	ID        string `json:"id"`
+	Database  string `json:"database"`
+	Engine    string `json:"engine,omitempty"`
+	CreatedAt string `json:"created_at"`
+	CreatedBy string `json:"created_by"`
+	Notes     string `json:"notes"`
+	Type      string `json:"type"`
+	// ScheduleID is the schedule that made a "scheduled" backup (#188).
+	ScheduleID  string `json:"schedule_id"`
 	TablesCount int    `json:"tables_count"`
 }
 
 // backupHeaderOrder is the order the header fields are written in.
-var backupHeaderOrder = []string{"id", "database", "engine", "created_at", "created_by", "notes", "type", "tables_count"}
+var backupHeaderOrder = []string{"id", "database", "engine", "created_at", "created_by", "notes", "type", "schedule_id", "tables_count"}
 
 func (b backupHeader) field(key string) interface{} {
 	switch key {
@@ -54,6 +56,8 @@ func (b backupHeader) field(key string) interface{} {
 		return b.Notes
 	case "type":
 		return b.Type
+	case "schedule_id":
+		return b.ScheduleID
 	default:
 		return b.TablesCount
 	}
@@ -96,10 +100,17 @@ func readBackupHeader(path string) (backupHeader, error) {
 			dst = &hdr.Notes
 		case "type":
 			dst = &hdr.Type
+		case "schedule_id":
+			dst = &hdr.ScheduleID
 		case "tables_count":
 			dst = &hdr.TablesCount
 		}
 		if dst == nil {
+			if seen > 0 && hdr.ID != "" {
+				// The header of a file that starts with its id, written
+				// before a header field was added, ends here.
+				break
+			}
 			// Not a header field: an older file.
 			return readWholeBackupHeader(path)
 		}
@@ -273,6 +284,11 @@ func writeRemainingFields(bw *backupWriter, fields map[string]json.RawMessage) e
 // moment even while users keep working (#203). Any part that cannot be read
 // fails the backup, rather than leaving one that restores to nothing.
 func (h *ServerAdminHandler) writeSnapshot(ctx context.Context, dbName, suffix, createdBy, notes, bkpType string, now time.Time) (BackupRecord, error) {
+	return h.writeSnapshotFor(ctx, dbName, suffix, createdBy, notes, bkpType, "", now)
+}
+
+// writeSnapshotFor is writeSnapshot for the schedule scheduleID, if any.
+func (h *ServerAdminHandler) writeSnapshotFor(ctx context.Context, dbName, suffix, createdBy, notes, bkpType, scheduleID string, now time.Time) (BackupRecord, error) {
 	driver, err := h.dbMgr.DriverFor(ctx, dbName)
 	if err != nil {
 		return BackupRecord{}, err
@@ -343,7 +359,7 @@ func (h *ServerAdminHandler) writeSnapshot(ctx context.Context, dbName, suffix, 
 	}
 	hdr := backupHeader{
 		ID: backupID, Database: dbName, Engine: string(h.dbMgr.Engine()), CreatedAt: now.Format(time.RFC3339),
-		CreatedBy: createdBy, Notes: notes, Type: bkpType, TablesCount: len(tables),
+		CreatedBy: createdBy, Notes: notes, Type: bkpType, ScheduleID: scheduleID, TablesCount: len(tables),
 	}
 	filename := backupID + ".f4b.json"
 	size, err := writeBackupFile(filepath.Join(h.backupsDir, filename), hdr, func(bw *backupWriter) error {
@@ -377,7 +393,7 @@ func (h *ServerAdminHandler) writeSnapshot(ctx context.Context, dbName, suffix, 
 	}
 	return BackupRecord{
 		ID: backupID, Filename: filename, Database: dbName, CreatedAt: hdr.CreatedAt, CreatedBy: createdBy,
-		SizeBytes: size, TablesCount: len(tables), Notes: notes, Type: bkpType,
+		SizeBytes: size, TablesCount: len(tables), Notes: notes, Type: bkpType, ScheduleID: scheduleID,
 	}, nil
 }
 

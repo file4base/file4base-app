@@ -151,36 +151,3 @@ func TestAPI_TransferSchedulesAreAuthorizedByBothSolutions(t *testing.T) {
 	rec = h.do(http.MethodDelete, "/api/v1/transfer-schedules/"+sched.ID, dispatch, nil, nil)
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
-
-// The Server Tools schedules are not executed by this server. They used to
-// report "success" for a run that never happened; they now say so (#108).
-func TestAPI_ServerToolsSchedulesNeverClaimARunThatDidNotHappen(t *testing.T) {
-	adminDB := uniqueDB("f4b_sched_admin")
-	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true, AdminDatabase: adminDB})
-	h.createDatabase(adminDB, "root", "root-pass-1")
-	root := h.login(adminDB, "root", "root-pass-1")
-
-	var listing struct {
-		Schedules []map[string]interface{} `json:"schedules"`
-	}
-	rec := h.do(http.MethodGet, "/api/v1/server/schedules", root, nil, &listing)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.NotEmpty(t, listing.Schedules)
-	for _, job := range listing.Schedules {
-		assert.Equal(t, "not executed", job["last_status"], "%v", job["name"])
-		assert.Equal(t, false, job["executed"])
-		assert.NotContains(t, job, "last_run_at", "no job claims a run it never had")
-	}
-
-	id := listing.Schedules[0]["id"].(string)
-	rec = h.do(http.MethodPost, "/api/v1/server/schedules/"+id+"/run", root, nil, nil)
-	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "was not run")
-	assert.Contains(t, rec.Body.String(), "/api/v1/transfer-schedules")
-
-	rec = h.do(http.MethodGet, "/api/v1/server/schedules", root, nil, &listing)
-	require.Equal(t, http.StatusOK, rec.Code)
-	for _, job := range listing.Schedules {
-		assert.Equal(t, "not executed", job["last_status"], "asking to run it changed nothing")
-	}
-}

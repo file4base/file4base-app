@@ -5511,10 +5511,11 @@
         "tags": [
           "Server Administration"
         ],
-        "summary": "List Scheduled Cron Tasks",
+        "summary": "List Server Schedules",
+        "description": "The backup and maintenance schedules (#188, #204) with their next and last runs, the server time zone and whether this process runs them.",
         "responses": {
           "200": {
-            "description": "List Scheduled Cron Tasks"
+            "description": "schedules, time_zone, scheduler_running"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -5528,10 +5529,17 @@
         "tags": [
           "Server Administration"
         ],
-        "summary": "Create Scheduled Cron Task",
+        "summary": "Create Server Schedule",
+        "description": "name, type (backup or maintenance), databases (empty: all solutions), cron (server time zone), enabled, keep (backup, 1-1000, default 7), operation (maintenance: vacuum_analyze or analyze). Script schedules are refused until a server-side script engine exists (#204).",
         "responses": {
           "201": {
-            "description": "Create Scheduled Cron Task"
+            "description": "The schedule"
+          },
+          "400": {
+            "description": "Invalid schedule"
+          },
+          "409": {
+            "description": "Name in use"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -5557,10 +5565,17 @@
         "tags": [
           "Server Administration"
         ],
-        "summary": "Update or Toggle Scheduled Cron Task",
+        "summary": "Update Server Schedule",
+        "description": "Changes any field; those left out are kept. The next run is worked out again from now.",
         "responses": {
           "200": {
-            "description": "Update or Toggle Scheduled Cron Task"
+            "description": "The schedule"
+          },
+          "400": {
+            "description": "Invalid schedule"
+          },
+          "404": {
+            "description": "Unknown schedule"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -5594,10 +5609,17 @@
         "tags": [
           "Server Administration"
         ],
-        "summary": "Delete Scheduled Cron Task",
+        "summary": "Delete Server Schedule",
+        "description": "Deletes a schedule and its history; the backups it made are kept.",
         "responses": {
-          "200": {
-            "description": "Delete Scheduled Cron Task"
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "Unknown schedule"
+          },
+          "409": {
+            "description": "The schedule is running"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -5623,11 +5645,50 @@
         "tags": [
           "Server Administration"
         ],
-        "summary": "Run Planned Server Job (Not Executed)",
-        "description": "Server Tools jobs are a plan this server does not execute (#108). The request is refused with 409 and nothing is run. Scheduled record transfers, which do run, are at /api/v1/transfer-schedules.",
+        "summary": "Run Server Schedule Now",
+        "description": "Queues a run as soon as the scheduler is free, enabled or not. Its outcome is recorded as a run with trigger manual.",
         "responses": {
+          "202": {
+            "description": "Queued"
+          },
+          "404": {
+            "description": "Unknown schedule"
+          },
           "409": {
-            "description": "Job Not Executed: nothing was run"
+            "description": "Running, already waiting, or schedules do not run in this process"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/server/schedules/{id}/runs": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "List Server Schedule Runs",
+        "description": "The 50 latest runs, newest first: trigger, status (running, success, failed, skipped), started_at, finished_at, duration_ms, size_bytes, error, details.",
+        "responses": {
+          "200": {
+            "description": "runs"
+          },
+          "404": {
+            "description": "Unknown schedule"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
