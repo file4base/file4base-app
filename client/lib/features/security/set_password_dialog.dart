@@ -57,6 +57,7 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
   final _password = TextEditingController();
   final _confirm = TextEditingController();
   bool _obscure = true;
+  bool _obscureCurrent = true;
   bool _saving = false;
   String? _error;
 
@@ -163,7 +164,7 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
               TextField(
                 key: const Key('set-password-current'),
                 controller: _current,
-                obscureText: _obscure,
+                obscureText: _obscureCurrent,
                 autofocus: true,
                 enabled: !_saving,
                 decoration: InputDecoration(
@@ -172,9 +173,9 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
                   isDense: true,
                   prefixIcon: const Icon(Icons.lock_open_outlined, size: 18),
                   suffixIcon: IconButton(
-                    icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility, size: 18),
-                    tooltip: _obscure ? 'Show password' : 'Hide password',
-                    onPressed: () => setState(() => _obscure = !_obscure),
+                    icon: Icon(_obscureCurrent ? Icons.visibility_off : Icons.visibility, size: 18),
+                    tooltip: _obscureCurrent ? 'Show password' : 'Hide password',
+                    onPressed: () => setState(() => _obscureCurrent = !_obscureCurrent),
                   ),
                 ),
               ),

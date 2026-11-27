@@ -206,6 +206,19 @@ func (s *Service) Authenticate(ctx context.Context, username, password string, t
 	}, nil
 }
 
+// StoredSuperOwner reads the stored super-owner flag of an account. Unlike
+// GetUser, it never falls back to a query without the column, so an
+// authorization check built on it fails closed.
+func (s *Service) StoredSuperOwner(ctx context.Context, id string) (bool, error) {
+	q := `SELECT COALESCE(super_owner, FALSE) FROM sys_users WHERE id = $1`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT COALESCE(super_owner, FALSE) FROM sys_users WHERE id = ?`
+	}
+	var flag bool
+	err := s.driver.DB().QueryRowContext(ctx, q, id).Scan(&flag)
+	return flag, err
+}
+
 // VerifyUserPassword checks password against the stored hash of the account
 // with this id. It returns ErrInvalidCredentials when the password does not
 // match or the account does not exist, and spends a bcrypt comparison either

@@ -224,13 +224,22 @@ void main() {
       expect(find.byTooltip('Super-owner — click to revoke server-wide control'), findsNothing);
     });
 
-    testWidgets("an ordinary owner cannot open a super-owner's password (#209)", (tester) async {
+    testWidgets("an ordinary owner cannot manage a super-owner's account (#209)", (tester) async {
       await pumpDialog(tester, twoOwnersClient(),
           const UserModel(id: 'owner-2', username: 'deputy', role: 'owner'));
-      final key = find.byTooltip('Only a super-owner can manage a super-owner account');
-      expect(key, findsOneWidget, reason: 'only the super-owner row');
-      final button = tester.widget<IconButton>(find.ancestor(of: key, matching: find.byType(IconButton)).first);
-      expect(button.onPressed, isNull);
+      final locked = find.byTooltip('Only a super-owner can manage a super-owner account');
+      expect(locked, findsNWidgets(3), reason: 'password, edit and delete of the super-owner row only');
+      for (final e in locked.evaluate()) {
+        final button = tester.widget<IconButton>(
+            find.ancestor(of: find.byWidget(e.widget), matching: find.byType(IconButton)).first);
+        expect(button.onPressed, isNull);
+      }
+    });
+
+    testWidgets('a super-owner manages another super-owner account (#209)', (tester) async {
+      await pumpDialog(tester, twoOwnersClient(),
+          const UserModel(id: 'owner-2', username: 'deputy', role: 'owner', superOwner: true));
+      expect(find.byTooltip('Only a super-owner can manage a super-owner account'), findsNothing);
     });
 
     testWidgets('scopes API requests to databaseName and calls onModified on changes', (tester) async {

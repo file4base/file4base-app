@@ -99,7 +99,17 @@ func (h *SecurityHandler) isEffectiveSuperOwner(database string, u *schema.UserM
 // whether the operation may go on.
 func (h *SecurityHandler) guardSuperOwnerTarget(w http.ResponseWriter, r *http.Request, target *schema.UserMetadata) bool {
 	sess := currentSession(r)
-	if sess.SuperOwner || sess.UserID == target.ID || !h.isEffectiveSuperOwner(sess.Database, target) {
+	if sess.SuperOwner || sess.UserID == target.ID {
+		return true
+	}
+	// GetUser may have read the account without its flag (legacy fallback),
+	// so the stored flag is read again, and an error refuses the operation.
+	stored, err := schemaService(r).StoredSuperOwner(r.Context(), target.ID)
+	if err != nil {
+		telemetry.WriteInternalError(w, r, fmt.Errorf("reading the super-owner flag: %w", err))
+		return false
+	}
+	if !stored && !h.isEffectiveSuperOwner(sess.Database, target) {
 		return true
 	}
 	writeForbidden(w, r, errSuperOwnerTarget)
