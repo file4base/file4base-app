@@ -270,14 +270,92 @@ func bindTableAutoEnter(table *schema.BundleTable, b formulaBinding) []ReportIte
 			items = append(items, ReportItem{Category: CategoryPreserved, Domain: "field", SourceName: source, TargetName: target,
 				Detail: "Auto-enter options: " + strings.Join(kept, "; ")})
 		}
+		storage := storageOptionsOf(col.DefaultValue)
 		if !o.Any() && !o.ValueLastVisited {
-			col.DefaultValue = nil
+			col.DefaultValue = withStorageOptions(nil, storage)
 			continue
 		}
 		stored := autoenter.Encode(o)
-		col.DefaultValue = &stored
+		col.DefaultValue = withStorageOptions(&stored, storage)
 	}
 	return items
+}
+
+// storageKeys are the Storage tab's options, which a field's options keep
+// beside its auto-enter options (see the autoenter package).
+var storageKeys = []string{"storage_global", "indexing", "auto_index", "index_language"}
+
+// readStorageOptions reads the Storage tab of a field: global storage, its
+// indexing and the language of its index.
+func readStorageOptions(storage *xmlNode, global bool) map[string]interface{} {
+	out := map[string]interface{}{}
+	if global {
+		out["storage_global"] = true
+	}
+	if storage == nil {
+		return out
+	}
+	switch strings.ToLower(firstAttr(storage, "index")) {
+	case "none":
+		out["indexing"] = "none"
+	case "minimal":
+		out["indexing"] = "minimal"
+	case "all":
+		out["indexing"] = "all"
+	}
+	if v := firstAttr(storage, "autoIndex"); v != "" {
+		out["auto_index"] = strings.EqualFold(v, "true")
+	}
+	if lang := findFirstChild(storage, "LanguageReference"); lang != nil {
+		if name := strings.TrimSpace(firstAttr(lang, "name")); name != "" {
+			out["index_language"] = name
+		}
+	}
+	return out
+}
+
+// storageOptionsOf is the Storage tab's options among a field's options.
+func storageOptionsOf(options *string) map[string]interface{} {
+	out := map[string]interface{}{}
+	var obj map[string]interface{}
+	if options == nil || json.Unmarshal([]byte(*options), &obj) != nil {
+		return out
+	}
+	for _, k := range storageKeys {
+		if v, ok := obj[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// withStorageOptions adds storage, the Storage tab's options, to a field's
+// options; nil when there are none of either.
+func withStorageOptions(options *string, storage map[string]interface{}) *string {
+	if len(storage) == 0 {
+		return options
+	}
+	// The other options are kept as written: a serial number's increment,
+	// say, read as a float would not survive past 2^53.
+	obj := map[string]json.RawMessage{}
+	if options != nil {
+		if err := json.Unmarshal([]byte(*options), &obj); err != nil || obj == nil {
+			return options
+		}
+	}
+	for k, v := range storage {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return options
+		}
+		obj[k] = raw
+	}
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return options
+	}
+	out := string(b)
+	return &out
 }
 
 // droppedOption is an auto-enter option a migration could not keep.

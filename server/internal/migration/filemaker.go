@@ -887,15 +887,27 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// 5. Extract Layouts (their script triggers are kept, disabled)
 	layoutNodes := catalogDefinitions(root, []string{"LayoutCatalog", "layouts"}, "Layout", "layout")
 	layoutCtx := newLayoutObjectContext(root, bundle, binding, req.NativeDateOrder)
+	layoutMenu := newMenuBuilder(schema.CatalogLayouts, schema.MenuLayout)
+	layoutIDBySource := map[string]string{}
 	for _, ln := range layoutNodes {
 		lay, items := convertLayoutNode(ln, bundle.TableOccurrences, occIDByName, occTableByName, deletedOccurrences, layoutCtx)
 		for _, it := range items {
 			addReportItem(report, it)
 		}
+		layoutID, separatorOcc := "", ""
 		if lay != nil {
 			bundle.Layouts = append(bundle.Layouts, *lay)
+			layoutID = lay.ID
+			if id := firstAttr(ln, "id", "ID"); id != "" {
+				layoutIDBySource[id] = lay.ID
+			}
 		}
+		if ref := findFirstChild(ln, "TableOccurrenceReference"); ref != nil {
+			separatorOcc = occIDByName[strings.ToLower(firstAttr(ref, "name", "Name"))]
+		}
+		layoutMenu.add(ln, layoutID, separatorOcc)
 	}
+	bundle.Catalog = append(bundle.Catalog, layoutMenu.entries...)
 	report.Counts.Layouts = len(bundle.Layouts)
 	report.Counts.LayoutObjects = layoutCtx.LayoutObjectCounts()
 
@@ -906,6 +918,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	if len(bundle.Tables) > 0 {
 		defaultContextTable = bundle.Tables[0].Name
 	}
+	scriptMenu := newMenuBuilder(schema.CatalogScripts, schema.MenuScript)
 	for _, sn := range scriptNodes {
 		// Skip <script> references inside <layout>
 		if firstAttr(sn, "where") != "" && len(sn.Children) == 0 {
@@ -915,11 +928,15 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		for _, it := range items {
 			addReportItem(report, it)
 		}
+		scriptID := ""
 		if sc != nil {
 			bundle.Scripts = append(bundle.Scripts, *sc)
 			scripts.add(firstAttr(sn, "id", "ID"), sc)
+			scriptID = sc.ID
 		}
+		scriptMenu.add(sn, scriptID, "")
 	}
+	bundle.Catalog = append(bundle.Catalog, scriptMenu.entries...)
 	report.Counts.Scripts = len(bundle.Scripts)
 	// Only now are the scripts known, which the layouts' triggers run.
 	for _, it := range bindLayoutTriggers(bundle, scripts, binding, report.SolutionName) {
@@ -971,6 +988,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// 7. Extract Accounts & Privilege Sets (always disabled until password reset)
 	accNodes := catalogDefinitions(root, []string{"AccountCatalog", "AccountsCatalog", "accounts"}, "Account", "account")
 	setsByRole := map[string][]string{}
+	setOfAccount := map[string]string{}
 	for _, an := range accNodes {
 		acc, items := convertAccountNode(an)
 		for _, it := range items {
@@ -979,9 +997,13 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		if acc != nil {
 			bundle.Users = append(bundle.Users, *acc)
 			setsByRole[acc.Role] = appendUnique(setsByRole[acc.Role], accountPrivilegeSet(an))
+			setOfAccount[acc.ID] = accountPrivilegeSet(an)
 		}
 	}
 	report.Counts.Accounts = len(bundle.Users)
+	for _, it := range applyLayoutAccess(bundle.Users, setOfAccount, privilegeLayoutAccess(root, layoutIDBySource)) {
+		addReportItem(report, it)
+	}
 	grants, grantItems := fmrestGrants(root, setsByRole)
 	for _, it := range grantItems {
 		addReportItem(report, it)
@@ -1102,6 +1124,7 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 		}
 	}
 	items = append(items, convertFieldAutoEnter(tableSQL, rawFieldName, colName, autoEnterNode, &col)...)
+	col.DefaultValue = withStorageOptions(col.DefaultValue, readStorageOptions(storageNode, isGlobal))
 
 	// Determine calculation or summary formula if present
 	calcText, calcContext := "", ""
@@ -1140,6 +1163,10 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 			s := string(payload)
 			col.FieldType = "CALCULATION"
 			col.CalculationFormula = &s
+			if rawType == "TIME" {
+				// File4Base computes a time of day as a timestamp.
+				col.SourceType = schema.SourceTypeCalculationTime
+			}
 			return col, items
 		}
 		// Nothing to compute: a stored column, reported.
@@ -1165,6 +1192,7 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 
 	if fieldKind == "SUMMARY" || rawType == "SUMMARY" {
 		col.FieldType = mapBasicFieldType(rawType)
+		col.SourceType = schema.SummarySourceType(rawType)
 		items = append(items, ReportItem{
 			Category:   CategoryTranslated,
 			Domain:     "field",
@@ -1182,6 +1210,7 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 		col.FieldType = "DATE"
 	case "TIME":
 		col.FieldType = "TIMESTAMP"
+		col.SourceType = schema.SourceTypeTime
 		items = append(items, ReportItem{
 			Category:   CategoryTranslated,
 			Domain:     "field",
@@ -1272,7 +1301,13 @@ func convertFieldValidation(tableSQL, rawFieldName, colName string, vn *xmlNode)
 		rules.ExistingValue = true
 		kept = append(kept, "member of existing values")
 	}
-	if value, ok := nestedOption(vn, "MaxLength", "maxLength", "max_length"); ok {
+	// Save a Copy as XML writes <MaximumSize> and <Strict>, a Database
+	// Design Report MaxLength and StrictDataType.
+	value, ok := nestedOption(vn, "MaxLength", "maxLength", "max_length")
+	if !ok {
+		value, ok = nestedOption(vn, "MaximumSize")
+	}
+	if ok {
 		if length, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && length > 0 {
 			rules.MaxLengthEnabled = true
 			rules.MaxLength = &length
@@ -1289,7 +1324,11 @@ func convertFieldValidation(tableSQL, rawFieldName, colName string, vn *xmlNode)
 			kept = append(kept, fmt.Sprintf("between %q and %q", from, to))
 		}
 	}
-	if value, ok := nestedOption(vn, "StrictDataType", "strictDataType", "strictType"); ok {
+	value, ok = nestedOption(vn, "StrictDataType", "strictDataType", "strictType")
+	if !ok {
+		value, ok = nestedOption(vn, "Strict")
+	}
+	if ok {
 		if strict := strictTypeFromDDR(value); strict != "" {
 			rules.StrictTypeEnabled = true
 			rules.StrictType = strict

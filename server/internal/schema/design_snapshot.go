@@ -34,6 +34,7 @@ type DesignSnapshot struct {
 	userIDs       map[string]bool
 	fileRefIDs    map[string]bool
 	functionIDs   map[string]bool
+	menus         menuState // the layout and script menus, exactly
 }
 
 // SnapshotDesign records the design of the active database so that
@@ -57,6 +58,9 @@ func (s *Service) SnapshotDesign(ctx context.Context, solutionName string) (*Des
 		functionIDs:   map[string]bool{},
 	}
 
+	if snap.menus, err = s.readMenuState(ctx); err != nil {
+		return nil, err
+	}
 	tables, err := s.ListTables(ctx)
 	if err != nil {
 		return nil, err
@@ -237,5 +241,8 @@ func (s *Service) RestoreDesign(ctx context.Context, snap *DesignSnapshot) error
 			fail("the recorded design", err)
 		}
 	}
+	// The menus as they were, which a file does not say of the items it
+	// lists by name.
+	fail("the layout and script menus", s.writeMenuState(ctx, snap.menus))
 	return firstErr
 }

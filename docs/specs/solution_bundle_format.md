@@ -34,13 +34,14 @@ Golden fixtures produced by each side are read by the other side's tests:
 | `saved_finds` | array of saved find | Optional. |
 | `data_sources` | array of data source | Optional. Connections only; they hold no password. |
 | `file_references` | array of file reference | Optional. FileMaker's External Data Sources of type FileMaker: the other solutions the design names. |
+| `catalog` | array of menu entry | Optional. The layout and script menus in their order. Absent in files written before the menus were kept, and for a menu listed by name. |
 | `privileges` | array of role privileges | Optional. Absent in files written before extended privileges existed, which leaves the destination's own grants untouched. |
 | `file_options` | map | Client settings (File Options), opaque to the server. Never contains `default_password`. |
 | `page_setup` | map | Client settings (Page Setup), opaque to the server. |
 
 **table**: `id`, `name`, `display_name`, `description`, `columns` (array of column).
 
-**column**: `id`, `name`, `display_name`, `field_type`, `is_nullable`, `is_primary_key`, and the optional strings `default_value` (field options JSON), `calculation_formula`, `validation_rules`, and `max_repetitions` (integer, written only when above 1), and `source_field_id` (optional string of digits: the FileMaker id of the field a migrated column comes from, written only when known; `#107`).
+**column**: `id`, `name`, `display_name`, `field_type`, `is_nullable`, `is_primary_key`, and the optional strings `default_value` (field options JSON), `calculation_formula`, `validation_rules`, and `max_repetitions` (integer, written only when above 1), and `source_field_id` (optional string of digits: the FileMaker id of the field a migrated column comes from, written only when known; `#107`), and `source_type` (optional: FileMaker's `type/result` of a migrated field kept as another type, `normal/time`, `calculation/time` or `summary/<result>`).
 
 **occurrence**: `id`, `base_table_id`, `name`, `x_pos`, `y_pos`, and `external` (optional). An occurrence of a table of **another solution** (FileMaker's external table occurrence, `#107`) has no `base_table_id` and an `external` map instead: `file_reference` (the name of a file reference of the bundle) and `table` (optional: the table's name in that solution, absent while it is not known). A bundle without external occurrences is encoded exactly as before.
 
@@ -52,7 +53,9 @@ A side on an external occurrence has no column id: `left_column_name` or `right_
 
 **layout**: `id`, `name`, `table_occurrence_id`, `definition` (map; see `layout_schema.json`).
 
-**script**: `id`, `name`, `context_table`, `folder_id` (optional), `is_active`, `steps` (array of step).
+**script**: `id`, `name`, `context_table`, `folder_id` (optional: a folder of the script menu, `catalog`, which places the script on import; read as written only from a file without a script menu), `is_active`, `steps` (array of step).
+
+**menu entry**: `catalog` (`layout` or `script`), `kind` (`layout`, `script`, `folder` or `separator`), `id` (the layout's or script's id, else the entry's own), `name` (a folder's or separator's), `folder_id` (optional: the folder it is in, an earlier folder entry of the same menu), `table_occurrence_id` (optional: a layout menu separator's). The entries of a menu are in its order, a folder before its contents. A layout or script listed by name, after the others, has no entry. On import the entries replace the destination's folders and separators of each menu the file carries; the layouts and scripts of that menu the file does not place are listed after the others, by name.
 
 **step**: `id`, `sequence_idx`, `step_type`, `params` (map), `is_enabled`, `parent_step_id` (optional).
 
@@ -78,7 +81,7 @@ IDs only link objects inside the bundle. They are never assumed to exist in the 
 2. **Matching.** Objects that already exist are matched by name: tables by `name`, columns by table and `name`, occurrences by `name`, layouts and scripts by `id` and then by `name`, accounts by `username` (case-insensitive). Relationships are matched by their two occurrences and their criteria (fields and operators, in order).
 3. **Remapping.** Every reference is rewritten to the destination's IDs: occurrence base tables, relationship occurrences and columns, layout occurrences, step parents, permission layouts, and the `script_id` of button actions and script triggers inside layout definitions.
 4. **Writing.** Missing tables, columns, occurrences, relationships, scripts and accounts are created; matched layouts and scripts are updated with the bundle's version; existing tables, columns and accounts are left as they are.
-5. **Accounts.** A missing account is created **disabled**, with a random password nobody knows, with its role and its layout permissions. An owner enables it and sets its password in Manage Security. Existing accounts are never changed. Restoring never widens access: a disabled account stays disabled, and an `owner` account can only be restored by an owner.
+5. **Accounts.** A missing account is created **disabled**, with a random password nobody knows, with its role and its layout permissions. An owner enables it and sets its password in Manage Security. An existing account keeps its status, role and password; when the file carries layout permissions for it, they replace its permissions on the file's layouts, and its permissions on this database's other layouts stay. Restoring never widens access: a disabled account stays disabled, and an `owner` account can only be restored by an owner.
 6. **Saved finds.** A find is created when the destination's table has none with that name; the fields it searches must exist there. Existing finds are left as they are.
 7. **File references and external occurrences.** A file reference is created when the destination has none with that name, before the occurrences that go through it. An external occurrence is matched by name like any other; an existing occurrence with the same name that is local, goes through another reference, or names another table there (when both name one), is a conflict and the import is refused: an occurrence is never silently retargeted. Nothing is bound on import: binding and verifying are separate requests (see [relationships_and_portals.md](relationships_and_portals.md#occurrences-of-another-solutions-table)).
 8. **Data sources.** A connection is created when the destination has none with that name. It arrives without a password, so one must be given at import time or in the server's environment before it can be read.

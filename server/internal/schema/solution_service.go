@@ -62,6 +62,9 @@ type BundleColumn struct {
 	// SourceFieldID is the field's FileMaker id, kept by the migration and
 	// absent otherwise (#107).
 	SourceFieldID string `msgpack:"source_field_id,omitempty"`
+	// SourceType is FileMaker's type of a migrated field where File4Base's
+	// own does not say it (see ColumnMetadata.SourceType).
+	SourceType string `msgpack:"source_type,omitempty"`
 }
 
 type BundleTable struct {
@@ -378,6 +381,10 @@ type SolutionBundle struct {
 	CustomFunctions    []BundleCustomFunction `msgpack:"custom_functions,omitempty"`
 	FileOptions        map[string]interface{} `msgpack:"file_options,omitempty"`
 	PageSetup          map[string]interface{} `msgpack:"page_setup,omitempty"`
+	// Catalog is the layout and script menus, in order, with their folders
+	// and separators. A file written before they were kept has none, and
+	// leaves the destination's menus as they are.
+	Catalog []BundleCatalogEntry `msgpack:"catalog,omitempty"`
 }
 
 // DatabaseDataBundle is the content of a .f4data file (all user records).
@@ -506,7 +513,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 			if c.MaxRepetitions > 1 {
 				col.MaxRepetitions = c.MaxRepetitions
 			}
-			col.SourceFieldID = c.SourceFieldID
+			col.SourceFieldID, col.SourceType = c.SourceFieldID, c.SourceType
 			bt.Columns = append(bt.Columns, col)
 		}
 		b.Tables = append(b.Tables, bt)
@@ -576,6 +583,9 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	}
 	for _, f := range customFunctions {
 		b.CustomFunctions = append(b.CustomFunctions, BundleCustomFunction{Name: f.Name, Parameters: f.Parameters, Formula: f.Formula, Access: f.Access})
+	}
+	if b.Catalog, err = s.menuEntries(ctx); err != nil {
+		return nil, fmt.Errorf("failed reading the layout and script menus: %w", err)
 	}
 	for _, d := range dataSources {
 		b.DataSources = append(b.DataSources, BundleDataSource{
@@ -850,7 +860,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 				col, err := s.addColumn(ctx, dstID, ColumnMetadata{
 					Name: cname, DisplayName: c.DisplayName, FieldType: dbal.AgnosticFieldType(c.FieldType), IsNullable: c.IsNullable,
 					DefaultValue: c.DefaultValue, CalculationFormula: c.CalculationFormula, ValidationRules: c.ValidationRules,
-					MaxRepetitions: c.MaxRepetitions, SourceFieldID: c.SourceFieldID,
+					MaxRepetitions: c.MaxRepetitions, SourceFieldID: c.SourceFieldID, SourceType: c.SourceType,
 				}, true)
 				if err != nil {
 					return nil, rollback(fmt.Errorf("adding field %s to table %s: %w", cname, name, err))
@@ -1076,12 +1086,26 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		}
 	}
 
-	// 4. Scripts (before layouts, whose buttons reference them)
+	// 4. Scripts (before layouts, whose buttons reference them). A file
+	// with a script menu places its scripts in its folders at step 11; the
+	// folder_id of a file without one is kept as it was written, if any.
+	scriptMenu := false
+	for _, e := range b.Catalog {
+		scriptMenu = scriptMenu || e.Catalog == CatalogScripts
+	}
 	scriptIDs := map[string]string{}
 	for _, sc := range b.Scripts {
 		steps := remapSteps(sc.Steps)
+		folder := sc.FolderID
+		if scriptMenu {
+			folder = nil
+		}
 		if prev := plan.scriptFor(sc); prev != nil {
-			if _, err := s.UpdateScript(ctx, prev.ID, sc.Name, sc.ContextTable, sc.FolderID, sc.IsActive, steps); err != nil {
+			kept := prev.FolderID
+			if folder != nil {
+				kept = folder
+			}
+			if _, err := s.UpdateScript(ctx, prev.ID, sc.Name, sc.ContextTable, kept, sc.IsActive, steps); err != nil {
 				return nil, rollback(fmt.Errorf("updating script %q: %w", sc.Name, err))
 			}
 			p := *prev
@@ -1090,7 +1114,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			scriptIDs[sc.ID] = prev.ID
 			continue
 		}
-		created, err := s.CreateScript(ctx, sc.Name, sc.ContextTable, sc.FolderID, sc.IsActive, steps)
+		created, err := s.CreateScript(ctx, sc.Name, sc.ContextTable, folder, sc.IsActive, steps)
 		if err != nil {
 			return nil, rollback(fmt.Errorf("creating script %q: %w", sc.Name, err))
 		}
@@ -1232,12 +1256,32 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	// layout/table permissions. Existing accounts
 	// keep their active status and password while restoring any layout/table
 	// permissions carried by the bundle.
-	restoreAccountPermissions := func(userID, username string, a BundleAccount) error {
+	//
+	// The file's layout permissions are those of the file's layouts: an
+	// existing account keeps its permissions on this database's other
+	// layouts, and gets its previous ones back if the import fails.
+	imported := make(map[string]bool, len(layoutIDs))
+	for _, id := range layoutIDs {
+		imported[id] = true
+	}
+	restoreAccountPermissions := func(userID, username string, a BundleAccount, existing bool) error {
 		perms := make([]UserLayoutPermission, 0, len(a.Permissions))
 		for _, p := range a.Permissions {
 			perms = append(perms, UserLayoutPermission{LayoutID: layoutIDs[p.LayoutID], AccessLevel: p.AccessLevel})
 		}
 		if len(perms) > 0 {
+			if existing {
+				previous, err := s.GetUserPermissions(ctx, userID)
+				if err != nil {
+					return fmt.Errorf("reading permissions of %q: %w", username, err)
+				}
+				for _, p := range previous {
+					if !imported[p.LayoutID] {
+						perms = append(perms, UserLayoutPermission{LayoutID: p.LayoutID, AccessLevel: p.AccessLevel})
+					}
+				}
+				undo = append(undo, func() { _ = s.SetUserPermissions(bg, userID, previous) })
+			}
 			if err := s.SetUserPermissions(ctx, userID, perms); err != nil {
 				return fmt.Errorf("restoring permissions of %q: %w", username, err)
 			}
@@ -1262,7 +1306,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	}
 	for _, a := range b.Users {
 		if existingID := plan.userIDs[strings.ToLower(strings.TrimSpace(a.Username))]; existingID != "" {
-			if err := restoreAccountPermissions(existingID, a.Username, a); err != nil {
+			if err := restoreAccountPermissions(existingID, a.Username, a, true); err != nil {
 				return nil, rollback(err)
 			}
 			continue
@@ -1272,7 +1316,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			return nil, rollback(fmt.Errorf("creating account %q: %w", a.Username, err))
 		}
 		undo = append(undo, func() { _ = s.DeleteUser(bg, created.ID) })
-		if err := restoreAccountPermissions(created.ID, a.Username, a); err != nil {
+		if err := restoreAccountPermissions(created.ID, a.Username, a, false); err != nil {
 			return nil, rollback(err)
 		}
 		report.AccountsCreated++
@@ -1493,6 +1537,15 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		report.PrivilegesUpdated = len(b.Privileges)
 	}
 
+	// 11. The layout and script menus: their order, folders and separators.
+	previousMenus, err := s.importMenus(ctx, b.Catalog, layoutIDs, scriptIDs, occIDs)
+	if err != nil {
+		return nil, rollback(fmt.Errorf("restoring the layout and script menus: %w", err))
+	}
+	if previousMenus != nil {
+		undo = append(undo, func() { _ = s.writeMenuState(bg, *previousMenus) })
+	}
+
 	return report, nil
 }
 
@@ -1500,7 +1553,8 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 type importPlan struct {
 	tables        map[string]*TableMetadata // by name
 	layoutsByID   map[string]*LayoutMetadata
-	layoutsByName map[string]*LayoutMetadata
+	layoutsByName map[string][]*LayoutMetadata
+	layoutsTaken  map[string]bool // destination layouts a bundle layout matched
 	scriptsByID   map[string]*ScriptMetadata
 	scriptsByName map[string]*ScriptMetadata
 	valueLists    map[string]*ValueList // by lower-case name
@@ -1508,11 +1562,20 @@ type importPlan struct {
 	userIDs       map[string]string     // lower-case username -> user id
 }
 
+// layoutFor is the destination layout a bundle layout updates: the one of
+// its id, else the first of its name no other bundle layout matched, so
+// that layouts sharing a name, as FileMaker allows, stay apart.
 func (p *importPlan) layoutFor(l BundleLayout) *LayoutMetadata {
 	if m := p.layoutsByID[l.ID]; m != nil {
 		return m
 	}
-	return p.layoutsByName[l.Name]
+	for _, m := range p.layoutsByName[l.Name] {
+		if !p.layoutsTaken[m.ID] {
+			p.layoutsTaken[m.ID] = true
+			return m
+		}
+	}
+	return nil
 }
 
 func (p *importPlan) scriptFor(sc BundleScript) *ScriptMetadata {
@@ -1687,9 +1750,23 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 		}
 	}
 
+	scriptIDSet := map[string]bool{}
+	for _, sc := range b.Scripts {
+		if sc.ID != "" {
+			scriptIDSet[sc.ID] = true
+		}
+	}
+	occIDSet := map[string]bool{}
+	for id := range occTable {
+		occIDSet[id] = true
+	}
+	if err := checkCatalogEntries(b.Catalog, layoutIDs, scriptIDSet, occIDSet); err != nil {
+		return nil, invalid("%s", err.Error())
+	}
+
 	// Destination state
 	plan := &importPlan{
-		tables: map[string]*TableMetadata{}, layoutsByID: map[string]*LayoutMetadata{}, layoutsByName: map[string]*LayoutMetadata{},
+		tables: map[string]*TableMetadata{}, layoutsByID: map[string]*LayoutMetadata{}, layoutsByName: map[string][]*LayoutMetadata{}, layoutsTaken: map[string]bool{},
 		scriptsByID: map[string]*ScriptMetadata{}, scriptsByName: map[string]*ScriptMetadata{},
 		valueLists: map[string]*ValueList{}, users: map[string]bool{}, userIDs: map[string]string{},
 	}
@@ -1794,7 +1871,12 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 	}
 	for i := range layouts {
 		plan.layoutsByID[layouts[i].ID] = &layouts[i]
-		plan.layoutsByName[layouts[i].Name] = &layouts[i]
+		plan.layoutsByName[layouts[i].Name] = append(plan.layoutsByName[layouts[i].Name], &layouts[i])
+	}
+	for _, l := range b.Layouts {
+		if plan.layoutsByID[l.ID] != nil {
+			plan.layoutsTaken[l.ID] = true
+		}
 	}
 	scripts, err := s.ListScripts(ctx)
 	if err != nil {

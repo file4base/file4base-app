@@ -134,6 +134,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.login(w, req)
 	case epLogout:
 		h.logout(w, req)
+	case epLayouts:
+		h.layouts(w, req)
+	case epScripts:
+		h.scripts(w, req)
+	case epLayout:
+		h.layout(w, req)
+	case epMetadata:
+		h.metadata(w, req)
 	case epValidateSession:
 		if _, err := h.bearer(req, false); err != nil {
 			writeError(w, err)
