@@ -15,9 +15,10 @@
 //
 // This package reproduces both: a request goes through the front-end checks
 // in their order before a handler runs. Phase P1 serves productInfo,
-// databases, sign-in, sign-out and validateSession; every other endpoint is
-// routed and validated like the others, then refused with code 3 until its
-// phase lands.
+// databases, sign-in, sign-out and validateSession; phase P3 the layout and
+// script menus and the description of a layout (metadata.go), from the
+// layout contract (schema). Every other endpoint is routed and validated
+// like the others, then refused with code 3 until its phase lands.
 //
 // Names stay at this boundary: a FileMaker database name maps to a
 // File4Base database through the configured aliases, and SQL identifiers

@@ -279,6 +279,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
       apiClient: widget.apiClient,
       user: user,
       databaseName: widget.databaseName,
+      isOwnAccount: _isCurrentUser(user),
     );
     if (updated == null || !mounted) return;
     widget.onModified?.call();
@@ -299,6 +300,8 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
 
   Future<void> _showAccountDialog({UserModel? userToEdit}) async {
     final isNew = userToEdit == null;
+    // Your own password changes in its own dialog, which asks for the current one (#209).
+    final isOwnAccount = !isNew && _isCurrentUser(userToEdit);
     final usernameController = TextEditingController(text: userToEdit?.username ?? '');
     final passwordController = TextEditingController();
     var selectedRole = userToEdit?.role ?? 'user';
@@ -447,9 +450,14 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                 child: TextField(
                                   controller: passwordController,
                                   obscureText: obscurePassword,
+                                  enabled: !isOwnAccount,
                                   decoration: InputDecoration(
                                     labelText: isNew ? 'Initial password *' : 'New password (optional)',
-                                    hintText: isNew ? 'Required' : 'Leave blank to keep the current password',
+                                    hintText: isNew
+                                        ? 'Required'
+                                        : isOwnAccount
+                                            ? 'Use Change password (key icon) for your own account'
+                                            : 'Leave blank to keep the current password',
                                     border: const OutlineInputBorder(),
                                     isDense: true,
                                     prefixIcon: const Icon(Icons.lock_outline, size: 18),
@@ -1545,6 +1553,8 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                               itemBuilder: (ctx, idx) {
                                 final user = filtered[idx];
                                 final isCurrent = _isCurrentUser(user);
+                                // The server refuses these to anyone but a super-owner (#209).
+                                final superOwnerLocked = user.superOwner && !_viewerIsSuperOwner && !isCurrent;
                                 final isLastOwner = _isLastActiveOwner(user);
                                 final perms = _userPermissionsMap[user.id] ?? [];
                                 final accessibleLayouts = perms.where((p) => p.accessLevel != 'none').length;
@@ -1576,7 +1586,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                                   value: user.isActive,
                                                   activeThumbColor: Colors.green,
                                                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                                  onChanged: (isCurrent || (user.isActive && isLastOwner))
+                                                  onChanged: (isCurrent || superOwnerLocked || (user.isActive && isLastOwner))
                                                       ? null
                                                       : (val) => _toggleUserActive(user, val),
                                                 ),
@@ -1781,10 +1791,12 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                               ),
                                               tooltip: user.isOwner && !widget.currentUser.isOwner
                                                   ? 'Only an owner can set the password of an owner account'
-                                                  : user.passwordPending
-                                                      ? 'Set a password so that it can sign in'
-                                                      : 'Change password',
-                                              onPressed: user.isOwner && !widget.currentUser.isOwner
+                                                  : superOwnerLocked
+                                                      ? 'Only a super-owner can manage a super-owner account'
+                                                      : user.passwordPending
+                                                          ? 'Set a password so that it can sign in'
+                                                          : 'Change password',
+                                              onPressed: (user.isOwner && !widget.currentUser.isOwner) || superOwnerLocked
                                                   ? null
                                                   : () => _showChangePasswordDialog(user),
                                             ),
@@ -1796,8 +1808,10 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                               padding: const EdgeInsets.all(4),
                                               constraints: const BoxConstraints(),
                                               icon: const Icon(Icons.edit_outlined, size: 18),
-                                              tooltip: 'Edit account and privileges',
-                                              onPressed: () => _showAccountDialog(userToEdit: user),
+                                              tooltip: superOwnerLocked
+                                                  ? 'Only a super-owner can manage a super-owner account'
+                                                  : 'Edit account and privileges',
+                                              onPressed: superOwnerLocked ? null : () => _showAccountDialog(userToEdit: user),
                                             ),
                                             const SizedBox(width: 2),
 
@@ -1820,12 +1834,16 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                               icon: Icon(
                                                 Icons.delete_outline,
                                                 size: 18,
-                                                color: (isCurrent || (user.role == 'owner' && _users.where((u) => u.role == 'owner').length <= 1))
+                                                color: (isCurrent || superOwnerLocked || (user.role == 'owner' && _users.where((u) => u.role == 'owner').length <= 1))
                                                     ? Colors.grey.shade700
                                                     : Colors.redAccent,
                                               ),
-                                              tooltip: isCurrent ? 'You cannot delete your own account' : 'Delete account',
-                                              onPressed: (isCurrent || (user.role == 'owner' && _users.where((u) => u.role == 'owner').length <= 1))
+                                              tooltip: isCurrent
+                                                  ? 'You cannot delete your own account'
+                                                  : superOwnerLocked
+                                                      ? 'Only a super-owner can manage a super-owner account'
+                                                      : 'Delete account',
+                                              onPressed: (isCurrent || superOwnerLocked || (user.role == 'owner' && _users.where((u) => u.role == 'owner').length <= 1))
                                                   ? null
                                                   : () => _deleteUser(user),
                                             ),

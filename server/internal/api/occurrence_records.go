@@ -61,6 +61,8 @@ func (h *DataHandler) RegisterOccurrenceRoutes(r chi.Router) {
 		read.Post("/find", h.FindRows)
 		read.Post("/summary", h.SummarizeRows)
 		r.Post("/related", h.ListOccurrenceRelatedRowsBatch)
+		// Evaluated here, the rows of another solution read there.
+		r.Post("/evaluate", h.EvaluateOccurrenceExpression)
 		// Auto-enter options apply in the solution the records are in, as
 		// that solution's account: serial numbers and stamps are its own.
 		write.Post("/relookup", h.RelookupRows)

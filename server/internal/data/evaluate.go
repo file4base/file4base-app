@@ -61,6 +61,31 @@ type EvaluationEnv struct {
 	// Self is, for the expression at the same index, the field Self reads
 	// (see SelfField); a nil entry, or none, leaves Self unknown.
 	Self []*SelfField
+	// Context is the record of the layout a portal shows the records
+	// evaluated on (see ContextRecord); nil evaluates them on their own.
+	Context *ContextRecord
+	// External says the records are of an occurrence of another solution's
+	// table, as the occurrence's route knows it. The occurrence evaluated
+	// in a Context must be such an occurrence when it is set, and one of
+	// this solution's tables when it is not (ErrOccurrenceElsewhere).
+	External bool
+}
+
+// ContextRecord is the record of a layout, seen from its occurrence (by
+// name or id), that a record of a portal on it is evaluated in, as
+// FileMaker evaluates a portal row's conditions and the portal's filter:
+// from the layout, with the row as the current record of the portal's
+// occurrence. A reference to a field of that occurrence then reads the
+// row, and so does one through it; a reference to the layout's own
+// occurrence reads the layout's record, and any other is related to the
+// layout's record, never read back from the row through a relationship.
+// An aggregate of the portal's occurrence (Count, Sum, List, Last…) reads
+// every record related to the layout's record. A field named without an
+// occurrence reads the row, as the formulas bound for a portal write the
+// row's fields.
+type ContextRecord struct {
+	Occurrence string `json:"occurrence"`
+	RecordID   string `json:"record_id"`
 }
 
 // envContext answers the Get functions the environment gives, and the
@@ -207,62 +232,124 @@ func (s *Service) EvaluateExpressionsIn(
 	ctx context.Context, tableName, occurrence, recordID string, expressions []string, resultType string,
 	in EvaluationEnv,
 ) ([]ExpressionResult, error) {
+	e, err := s.newEvaluator(ctx, tableName, occurrence, expressions, resultType, in)
+	if err != nil {
+		return nil, err
+	}
+	return e.evaluate(ctx, recordID)
+}
+
+// EvaluateExpressionsForRecords is EvaluateExpressionsIn for several
+// records of the table, all evaluated in the same context: the layout's
+// record, the occurrence and the solution the records are read in are
+// resolved once, and one reader serves every record, so what is read for
+// one (the layout's aggregates, a related record) the others reuse. The
+// answer is in the order of recordIDs, nil for a record not found (deleted
+// since it was listed); any other error is the request's, and nothing is
+// answered.
+func (s *Service) EvaluateExpressionsForRecords(
+	ctx context.Context, tableName, occurrence string, recordIDs []string, expressions []string, resultType string,
+	in EvaluationEnv,
+) ([][]ExpressionResult, error) {
+	e, err := s.newEvaluator(ctx, tableName, occurrence, expressions, resultType, in)
+	if err != nil {
+		return nil, err
+	}
+	out := make([][]ExpressionResult, len(recordIDs))
+	for i, id := range recordIDs {
+		results, err := e.evaluate(ctx, id)
+		if errors.Is(err, ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[i] = results
+	}
+	return out, nil
+}
+
+// evaluator evaluates expressions, parsed once, against records evaluated
+// in one scope (see evaluationScope).
+type evaluator struct {
+	s           *Service
+	reader      *relatedReader
+	scope       *evaluationScope
+	expressions []string
+	parsed      []*calc.Expr
+	invalid     []error
+	reads       []string
+	result      calc.ResultType
+	variables   map[string]any
+	get         map[string]any
+	in          EvaluationEnv
+}
+
+func (s *Service) newEvaluator(
+	ctx context.Context, tableName, occurrence string, expressions []string, resultType string, in EvaluationEnv,
+) (*evaluator, error) {
 	lib, err := LoadLibrary(ctx, s.driver)
 	if err != nil {
 		return nil, err
 	}
-	fields, err := s.tableFields(ctx, tableName)
+	// One reader serves every expression and every record, so what one
+	// reads the others reuse.
+	reader := s.newRelatedReader()
+	scope, err := reader.evaluationScope(ctx, tableName, occurrence, in.Context, in.External)
 	if err != nil {
 		return nil, err
 	}
-
-	out := make([]ExpressionResult, len(expressions))
-	parsed := make([]*calc.Expr, len(expressions))
-	var reads []string
+	if len(in.Values) > 0 && scope.database != "" {
+		return nil, fmt.Errorf("%w: the values of a record being edited are not evaluated in another solution", ErrInvalidValue)
+	}
+	e := &evaluator{s: s, reader: reader, scope: scope, expressions: expressions, in: in,
+		parsed: make([]*calc.Expr, len(expressions)), invalid: make([]error, len(expressions)),
+		result: calc.ParseResultType(resultType), variables: make(map[string]any, len(in.Variables)),
+		get: make(map[string]any, len(in.Get))}
 	for i, expression := range expressions {
 		if strings.TrimSpace(expression) == "" {
-			out[i].Err = fmt.Errorf("%w: there is nothing to evaluate", ErrInvalidExpression)
+			e.invalid[i] = fmt.Errorf("%w: there is nothing to evaluate", ErrInvalidExpression)
 			continue
 		}
 		expr, err := calc.ParseWith(expression, calc.Options{Library: lib})
 		if err != nil {
-			out[i].Err = fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
+			e.invalid[i] = fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
 			continue
 		}
-		parsed[i] = expr
-		reads = append(reads, expr.Fields()...)
+		e.parsed[i] = expr
+		e.reads = append(e.reads, expr.Fields()...)
 	}
-
-	// One reader serves every expression, so what one reads the others
-	// reuse.
-	reader := s.newRelatedReader()
-	record := calc.Record{}
-	row := map[string]interface{}{}
-	if recordID != "" {
-		if row, err = s.GetRow(ctx, tableName, recordID); err != nil {
-			return nil, err
-		}
-	}
-	if len(in.Values) > 0 {
-		if err := s.overlayEdit(ctx, reader, tableName, fields, row, in.Values, reads); err != nil {
-			return nil, err
-		}
-	}
-	for name := range row {
-		record[name] = typedValue(tableName, fields, row, name, s.describeContainer(ctx))
-	}
-
-	result := calc.ParseResultType(resultType)
-	variables := make(map[string]any, len(in.Variables))
 	for name, v := range in.Variables {
-		variables[strings.ToLower(strings.TrimSpace(name))] = variableInput(v)
+		e.variables[strings.ToLower(strings.TrimSpace(name))] = variableInput(v)
 	}
-	get := make(map[string]any, len(in.Get))
 	for selector, v := range in.Get {
-		get[strings.ToUpper(strings.TrimSpace(selector))] = v
+		e.get[strings.ToUpper(strings.TrimSpace(selector))] = v
 	}
-	for i, expr := range parsed {
+	return e, nil
+}
+
+// evaluate evaluates the expressions against the record recordID (none when
+// empty).
+func (e *evaluator) evaluate(ctx context.Context, recordID string) ([]ExpressionResult, error) {
+	at, err := e.scope.at(ctx, recordID)
+	if err != nil {
+		return nil, err
+	}
+	fields, row := at.fields, at.row
+	if len(e.in.Values) > 0 {
+		if err := e.s.overlayEdit(ctx, e.reader, at.table, fields, row, e.in.Values, e.reads); err != nil {
+			return nil, err
+		}
+	}
+	record := calc.Record{}
+	for name := range row {
+		record[name] = inSolution(typedValue(at.table, fields, row, name, at.describe), at.database)
+	}
+
+	out := make([]ExpressionResult, len(e.expressions))
+	for i, expr := range e.parsed {
 		if expr == nil {
+			out[i].Err = e.invalid[i]
 			continue
 		}
 		read := expr.Fields()
@@ -273,8 +360,8 @@ func (s *Service) EvaluateExpressionsIn(
 			}
 		}
 		sort.Strings(unknown)
-		scope := make(map[string]any, len(variables))
-		for name, v := range variables {
+		scope := make(map[string]any, len(e.variables))
+		for name, v := range e.variables {
 			scope[name] = v
 		}
 		// Related fields are read from the occurrence given, or the table's
@@ -282,18 +369,19 @@ func (s *Service) EvaluateExpressionsIn(
 		// FileMaker.
 		env := &envContext{unstoredContext: &unstoredContext{
 			RecordContext: calc.RecordContext{Record: record, Repeats: fields.repeating(), Variables: scope},
-			reader:        reader, ctx: ctx, table: tableName, occurrence: occurrence, row: row}, get: get}
-		if i < len(in.Self) && in.Self[i].bound() {
-			env.self = in.Self[i]
+			reader:        e.reader, ctx: ctx, table: at.from.table, occurrence: at.from.occurrence, row: at.from.row,
+			pin: at.pin}, get: e.get}
+		if i < len(e.in.Self) && e.in.Self[i].bound() {
+			env.self = e.in.Self[i]
 		}
-		value, err := calc.EvaluateWith(expr, env, result)
+		value, err := calc.EvaluateWith(expr, env, e.result)
 		if err != nil {
 			out[i].Err = fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
 			continue
 		}
 		var set map[string]string
 		for name, v := range env.Variables {
-			if given, ok := variables[name]; ok && given == v {
+			if given, ok := e.variables[name]; ok && given == v {
 				continue
 			}
 			if set == nil {
@@ -302,10 +390,10 @@ func (s *Service) EvaluateExpressionsIn(
 			set[name] = variableText(v)
 		}
 		out[i].Evaluation = &Evaluation{
-			Expression:    expressions[i],
+			Expression:    e.expressions[i],
 			Value:         value,
-			Text:          evaluationText(value, result),
-			ResultType:    string(result),
+			Text:          evaluationText(value, e.result),
+			ResultType:    string(e.result),
 			Fields:        read,
 			UnknownFields: unknown,
 			RecordID:      recordID,

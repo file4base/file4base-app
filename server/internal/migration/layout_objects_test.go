@@ -869,9 +869,10 @@ func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
                 <Portal>
                   <TableOccurrenceReference id="2" name="Ingredients"/>
                   <Options index="2" show="4"/>
-                  <SortSpecification value="True" maintain="True" blanksLast="False"><SortList membercount="2">
+                  <SortSpecification value="True" maintain="True" blanksLast="False"><SortList membercount="3">
                     <Sort type="Descending"><PrimaryField><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference></PrimaryField></Sort>
                     <Sort type="Ascending"><PrimaryField><FieldReference name="Title" id="1"><TableOccurrenceReference name="Recipes" id="1"/></FieldReference></PrimaryField></Sort>
+                    <Sort type="Custom"><PrimaryField><FieldReference name="RecipeTitle" id="1"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference></PrimaryField><ValueListReference id="9" name="Not In This File"/></Sort>
                   </SortList></SortSpecification>
                   <Calculation><Text><![CDATA[Quantity > 1]]></Text></Calculation>
                   <ObjectList>
@@ -933,6 +934,15 @@ func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
 		first["filter_problem"] != nil || first["allow_creation"] != true {
 		t.Fatalf("portal: %v", first)
 	}
+	// FileMaker's whole sort order is kept, a field of another occurrence
+	// and a value list's order included, though the portal sorts by its
+	// own fields only.
+	sortFields, _ := json.Marshal(first["sort_fields"])
+	if string(sortFields) != `[{"field_name":"quantity","order":"descending","table_occurrence":"Ingredients"},`+
+		`{"field_name":"title","order":"ascending","table_occurrence":"Recipes"},`+
+		`{"field_name":"recipetitle","order":"custom","table_occurrence":"Ingredients"}]` {
+		t.Fatalf("portal sort fields: %s", sortFields)
+	}
 	// A filter that cannot be bound shows no record rather than all of them.
 	second := byType["portal"][1]["portal_config"].(map[string]interface{})
 	if second["filter"] != "0" || second["filter_problem"] != true {
@@ -951,6 +961,16 @@ func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
 	}
 	if portalAt < 0 || fieldAt < portalAt {
 		t.Fatalf("row field at %d, portal at %d", fieldAt, portalAt)
+	}
+	// Each says which portal it is in; an object outside a portal says none.
+	objects := def["objects"].([]interface{})
+	if row, portal := objects[fieldAt].(map[string]interface{}), objects[portalAt].(map[string]interface{}); row["portal"] == nil || row["portal"] != portal["id"] {
+		t.Fatalf("row field in portal %v, want %v", row["portal"], portal["id"])
+	}
+	for _, raw := range objects[:portalAt] {
+		if o := raw.(map[string]interface{}); o["portal"] != nil {
+			t.Fatalf("an object before the portal says it is in %v", o["portal"])
+		}
 	}
 	// A portal several relationships away lists the records along its
 	// path, and creates none.
@@ -976,7 +996,7 @@ func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
 			review += it.Detail
 		}
 	}
-	for _, want := range []string{"1 portal showing the records of an occurrence several relationships away, listed along the path", "1 portal whose filter calculation could not be bound", "1 portal sort field of another occurrence"} {
+	for _, want := range []string{"1 portal showing the records of an occurrence several relationships away, listed along the path", "1 portal whose filter calculation could not be bound", "2 portal sort fields of another occurrence or in a value list's order, left out of the portal's sort"} {
 		if !strings.Contains(review, want) {
 			t.Fatalf("review %q lacks %q", review, want)
 		}
@@ -1432,5 +1452,49 @@ func TestNativeLayoutButtonStepFieldOfAnotherFile(t *testing.T) {
 	}
 	if entry["field"] != "id_2" {
 		t.Fatalf("field = %v, want the other file's column id_2", entry["field"])
+	}
+}
+
+// An edit box keeps its value list, as FileMaker keeps it for every control
+// (the one it auto-completes from); Display Style 5 is taken as a concealed
+// edit box.
+func TestNativeLayoutEditBoxKeepsItsValueListAndConcealment(t *testing.T) {
+	old := `<FieldReference name="Price" id="2"><TableOccurrenceReference name="Ingredient Recipes" id="4"/></FieldReference>
+                  <Display Style="0" show="1"/>`
+	if !strings.Contains(layoutObjectsFixture, old) {
+		t.Fatal("the fixture changed")
+	}
+	design := strings.Replace(layoutObjectsFixture, old, `<FieldReference name="Price" id="2"><TableOccurrenceReference name="Ingredient Recipes" id="4"/></FieldReference>
+                  <Display Style="5" show="1"><ValueListReference name="Units" id="1"/></Display>`, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	var unitList string
+	for _, vl := range got.Bundle.ValueLists {
+		if vl.Name == "Units" {
+			unitList = vl.ID
+		}
+	}
+	found := false
+	for _, f := range objectsByType(def)["field"] {
+		b := f["field_binding"].(map[string]interface{})
+		switch {
+		case f["y"] == 200.0 && f["x"] == 220.0:
+			found = true
+			if b["control_style"] != "edit_box" || b["value_list_id"] != unitList || unitList == "" || b["concealed"] != true {
+				t.Fatalf("concealed edit box with a value list: %v", b)
+			}
+		case b["concealed"] != nil:
+			t.Fatalf("a field that is not concealed says it is: %v", b)
+		}
+	}
+	if !found {
+		t.Fatal("no edit box at 220,200")
 	}
 }

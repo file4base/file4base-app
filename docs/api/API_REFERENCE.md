@@ -904,6 +904,41 @@ the one sent.
 }
 ```
 
+A portal's rows are evaluated in the record of the layout they are shown on,
+as FileMaker evaluates a portal row's conditions and the portal's filter:
+from the layout, with the row as the current record of the portal's
+occurrence. `context` names the layout's occurrence and record, and the
+records evaluated (`record_id`, `record_ids`) are the rows, seen from the
+portal's `occurrence`:
+
+```json
+{
+  "expressions": ["Customers::status = \"late\" and Companies::region = \"north\""],
+  "record_ids": ["cu-1…", "cu-2…"],
+  "occurrence": "Customers",
+  "context": {"occurrence": "Companies", "record_id": "co-1…"}
+}
+```
+
+A field named alone, and one of the portal's occurrence, read the row; one
+of an occurrence reached through the portal's reads the records related to
+the row; one of the layout's occurrence reads the layout's record, and any
+other is related to the layout's record. This is FileMaker's rule for a
+related field in a portal: the portal's record is the start only when the
+path from the layout's occurrence to the field's goes through the portal's,
+so a field of a join between them (layout → join → portal) reads the first
+join record related to the layout's record, on every row. So a field of the layout is never
+read back from the row through the relationship, which in a many-to-many
+relationship reaches another record. An aggregate (`Count`, `Sum`, `List`,
+`Last`, `GetNthRecord`…) of the portal's occurrence itself covers every
+record related to the layout's record. Without an `occurrence`, the rows are
+seen from their table's own. A portal of the layout's own occurrence (a
+self-join) evaluates its row as that occurrence's record. The caller must be
+able to read the layout's table as well as the rows' (`403`), and the
+layout's occurrence must be one of this solution's tables. The rows of an
+occurrence of another solution's table are evaluated through
+`POST /api/v1/occurrences/{occurrence}/records/evaluate` (`422` here).
+
 `expression` (singular) is accepted for a caller watching one. Without
 `record_id` every field reads as empty, so a formula like `UPPER("ab")` still
 answers. `result_type` is `Text` (the default), `Number`, `Date`, `Timestamp`,
@@ -938,9 +973,9 @@ have reads as empty — the engine's rule — and is named in `unknown_fields`
 rather than being quietly ignored.
 
 #### Errors
-- `403 Forbidden`: no access to the table.
-- `404 Not Found`: no such table, or no record with that id.
-- `422 Unprocessable Entity`: nothing to evaluate, or more than 50 expressions.
+- `403 Forbidden`: no access to the table, or to the layout's table of the `context`.
+- `404 Not Found`: no such table, or no record with that id; with a `context`, no such layout record (even with `record_ids`, where a row gone answers `null`), an occurrence that is not there, or a portal occurrence of another table.
+- `422 Unprocessable Entity`: nothing to evaluate, more than 50 expressions, or a `context` with an `occurrence` of another solution's table.
 
 ---
 
@@ -1736,7 +1771,7 @@ The `?database=<name>` query parameter and the `X-Database-Name` header are stil
 ---
 
 ### `POST /api/v1/security/users`
-Creates a new user account with hashed password (`bcrypt`). Requires the `owner` or `admin` role; only an `owner` can create another `owner`.
+Creates a new user account with hashed password (`bcrypt`). Requires the `owner` or `admin` role; only an `owner` can create another `owner`. Only a super-owner can create an account whose name `FILE4BASE_SUPER_OWNER` seeds for this database (`403`), since it would sign in as a super-owner.
 
 #### Request Body
 ```json
@@ -1763,9 +1798,13 @@ Creates a new user account with hashed password (`bcrypt`). Requires the `owner`
 ### `PUT /api/v1/security/users/{id}`
 Updates password, role and/or `is_active` of an existing user account.
 
-- `owner`: any account.
+- `owner`: any account, except a super-owner account unless the caller is a super-owner.
 - `admin`: `admin` and `user` accounts; cannot modify owner accounts nor promote to `owner`.
 - `user`: only their own password (role and status must stay unchanged).
+
+Only a super-owner can manage another super-owner account (stored flag, `FILE4BASE_SUPER_OWNER` seed, or owner of the `FILE4BASE_ADMIN_DATABASE`): anyone else gets `403` *only a super-owner can manage a super-owner account* (#209). The same rule applies to `DELETE /api/v1/security/users/{id}` and to the MFA endpoints.
+
+Changing **your own** password requires `current_password`, whatever your role: `403` when it is missing or wrong. Wrong current passwords count against the sign-in throttle of the account (`429` with `Retry-After` once it is locked). Setting the password of another account does not take that account's current password.
 
 The last active owner cannot be demoted or deactivated. When the password, role or status changes, the other sessions of that user are revoked. Setting a password clears `password_pending` (#198); a password of only spaces is refused (`400`). An owner with `password_pending` cannot sign in, so it does not count as the active owner a database must keep. An empty or omitted `role` keeps the stored one.
 
@@ -1773,17 +1812,20 @@ The last active owner cannot be demoted or deactivated. When the password, role 
 ```json
 {
   "password": "newpassword",
+  "current_password": "oldpassword",
   "role": "admin",
   "is_active": true
 }
 ```
+
+`current_password` is read only when the account is the caller's own.
 
 To let an account migrated without a password sign in, send its `password` together with `"is_active": true`.
 
 ---
 
 ### `DELETE /api/v1/security/users/{id}`
-Deletes a user account and revokes its sessions. Requires the `owner` or `admin` role (only an `owner` can delete an owner). You cannot delete your own account nor the only remaining owner account.
+Deletes a user account and revokes its sessions. Requires the `owner` or `admin` role (only an `owner` can delete an owner, only a super-owner can delete a super-owner). You cannot delete your own account nor the only remaining owner account.
 
 ---
 
@@ -2436,13 +2478,13 @@ File4Base supports RFC 6238 Time-Based One-Time Password (TOTP) two-factor authe
 When `mfa_enabled` is `true` for an account, `POST /api/v1/auth/login` requires `"totp_code": "123456"` in addition to `username` and `password`. If `totp_code` is omitted when MFA is enabled, `POST /api/v1/auth/login` returns `401 Unauthorized` with `"mfa_required": true`.
 
 ### `POST /api/v1/security/users/{id}/mfa/setup`
-*Requires `admin` or `owner` role (or the user's own session).* Generates a fresh 160-bit Base32 TOTP secret and `otpauth://totp/` URI for QR code provisioning without enabling enforcement until verified.
+*Requires `admin` or `owner` role (or the user's own session); only a super-owner for another super-owner's account.* Generates a fresh 160-bit Base32 TOTP secret and `otpauth://totp/` URI for QR code provisioning without enabling enforcement until verified.
 
 ### `POST /api/v1/security/users/{id}/mfa/enable`
-*Requires `admin` or `owner` role (or the user's own session).* Verifies a 6-digit TOTP code (`{"code": "123456", "secret": "..."}`) and activates MFA (`mfa_enabled = true`) on the account.
+*Requires `admin` or `owner` role (or the user's own session); only a super-owner for another super-owner's account.* Verifies a 6-digit TOTP code (`{"code": "123456", "secret": "..."}`) and activates MFA (`mfa_enabled = true`) on the account.
 
 ### `POST /api/v1/security/users/{id}/mfa/disable`
-*Requires `admin` or `owner` role (or the user's own session).* Disables MFA (`mfa_enabled = false`) and clears the stored TOTP secret for account `{id}`.
+*Requires `admin` or `owner` role (or the user's own session); only a super-owner for another super-owner's account.* Disables MFA (`mfa_enabled = false`) and clears the stored TOTP secret for account `{id}`.
 
 ---
 
@@ -2920,6 +2962,7 @@ The records of a table occurrence, by id or name: those of a table of this solut
 | `POST /`, `PUT /{id}`, `PATCH /{id}`, `DELETE /{id}`, `POST /{id}/related` | the same writes (`PATCH` is `PUT`: both change only the fields sent) | Written there as the group's account, with its privileges (above). |
 | `GET /{id}/related`, `POST /related` | the related reads | Follow this solution's relationships from that record. |
 | `POST /{id}/duplicate`, `GET /serials/{field}`, `PUT /serials/{field}`, `POST /relookup` | the auto-enter routes (§ 4) | Run there as the group's account: the copy gets that solution's serial numbers and stamps. |
+| `POST /evaluate` | `POST /api/v1/data/{table}/evaluate`, seen from the occurrence | The rows of a portal on a layout of this solution, given as the `context`: read there as the group's account, the formula evaluated here, the layout's record read as the caller. Without a `context`: `422`. |
 
 An unknown occurrence answers `404 Table Occurrence Not Found`.
 
@@ -3058,5 +3101,16 @@ Phase P1 serves:
 | `POST /fmi/data/{version}/databases/{database}/sessions` | Basic credentials of a local account of the database; the body is `{}` or `{"fmDataSource":[…]}`, checked but not used yet. `200` with the token in `response.token` and in `X-FM-Data-Access-Token`. The name matches in any case; the session is bound to the name as written. The sign-in throttle of `/api/v1` applies. |
 | `DELETE /fmi/data/{version}/databases/{database}/sessions/{token}` | Revokes the session at once. |
 | `GET /fmi/data/{version}/validateSession` | `Authorization: Bearer <token>`. Does not extend the session. |
+
+Phase P3 adds the metadata endpoints. Each takes `Authorization: Bearer <token>` and makes the checks every call with a session makes, in FileMaker Server's order.
+
+| Endpoint | Notes |
+|---|---|
+| `GET /fmi/data/{version}/databases/{database}/layouts` | The layout menu, in its order: `{"name","table"}` per layout (`table` is its table occurrence), `{"name":"-","table"}` per separator, `{"name","isFolder":true,"folderLayoutNames":[…]}` per folder. A layout the account has no access to (`none`) is left out; a folder is listed whatever it holds. Owners and admins see every layout. |
+| `GET /fmi/data/{version}/databases/{database}/scripts` | The script menu: `{"name","isFolder":false}` per script and separator (`"-"`), `{"name","folderScriptNames":[…],"isFolder":true}` per folder. |
+| `GET /fmi/data/{version}/databases/{database}/layouts/{layout}` | `fieldMetaData`, one entry per field object outside the portals, and `portalMetaData`, the row fields of each portal keyed by its object name (its occurrence's name when it has none). Each entry: `name` (`Occurrence::Field` for a related field), `type`, `displayType`, `result`, `global`, `autoEnter`, `fourDigitYear`, `maxRepeat`, `maxCharacters`, `notEmpty`, `numeric`, `timeOfDay`, `valueList` when the control has one, `repetitionStart`, `repetitionEnd`. A `recordId` query parameter must name a record of the layout's table that the account may read, otherwise `500`, code `101`. |
+| `GET /fmi/data/{version}/databases/{database}/layouts/{layout}/metadata` | The first Data API version's description: `metaData`, one entry per field outside the portals with `name`, `type`, `result`, `global` (`"true"`/`"false"`), `valueList`, `repetitions` and `id`; a repeating field is listed once per repetition shown, `Field(2)` with id `12_2`. |
+
+A layout is named as written in its menu, in any case; an unknown layout, or one the account has no access to, answers `500`, code `105`. The description follows the layout's own definition (`docs/specs/layout_schema.json`): an object that says its portal (`portal`, `""` for none), as a migrated one does, is where it says; any other is in the first portal of its panel whose bounds hold it wholly, as the client draws it. Field options come from the field (`type`, `result` and the validation and auto-enter facts), and `id` from FileMaker's own field id when the field was migrated. File4Base has no field-level privileges, so a field FileMaker would answer `<No Access>` for is described and read as any other ([#233](https://github.com/file4base/file4base-app/issues/233)).
 
 A Data API session is a session kind of its own: it is never accepted by `/api/v1`, and an `/api/v1` session is never accepted here. It expires after `FILE4BASE_DATA_API_SESSION_TTL` without a call (`401`, code `952`), and is revoked as soon as its account is deleted, disabled, demoted or given another password. Every other endpoint checks its request (content type, `Authorization`, the `_find` body and the record read query parameters) and its token as FileMaker Server does, then answers `500` with code `3` until its phase lands. Server accounts and accounts with two-step verification cannot sign in yet (`401`, code `212`). Replies carry no CORS or trace headers, and the request log redacts the token of a sign-out path. The bundled Web Client's Nginx proxies `/fmi/data` to the API over its own TLS and keeps it out of its access log; FileMaker clients should use that HTTPS address rather than the API's plain port.

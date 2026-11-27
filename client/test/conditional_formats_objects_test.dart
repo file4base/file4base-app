@@ -94,6 +94,7 @@ class _Api extends ApiClient {
     String? occurrence,
     String resultType = 'Text',
     List<ConditionSelf?>? self,
+    EvaluationContext? context,
   }) async {
     ConditionSelf? selfOf(int i) =>
         self == null || i >= self.length ? null : self[i];

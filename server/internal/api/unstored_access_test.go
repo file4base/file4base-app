@@ -71,7 +71,8 @@ func TestAPI_UnstoredCalculationRespectsTableAccess(t *testing.T) {
 
 	var person map[string]interface{}
 	require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/staff", owner, map[string]interface{}{"code": "S-1"}, &person).Code)
-	require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/payroll", owner, map[string]interface{}{"code": "S-1", "salary": 4200}, nil).Code)
+	var slip map[string]interface{}
+	require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/payroll", owner, map[string]interface{}{"code": "S-1", "salary": 4200}, &slip).Code)
 	id := fmt.Sprint(person["id"])
 
 	var row map[string]interface{}
@@ -113,4 +114,23 @@ func TestAPI_UnstoredCalculationRespectsTableAccess(t *testing.T) {
 	require.Len(t, answer.Results, 1)
 	assert.Nil(t, answer.Results[0].Value)
 	assert.Contains(t, answer.Results[0].Error, "<No Access>")
+
+	// A portal's row is evaluated in the layout's record only for a user who
+	// may read both: a staff row on a payroll layout, a payroll row on a
+	// staff layout.
+	slipID := fmt.Sprint(slip["id"])
+	rowOn := func(token, rows, rowID, layout, layoutID string) int {
+		return h.do(http.MethodPost, "/api/v1/occurrences/"+occurrence[rows]+"/records/evaluate", token, map[string]interface{}{
+			"expression": "code", "record_id": rowID,
+			"context": map[string]string{"occurrence": occurrence[layout], "record_id": layoutID},
+		}, nil).Code
+	}
+	assert.Equal(t, http.StatusOK, rowOn(owner, "staff", id, "payroll", slipID))
+	assert.Equal(t, http.StatusForbidden, rowOn(carolToken, "staff", id, "payroll", slipID), "the layout's record")
+	assert.Equal(t, http.StatusForbidden, rowOn(carolToken, "payroll", slipID, "staff", id), "the row")
+	rec = h.do(http.MethodPost, "/api/v1/data/staff/evaluate", carolToken, map[string]interface{}{
+		"expression": "code", "record_id": id, "occurrence": occurrence["staff"],
+		"context": map[string]string{"occurrence": occurrence["payroll"], "record_id": slipID},
+	}, nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 }

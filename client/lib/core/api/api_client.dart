@@ -1294,6 +1294,13 @@ class ConditionSelf {
         };
 }
 
+/// The record of a layout a portal's rows are evaluated in: the layout's
+/// occurrence (its id or name) and the record's id. FileMaker evaluates a
+/// portal row's conditions and the portal's filter from the layout, with the
+/// row as the current record of the portal's occurrence: a field of the
+/// layout's occurrence reads this record, never one read back from the row.
+typedef EvaluationContext = ({String occurrence, String recordId});
+
 /// What one watched expression came to (#50): a value, or the reason it has
 /// none.
 class EvaluationModel {
@@ -3960,9 +3967,12 @@ class ApiClient {
     return UserModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  /// Updates an account. [currentPassword] is required by the server when the
+  /// account is the caller's own and [password] changes it.
   Future<void> updateUser(
     String id, {
     required String role, String? password,
+    String? currentPassword,
     bool? isActive,
     String? database,
   }) async {
@@ -3972,6 +3982,9 @@ class ApiClient {
     }
     if (password != null && password.isNotEmpty) {
       body['password'] = password;
+      if (currentPassword != null && currentPassword.isNotEmpty) {
+        body['current_password'] = currentPassword;
+      }
     }
     if (isActive != null) {
       body['is_active'] = isActive;
@@ -4113,6 +4126,12 @@ class ApiClient {
   /// [self] gives, for the expression at the same index, the field Self
   /// reads: the one a layout object shows, whose conditions FileMaker
   /// evaluates with Self as the object's value. Null leaves Self unknown.
+  ///
+  /// [context] is, for the rows of a portal, the layout's record they are
+  /// evaluated in. On a client of an occurrence ([forOccurrence]) the
+  /// records are that occurrence's: another solution's are read there, as
+  /// the account this session holds there, and are only evaluated with a
+  /// context.
   Future<Map<String, List<EvaluationModel>?>> evaluateForRecords(
     String table, {
     required List<String> expressions,
@@ -4120,9 +4139,10 @@ class ApiClient {
     String? occurrence,
     String resultType = 'Text',
     List<ConditionSelf?>? self,
+    EvaluationContext? context,
   }) async {
     final response = await _httpClient.post(
-      Uri.parse('$baseUrl/api/v1/data/$table/evaluate'),
+      Uri.parse('${_records(table)}/evaluate'),
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'expressions': expressions,
@@ -4130,6 +4150,7 @@ class ApiClient {
         if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
         'result_type': resultType,
         if (self != null && self.any((s) => s != null)) 'self': [for (final s in self) s?.toJson()],
+        if (context != null) 'context': {'occurrence': context.occurrence, 'record_id': context.recordId},
       }),
     );
     _checkResponse(response);

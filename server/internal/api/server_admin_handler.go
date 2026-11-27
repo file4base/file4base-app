@@ -1669,6 +1669,8 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 						CalculationFormula: sc.CalculationFormula,
 						ValidationRules:    sc.ValidationRules,
 						MaxRepetitions:     sc.MaxRepetitions,
+						SourceFieldID:      sc.SourceFieldID,
+						SourceType:         sc.SourceType,
 					})
 					if addErr == nil && added != nil {
 						columnsCreated++
@@ -1679,10 +1681,13 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// 2. If a binary solution bundle is embedded, import occurrences, relationships, menu sets, and saved finds
+	// 2. If a binary solution bundle is embedded, import occurrences, relationships, menu sets, saved finds
+	// and the layout and script menus.
+	menusPlaced := false
 	if snap.SolutionBundleB64 != "" {
 		if solBytes, decErr := base64.StdEncoding.DecodeString(snap.SolutionBundleB64); decErr == nil && len(solBytes) > 0 {
-			_, _ = svc.ImportSolution(ctx, solBytes)
+			_, importErr := svc.ImportSolution(ctx, solBytes)
+			menusPlaced = importErr == nil
 		}
 	}
 
@@ -1744,16 +1749,25 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 				})
 			}
 
+			// The solution bundle placed the scripts in the menu's folders, under
+			// ids of their own: the snapshot's folder ids name the backed-up
+			// database's, so they are read only when no bundle placed them.
+			folderOf := func(current *string) *string {
+				if menusPlaced {
+					return current
+				}
+				return sc.FolderID
+			}
 			if existing, ok := curScriptByID[sc.ID]; ok {
-				if _, err := svc.UpdateScript(ctx, existing.ID, sc.Name, sc.ContextTable, sc.FolderID, sc.IsActive, remappedSteps); err == nil {
+				if _, err := svc.UpdateScript(ctx, existing.ID, sc.Name, sc.ContextTable, folderOf(existing.FolderID), sc.IsActive, remappedSteps); err == nil {
 					scriptsRestored++
 				}
 			} else if existing, ok := curScriptByName[sc.Name]; ok {
-				if _, err := svc.UpdateScript(ctx, existing.ID, sc.Name, sc.ContextTable, sc.FolderID, sc.IsActive, remappedSteps); err == nil {
+				if _, err := svc.UpdateScript(ctx, existing.ID, sc.Name, sc.ContextTable, folderOf(existing.FolderID), sc.IsActive, remappedSteps); err == nil {
 					scriptsRestored++
 				}
 			} else {
-				if _, err := svc.CreateScript(ctx, sc.Name, sc.ContextTable, sc.FolderID, sc.IsActive, remappedSteps); err == nil {
+				if _, err := svc.CreateScript(ctx, sc.Name, sc.ContextTable, folderOf(nil), sc.IsActive, remappedSteps); err == nil {
 					scriptsRestored++
 				}
 			}

@@ -3244,14 +3244,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final portals = layout.objects.where((o) => o.type == 'portal').toList();
     final contents = <String, List<LayoutObjectModel>>{
       for (final portal in portals)
-        portal.id: layout.objects
-            .where((o) =>
-                o.type != 'portal' &&
-                portal.contains(o) &&
-                // An object of another panel only overlaps the portal.
-                o.panelControl == portal.panelControl &&
-                o.panelIndex == portal.panelIndex)
-            .toList(),
+        portal.id: layout.objects.where((o) => o.isRowObjectOf(portal)).toList(),
     };
     return (contents, {for (final objects in contents.values) for (final o in objects) o.id});
   }

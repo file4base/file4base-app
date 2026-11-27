@@ -925,7 +925,9 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 					"privilegeSet": privSet,
 				},
 			}
-			acc, items := convertAccountNode(node)
+			// The report does not show what a privilege set grants, so no set
+			// of the user's is taken for a full-access one.
+			acc, items := convertAccountNode(node, nil)
 			for _, it := range items {
 				addReportItem(report, it)
 			}

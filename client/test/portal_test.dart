@@ -2,6 +2,8 @@
 // Browse mode and look at what came out, and at what the client asked the
 // server for.
 
+import 'dart:async';
+
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
 import 'package:file4base_client/features/data_browser/related_records.dart';
@@ -152,22 +154,33 @@ class _RelatedApi extends ApiClient {
   final List<List<String>> evaluatedRecords = [];
   final List<List<ConditionSelf?>?> evaluatedSelves = [];
 
+  /// The layout's record each request evaluated its records in.
+  final List<EvaluationContext?> evaluatedContexts = [];
+
+  /// Holds the answers back while set.
+  Completer<void>? hold;
+
   @override
   Future<Map<String, List<EvaluationModel>?>> evaluateForRecords(String table,
       {required List<String> expressions,
       required List<String> recordIds,
       String? occurrence,
       String resultType = 'Text',
-      List<ConditionSelf?>? self}) async {
+      List<ConditionSelf?>? self,
+      EvaluationContext? context}) async {
     evaluations.add((table, expressions, occurrence));
     evaluatedRecords.add(recordIds);
     evaluatedSelves.add(self);
+    evaluatedContexts.add(context);
+    if (hold case final hold?) await hold.future;
     // `Self = "…"`, as the server answers it: Self is the field given, of
     // the record evaluated, or of its first related record.
     String answer(String id, int i) {
       final wanted = RegExp('"([^"]*)"').firstMatch(expressions[i])?.group(1);
       final s = self == null || i >= self.length ? null : self[i];
       if (expressions[i] == 'Broken') return '?';
+      // True in the second layout record only.
+      if (expressions[i] == 'InSecond') return context?.recordId == 'co-2' ? '1' : '0';
       if (s == null) return id == 'cu-2' ? '1' : '0';
       if (s.text != null) return s.text == wanted ? '1' : '0';
       final record = s.occurrence == 'Customers'
@@ -254,15 +267,17 @@ Future<_RelatedApi> _pump(
   LayoutDefinitionModel? layout,
   List<RelationshipModel> relationships = const [_relationship],
   List<Map<String, dynamic>>? children,
+  List<Map<String, dynamic>>? parents,
 }) async {
   tester.view.physicalSize = const Size(1600, 1000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
 
   final api = _RelatedApi(
-    parents: [
-      {'id': 'co-1', 'company': 'Nordic Vault', 'company_address': '12 Fjordveien'},
-    ],
+    parents: parents ??
+        [
+          {'id': 'co-1', 'company': 'Nordic Vault', 'company_address': '12 Fjordveien'},
+        ],
     children: children ??
         [
           {'id': 'cu-1', 'company': 'Nordic Vault', 'last_name': 'Soto'},
@@ -642,6 +657,8 @@ void main() {
     final (table, expressions, occurrence) = api.evaluations.single;
     expect((table, expressions.single, occurrence), ('customers', 'last_name = "Alvarez"', 'occ-customers'),
         reason: 'the filter is evaluated from the portal occurrence against the related records');
+    expect(api.evaluatedContexts.single, (occurrence: 'occ-companies', recordId: 'co-1'),
+        reason: "in the layout's record, which a field of the layout reads");
   });
 
   testWidgets('a portal several relationships away lists the records along its path', (tester) async {
@@ -736,6 +753,8 @@ void main() {
         {'field': 'last_name'},
       ]);
       expect(api.evaluatedRecords.single.toSet(), {'cu-1', 'cu-2'}, reason: 'each row shown, in one request');
+      expect(api.evaluatedContexts.single, (occurrence: 'occ-companies', recordId: 'co-1'),
+          reason: "each row in the layout's record");
 
       await tester.pump(const Duration(seconds: 1));
       await tester.pumpAndSettle();
@@ -810,6 +829,26 @@ void main() {
       expect([for (final s in api.evaluatedSelves.single!) s?.toJson()], [
         {'field': 'last_name'},
       ]);
+    });
+
+    testWidgets('a row seen in another layout record is hidden until its answer there is in', (tester) async {
+      final api = await _pump(tester, layout: withRowObjects(const [], hideField: 'InSecond'), parents: [
+        {'id': 'co-1', 'company': 'Nordic Vault'},
+        {'id': 'co-2', 'company': 'Nordic Vault'},
+      ]);
+      expect(find.byKey(const ValueKey('portal-cell-cu-1-last_name')), findsOneWidget);
+
+      api.hold = Completer<void>();
+      await tester.tap(find.byWidgetPredicate((w) => w is Tooltip && (w.message ?? '').startsWith('Next record')));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('portal-cell-cu-1-last_name')), findsNothing,
+          reason: "the first record's answer does not hold in the second");
+
+      api.hold!.complete();
+      await tester.pumpAndSettle();
+      expect(api.evaluatedContexts.last?.recordId, 'co-2');
+      expect(find.byKey(const ValueKey('portal-cell-cu-1-last_name')), findsNothing, reason: 'true in the second');
     });
 
     testWidgets('a row object whose hide condition cannot be evaluated is hidden, as in FileMaker', (tester) async {
