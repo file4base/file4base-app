@@ -923,7 +923,11 @@ portal's `occurrence`:
 A field named alone, and one of the portal's occurrence, read the row; one
 of an occurrence reached through the portal's reads the records related to
 the row; one of the layout's occurrence reads the layout's record, and any
-other is related to the layout's record. So a field of the layout is never
+other is related to the layout's record. This is FileMaker's rule for a
+related field in a portal: the portal's record is the start only when the
+path from the layout's occurrence to the field's goes through the portal's,
+so a field of a join between them (layout → join → portal) reads the first
+join record related to the layout's record, on every row. So a field of the layout is never
 read back from the row through the relationship, which in a many-to-many
 relationship reaches another record. An aggregate (`Count`, `Sum`, `List`,
 `Last`, `GetNthRecord`…) of the portal's occurrence itself covers every

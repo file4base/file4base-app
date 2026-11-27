@@ -71,9 +71,14 @@ func TestAPI_EvaluateExternalPortalRowsInTheLayoutsRecord(t *testing.T) {
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 		local := map[string]interface{}{"expression": "1", "record_ids": []string{ids["Ada"]}, "occurrence": p.ext,
 			"context": map[string]string{"occurrence": p.ordersOcc, "record_id": p.orderIDs["north"]}}
-		rec = h.do(http.MethodPost, "/api/v1/data/customers/evaluate", p.owner, local, nil)
-		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-		assert.Contains(t, rec.Body.String(), "Occurrence of Another Solution")
+		// By its id or its name, however spaced: the occurrence is resolved
+		// once, where it is read.
+		for _, named := range []string{p.ext, " Order Customers ", "order customers"} {
+			local["occurrence"] = named
+			rec = h.do(http.MethodPost, "/api/v1/data/customers/evaluate", p.owner, local, nil)
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "%q: %s", named, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "Occurrence of Another Solution", named)
+		}
 	})
 
 	t.Run("without the layout's record", func(t *testing.T) {

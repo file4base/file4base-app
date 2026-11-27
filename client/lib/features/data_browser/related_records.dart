@@ -171,8 +171,10 @@ class RelatedContext {
   /// related field is read from, an occurrence the layout names that is not
   /// one of its table (a default layout names its table's display name) is
   /// the table's own, named like it. Null with no record, and on a layout
-  /// of another solution's table, whose portal rows are evaluated on their
-  /// own.
+  /// of another solution's table: the server reads a layout's record in
+  /// this solution only, so there a portal of this solution's table
+  /// evaluates its rows on their own, and one of another solution's table
+  /// does not evaluate them ([evaluatesRowsOf]).
   EvaluationContext? get rowContext {
     final id = recordId;
     if (id == null || id.isEmpty || fromDatabase != null) return null;
@@ -187,6 +189,16 @@ class RelatedContext {
         own.firstOrNull;
     return occurrence == null ? null : (occurrence: occurrence.id, recordId: id);
   }
+
+  /// Whether the filter and the row conditions of a portal showing
+  /// [target] can be evaluated: not for another solution's records on a
+  /// layout of another solution's table, which would be evaluated in a
+  /// layout's record the server does not read ([rowContext]).
+  bool evaluatesRowsOf(RelatedTarget target) => !(target.isExternal && fromDatabase != null);
+
+  /// Why [evaluatesRowsOf] is false.
+  static const unevaluatedRows =
+      "Portal: its filter and row conditions are not evaluated, since its records and the layout's are of other solutions";
 
   RelatedContext forRecord(String? recordId, {bool batched = false}) => RelatedContext(
         apiClient: apiClient,
@@ -1160,6 +1172,16 @@ class _PortalViewState extends State<PortalView> {
       var rows = page.records;
       _truncated = page.more;
       if (_config.filter.trim().isNotEmpty && rows.isNotEmpty) {
+        if (!widget.related.evaluatesRowsOf(target)) {
+          // Shown, rows the filter would leave out would be shown too.
+          setState(() {
+            _rows = const [];
+            _loading = false;
+            _error = RelatedContext.unevaluatedRows;
+          });
+          _publishRows();
+          return;
+        }
         rows = await _filtered(target, rows, _config.filter.trim());
         if (stale()) return;
       }
@@ -1478,6 +1500,9 @@ class _PortalViewState extends State<PortalView> {
   Set<String> _truthsOn(Map<String, dynamic> row) {
     final rowId = row['id']?.toString() ?? '';
     if (rowId.isEmpty || _rowConditionsList.isEmpty) return const {};
+    // Not evaluated: what has a hide condition is hidden, as in FileMaker
+    // when it cannot be evaluated, and no format applies.
+    if (_target case final target? when !widget.related.evaluatesRowsOf(target)) return _rowHideable;
     final values = Object.hashAllUnordered(row.entries.map((e) => Object.hash(e.key, e.value?.toString())));
     final at = '${_rowContextKey()}|$rowId';
     final key = '$_generation|${widget.related.revision}|$at|$values';
@@ -1679,6 +1704,8 @@ class _PortalViewState extends State<PortalView> {
       body = _message('No record in hand');
     } else if (_problem != null) {
       body = ExternalProblemNotice(problem: _problem!, access: _access);
+    } else if (_error == RelatedContext.unevaluatedRows) {
+      body = relatedNotice(RelatedContext.unevaluatedRows, isDark: widget.isDark);
     } else if (_error != null) {
       body = relatedNotice('Portal: $_error', isDark: widget.isDark);
     } else {
@@ -1718,6 +1745,8 @@ class _PortalViewState extends State<PortalView> {
     // Each row is drawn, and its conditional formats asked for, only once
     // it scrolls into view.
     final children = <Widget>[
+      if (_rowConditionsList.isNotEmpty && !widget.related.evaluatesRowsOf(target))
+        relatedNotice(RelatedContext.unevaluatedRows, isDark: widget.isDark),
       for (final (i, row) in visible.indexed)
         Builder(builder: (_) => _row(target, row, rowHeight, striped: i.isOdd, number: i + 1)),
     ];

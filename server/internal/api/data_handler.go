@@ -328,16 +328,6 @@ func (h *DataHandler) evaluate(w http.ResponseWriter, r *http.Request, svc *data
 	if occurrence != "" {
 		body.Occurrence = occurrence
 	}
-	// On a table's route, its own solution's records only: an occurrence
-	// of another solution's table with the same name is read through its
-	// occurrence's route.
-	if occurrence == "" && body.Context != nil && strings.TrimSpace(body.Occurrence) != "" {
-		if origin, err := svc.OccurrenceOrigin(r.Context(), body.Occurrence); err == nil && origin.External != nil {
-			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Occurrence of Another Solution",
-				"the records of an occurrence of another solution's table are evaluated through /api/v1/occurrences/{occurrence}/records/evaluate")
-			return
-		}
-	}
 	if external && body.Context == nil {
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Context Required",
 			"the records of another solution's table are evaluated in the record of the layout they are shown on: give it as the context")
@@ -364,68 +354,80 @@ func (h *DataHandler) evaluate(w http.ResponseWriter, r *http.Request, svc *data
 			fmt.Sprintf("at most %d records are evaluated in one request", maxEvaluatedRecords))
 		return
 	}
-	evaluate := func(recordID string) ([]map[string]interface{}, error) {
-		evaluations, err := svc.EvaluateExpressionsIn(r.Context(), table, body.Occurrence, recordID, expressions, body.ResultType,
-			data.EvaluationEnv{Variables: body.Variables, Get: body.Get, Values: body.Values, Self: body.Self,
-				Context: body.Context})
-		if err != nil {
-			// A record that is not there, or a table that is not reachable,
-			// is about the request rather than about one expression.
-			return nil, err
-		}
-		results := make([]map[string]interface{}, 0, len(expressions))
-		for i, e := range evaluations {
-			if e.Err != nil {
-				results = append(results, map[string]interface{}{
-					"expression": expressions[i],
-					"error":      strings.TrimPrefix(e.Err.Error(), "invalid expression: "),
-				})
-				continue
-			}
-			result := map[string]interface{}{
-				"expression":     e.Expression,
-				"value":          e.Value,
-				"text":           e.Text,
-				"result_type":    e.ResultType,
-				"fields":         e.Fields,
-				"unknown_fields": e.UnknownFields,
-				"record_id":      e.RecordID,
-			}
-			if len(e.Variables) > 0 {
-				result["variables"] = e.Variables
-			}
-			results = append(results, result)
-		}
-		return results, nil
-	}
-
+	// On a table's route, this solution's tables only: an occurrence of
+	// another solution's table with the same name is read through its
+	// occurrence's route (data.ErrOccurrenceElsewhere).
+	env := data.EvaluationEnv{Variables: body.Variables, Get: body.Get, Values: body.Values, Self: body.Self,
+		Context: body.Context, External: external}
 	if len(body.RecordIDs) > 0 {
+		// Evaluated in one context, resolved once for every record.
+		evaluations, err := svc.EvaluateExpressionsForRecords(r.Context(), table, body.Occurrence, body.RecordIDs,
+			expressions, body.ResultType, env)
+		if err != nil {
+			writeEvaluationError(w, r, err)
+			return
+		}
 		records := make(map[string]interface{}, len(body.RecordIDs))
-		for _, id := range body.RecordIDs {
-			results, err := evaluate(id)
-			if errors.Is(err, data.ErrRecordNotFound) {
+		for i, id := range body.RecordIDs {
+			if evaluations[i] == nil {
 				// A record deleted since the list was read answers nothing.
 				records[id] = nil
 				continue
 			}
-			if err != nil {
-				writeDataError(w, r, http.StatusBadRequest, "Evaluation Error", err)
-				return
-			}
-			records[id] = results
+			records[id] = evaluationResults(expressions, evaluations[i])
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"records": records})
 		return
 	}
-	results, err := evaluate(body.RecordID)
+	// A record that is not there, or a table that is not reachable, is
+	// about the request rather than about one expression.
+	evaluations, err := svc.EvaluateExpressionsIn(r.Context(), table, body.Occurrence, body.RecordID, expressions, body.ResultType, env)
 	if err != nil {
-		writeDataError(w, r, http.StatusBadRequest, "Evaluation Error", err)
+		writeEvaluationError(w, r, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"results": results})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"results": evaluationResults(expressions, evaluations)})
+}
+
+// evaluationResults is the answer to each expression evaluated on a record.
+func evaluationResults(expressions []string, evaluations []data.ExpressionResult) []map[string]interface{} {
+	results := make([]map[string]interface{}, 0, len(expressions))
+	for i, e := range evaluations {
+		if e.Err != nil {
+			results = append(results, map[string]interface{}{
+				"expression": expressions[i],
+				"error":      strings.TrimPrefix(e.Err.Error(), "invalid expression: "),
+			})
+			continue
+		}
+		result := map[string]interface{}{
+			"expression":     e.Expression,
+			"value":          e.Value,
+			"text":           e.Text,
+			"result_type":    e.ResultType,
+			"fields":         e.Fields,
+			"unknown_fields": e.UnknownFields,
+			"record_id":      e.RecordID,
+		}
+		if len(e.Variables) > 0 {
+			result["variables"] = e.Variables
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
+// writeEvaluationError answers an evaluation the request itself stops.
+func writeEvaluationError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, data.ErrOccurrenceElsewhere) {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Occurrence of Another Solution",
+			"the records of an occurrence of another solution's table are evaluated through /api/v1/occurrences/{occurrence}/records/evaluate")
+		return
+	}
+	writeDataError(w, r, http.StatusBadRequest, "Evaluation Error", err)
 }
 
 // maxWatchedExpressions bounds one request, since each one reads the record

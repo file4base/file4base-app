@@ -103,6 +103,59 @@ void main() {
   );
 
   test(
+    "another solution's rows on another solution's layout are not evaluated",
+    () {
+      const relationship = RelationshipModel(
+        id: 'rel-1',
+        name: 'companies_customers',
+        leftOccurrenceId: 'occ-companies',
+        leftColumnId: 'cc1',
+        rightOccurrenceId: 'occ-customers',
+        rightColumnId: 'uc1',
+      );
+      const local = RelatedTarget(
+        relationship: relationship,
+        occurrence: TableOccurrenceModel(
+          id: 'occ-customers',
+          baseTableId: 't-customers',
+          name: 'Customers',
+          xPos: 0,
+          yPos: 0,
+        ),
+        table: _customers,
+      );
+      const external = RelatedTarget(
+        relationship: relationship,
+        occurrence: TableOccurrenceModel(
+          id: 'occ-remote',
+          baseTableId: '',
+          name: 'Remote Customers',
+          xPos: 0,
+          yPos: 0,
+          external: ExternalOccurrenceModel(
+            fileReferenceId: 'ref-1',
+            fileReference: 'Peer',
+            table: 'customers',
+            database: 'peer',
+          ),
+        ),
+        table: _customers,
+      );
+      expect(_related().evaluatesRowsOf(external), isTrue);
+      expect(
+        _related(fromDatabase: 'peer').evaluatesRowsOf(local),
+        isTrue,
+        reason: 'evaluated on their own, through their occurrence',
+      );
+      expect(
+        _related(fromDatabase: 'peer').evaluatesRowsOf(external),
+        isFalse,
+        reason: "no layout's record to evaluate them in: skipped, not refused",
+      );
+    },
+  );
+
+  test(
     "the context is sent, and an occurrence's rows go through its records route",
     () async {
       final requests = <http.Request>[];

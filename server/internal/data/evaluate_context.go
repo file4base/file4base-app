@@ -16,6 +16,11 @@ import (
 // to be evaluated in is not there.
 var ErrContextNotFound = errors.New("the record of the layout is not found")
 
+// ErrOccurrenceElsewhere is returned when the records to evaluate are of an
+// occurrence of another solution's table but were not asked for through
+// that occurrence (the table's route reads this solution's tables only).
+var ErrOccurrenceElsewhere = errors.New("an occurrence of another solution's table")
+
 // evaluatedRecord is the record expressions are evaluated against, and
 // where their related reads start.
 type evaluatedRecord struct {
@@ -43,30 +48,50 @@ type pinnedRecord struct {
 	row        map[string]interface{}
 }
 
-// evaluated reads the record recordID of tableName, seen from occurrence,
-// that expressions are evaluated against (none when recordID is empty).
-// With a context, occurrence is the one of a portal on a layout, which may
-// be an occurrence of another solution's table: the record is then read
-// there, as the account the caller's session group holds there, and the
-// layout's record is read here, as the caller. Each is read only when its
-// table may be read.
-func (r *relatedReader) evaluated(
-	ctx context.Context, tableName, occurrence, recordID string, in *ContextRecord,
-) (*evaluatedRecord, error) {
-	at := &evaluatedRecord{table: tableName, row: map[string]interface{}{}}
+// evaluationScope is what the records of one request are evaluated in,
+// resolved once for them all: their table and where it is read, and, with
+// a context, the layout's record and the portal's occurrence each row is
+// the current record of.
+type evaluationScope struct {
+	table    string
+	database string
+	fields   fieldSet
+	describe func(*calc.Container)
+	// rows reads the records: this reader, or the one of the solution an
+	// occurrence of another solution's table is in.
+	rows *relatedReader
+	// portal wraps an error met reading a record there.
+	portal occurrence
+	// from is where a reference to a related field starts: the record
+	// itself, seen from occurrence (own); or the layout's record, the row
+	// then pinned to pinOccurrence.
+	own        bool
+	occurrence string
+	from       struct {
+		table, occurrence string
+		row               map[string]interface{}
+	}
+	pinOccurrence string
+}
+
+// evaluationScope resolves what the records of tableName, seen from occurrence, are
+// evaluated in. With a context, occurrence is the one of a portal on a
+// layout, which may be an occurrence of another solution's table: the
+// records are then read there, as the account the caller's session group
+// holds there, and the layout's record is read here, as the caller. Each
+// is read only when its table may be read. external says the caller asks
+// for an occurrence of another solution's table, and the occurrence must
+// be one; and one of this solution's tables when it does not.
+func (r *relatedReader) evaluationScope(
+	ctx context.Context, tableName, occurrence string, in *ContextRecord, external bool,
+) (*evaluationScope, error) {
 	if in == nil {
 		fields, err := r.s.tableFields(ctx, tableName)
 		if err != nil {
 			return nil, err
 		}
-		if recordID != "" {
-			if at.row, err = r.s.GetRow(ctx, tableName, recordID); err != nil {
-				return nil, err
-			}
-		}
-		at.fields, at.describe = fields, r.s.describeContainer(ctx)
-		at.from.table, at.from.occurrence, at.from.row = tableName, occurrence, at.row
-		return at, nil
+		return &evaluationScope{table: tableName, fields: fields, describe: r.s.describeContainer(ctx), rows: r,
+			own: true, occurrence: occurrence}, nil
 	}
 
 	graph, err := r.occurrenceGraph(ctx)
@@ -92,6 +117,14 @@ func (r *relatedReader) evaluated(
 	if portal.table != tableName {
 		return nil, fmt.Errorf("%w: %s is not an occurrence of the table %s", ErrOccurrenceNotFound, portal.name, tableName)
 	}
+	// The occurrence is resolved here only, so what is asked and what is
+	// read are the same one.
+	if (portal.external != nil) != external {
+		if portal.external != nil {
+			return nil, fmt.Errorf("%w: %s", ErrOccurrenceElsewhere, portal.name)
+		}
+		return nil, fmt.Errorf("%w: %s is an occurrence of this solution's table %s", ErrOccurrenceNotFound, portal.name, tableName)
+	}
 
 	// The layout's record, as the caller.
 	if err := r.checkRead(ctx, layout.table); err != nil {
@@ -101,11 +134,12 @@ func (r *relatedReader) evaluated(
 	// read through one of its relationships): the row is the current
 	// record of that occurrence, its fields read as its own.
 	if portal.id == layout.id {
-		return r.evaluated(ctx, tableName, portal.id, recordID, nil)
+		return r.evaluationScope(ctx, tableName, portal.id, nil, false)
 	}
-	at.from.table, at.from.occurrence, at.from.row = layout.table, layout.id, map[string]interface{}{}
+	sc := &evaluationScope{table: tableName, portal: portal, pinOccurrence: portal.id, rows: r}
+	sc.from.table, sc.from.occurrence, sc.from.row = layout.table, layout.id, map[string]interface{}{}
 	if strings.TrimSpace(in.RecordID) != "" {
-		if at.from.row, err = r.s.GetRow(ctx, layout.table, in.RecordID); errors.Is(err, ErrRecordNotFound) {
+		if sc.from.row, err = r.s.GetRow(ctx, layout.table, in.RecordID); errors.Is(err, ErrRecordNotFound) {
 			// Not a row gone, which answers nothing: the request's.
 			return nil, fmt.Errorf("%w: %s", ErrContextNotFound, in.RecordID)
 		} else if err != nil {
@@ -113,26 +147,39 @@ func (r *relatedReader) evaluated(
 		}
 	}
 
-	// The row, where its records are.
-	rows := r
+	// The rows, where their records are.
 	if portal.external != nil {
-		if rows, err = r.open(ctx, *portal.external); err != nil {
+		if sc.rows, err = r.open(ctx, *portal.external); err != nil {
 			return nil, err
 		}
-		at.database = portal.external.Database
+		sc.database = portal.external.Database
 	} else if err := r.checkRead(ctx, tableName); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrNoPermission, err)
 	}
-	if at.fields, err = rows.tableFields(ctx, tableName); err != nil {
+	if sc.fields, err = sc.rows.tableFields(ctx, tableName); err != nil {
 		return nil, wrapExternal(portal, err)
 	}
+	sc.describe = sc.rows.s.describeContainer(ctx)
+	return sc, nil
+}
+
+// at reads the record recordID expressions are evaluated against (none
+// when recordID is empty).
+func (sc *evaluationScope) at(ctx context.Context, recordID string) (*evaluatedRecord, error) {
+	at := &evaluatedRecord{table: sc.table, database: sc.database, fields: sc.fields, describe: sc.describe,
+		row: map[string]interface{}{}}
 	if recordID != "" {
-		if at.row, err = rows.s.GetRow(ctx, tableName, recordID); err != nil {
-			return nil, wrapExternal(portal, err)
+		var err error
+		if at.row, err = sc.rows.s.GetRow(ctx, sc.table, recordID); err != nil {
+			return nil, wrapExternal(sc.portal, err)
 		}
 	}
-	at.describe = rows.s.describeContainer(ctx)
-	at.pin = &pinnedRecord{occurrence: portal.id, row: at.row}
+	if sc.own {
+		at.from.table, at.from.occurrence, at.from.row = sc.table, sc.occurrence, at.row
+		return at, nil
+	}
+	at.from = sc.from
+	at.pin = &pinnedRecord{occurrence: sc.pinOccurrence, row: at.row}
 	return at, nil
 }
 

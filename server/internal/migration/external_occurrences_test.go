@@ -486,3 +486,34 @@ func TestNativeLayoutExternalPortalKeepsItsFilter(t *testing.T) {
 		t.Fatalf("portal: %v", config)
 	}
 }
+
+// A nameless reference is found wherever it is, past references that name
+// their field, even after a chunk whose reference the text does not show
+// without its field: only a replacement moves on through the text.
+func TestMarkNamelessFieldReferencesFindsEachOne(t *testing.T) {
+	ref := func(id, occurrence string) string {
+		return `<Chunk type="FieldRef"><FieldReference id="` + id + `" name=""><TableOccurrenceReference id="9" name="` +
+			occurrence + `"/></FieldReference></Chunk>`
+	}
+	for _, c := range []struct{ name, text, chunks, want string }{
+		{"past a named reference", `Lines::Qty + Lines::<Field Missing>`, ref("4", "Lines"),
+			`Lines::Qty + Lines::${` + namelessField("4") + `}`},
+		{"after a chunk the text names", `Lines::<Field Missing> & Notes::Text`, ref("5", "Notes") + ref("4", "Lines"),
+			`Lines::${` + namelessField("4") + `} & Notes::Text`},
+		{"each in turn", `Lines:: & Notes::<Field Missing>`, ref("4", "Lines") + ref("5", "Notes"),
+			`Lines::${` + namelessField("4") + `} & Notes::${` + namelessField("5") + `}`},
+	} {
+		root, err := parseXMLTree([]byte(`<Calculation><Text><![CDATA[` + c.text + `]]></Text><ChunkList>` + c.chunks +
+			`</ChunkList></Calculation>`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		node := root
+		if node.Name != "Calculation" {
+			node = findFirstChild(root, "Calculation")
+		}
+		if got := markNamelessFieldReferences(node, calculationText(node)); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}

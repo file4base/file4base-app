@@ -255,14 +255,16 @@ func markNamelessFieldReferences(calcNode *xmlNode, text string) string {
 		occurrence := firstAttr(to, "name", "Name")
 		prefix := occurrence + "::"
 		// The next reference to the occurrence that names no field: one
-		// that names it is a field the chunks name.
+		// that names it is a field the chunks name. Only a replacement
+		// moves the cursor, so a reference this chunk does not find is
+		// still there for the next.
 		begin, end := -1, 0
-		for begin < 0 {
-			at := strings.Index(text[cursor:], prefix)
+		for from := cursor; begin < 0; {
+			at := strings.Index(text[from:], prefix)
 			if at < 0 {
 				break
 			}
-			start := cursor + at + len(prefix)
+			start := from + at + len(prefix)
 			if strings.HasPrefix(text[start:], "<") {
 				begin, end = start-len(prefix), start
 				if close := strings.IndexByte(text[start:], '>'); close > 0 {
@@ -271,7 +273,7 @@ func markNamelessFieldReferences(calcNode *xmlNode, text string) string {
 			} else if r := []rune(text[start:]); len(r) == 0 || !(unicode.IsLetter(r[0]) || unicode.IsDigit(r[0]) || r[0] == '_' || r[0] == '$') {
 				begin, end = start-len(prefix), start
 			}
-			cursor = start
+			from = start
 		}
 		if begin < 0 {
 			continue

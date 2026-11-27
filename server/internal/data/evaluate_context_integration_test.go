@@ -93,6 +93,32 @@ func TestEvaluateExpressions_PortalRowInTheLayoutsRecord(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"p2", "p2"}, texts(t, got))
 
+	// Asked for as another solution's occurrence: this one is not.
+	external := env
+	external.External = true
+	_, err = svc.EvaluateExpressionsIn(ctx, "players", playersOcc, p1, expressions, "Text", external)
+	assert.True(t, errors.Is(err, data.ErrOccurrenceNotFound), "%v", err)
+
+	// The rows of one request share their context: the layout's record and
+	// its table's access are read once, whatever the number of rows; a row
+	// gone answers nothing.
+	asked := map[string]int{}
+	counting := data.NewService(a.driver).WithReadAccess(func(_ context.Context, table string) (bool, error) {
+		asked[table]++
+		return true, nil
+	})
+	batch, err := counting.EvaluateExpressionsForRecords(ctx, "players", playersOcc, []string{p1, "gone", p2}, expressions, "Text", env)
+	require.NoError(t, err)
+	require.Len(t, batch, 3)
+	assert.Equal(t, "p1/p1", texts(t, batch[0])[1])
+	assert.Nil(t, batch[1])
+	assert.Equal(t, "p2/p2", texts(t, batch[2])[1])
+	assert.Equal(t, 1, asked["teams"], "the layout's table, for every row: %v", asked)
+	assert.Equal(t, 1, asked["players"], "the rows' table: %v", asked)
+	_, err = counting.EvaluateExpressionsForRecords(ctx, "players", playersOcc, []string{p1},
+		expressions, "Text", data.EvaluationEnv{Context: &data.ContextRecord{Occurrence: teamsOcc, RecordID: "no-such-record"}})
+	assert.True(t, errors.Is(err, data.ErrContextNotFound), "a layout record gone is the request's: %v", err)
+
 	// Without it, the layout's field is read back from the row through the
 	// relationship: the first team of the city, not the layout's.
 	got, err = svc.EvaluateExpressions(ctx, "players", playersOcc, p1, []string{`teams::name`}, "Text")
@@ -157,10 +183,19 @@ func TestEvaluateExpressions_ExternalPortalRowInTheLayoutsRecord(t *testing.T) {
 
 	expressions := []string{`teams::name`, `name & "/" & remote_players::name`, `Count ( remote_players::name )`, `Self`}
 	self := []*data.SelfField{nil, nil, nil, {Field: "rating"}}
-	env := data.EvaluationEnv{Self: self, Context: &data.ContextRecord{Occurrence: teamsOcc, RecordID: second}}
+	env := data.EvaluationEnv{Self: self, Context: &data.ContextRecord{Occurrence: teamsOcc, RecordID: second}, External: true}
 	got, err := teams.EvaluateExpressionsIn(ctx, "players", remote, p1, expressions, "Text", env)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"second team", "p1/p1", "2", "5"}, texts(t, got))
+
+	// Asked for as this solution's table, as the table's route does, even
+	// named otherwise than in the graph: refused, never read.
+	for _, named := range []string{remote, " Remote_Players "} {
+		local := env
+		local.External = false
+		_, err = teams.EvaluateExpressionsIn(ctx, "players", named, p1, expressions, "Text", local)
+		assert.True(t, errors.Is(err, data.ErrOccurrenceElsewhere), "%q: %v", named, err)
+	}
 
 	// The account there may not read the table: the row is not read.
 	denied := data.NewService(b.driver).WithReadAccess(func(_ context.Context, table string) (bool, error) {
