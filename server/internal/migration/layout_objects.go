@@ -20,7 +20,9 @@ import (
 // FileMaker writes each part of a layout with its height (<Definition
 // size>), its own style and the objects drawn in it, and each object with
 // its <Bounds> in layout coordinates: the top of the layout is 0 and the
-// parts follow each other down. File4Base places objects the same way (a
+// parts follow each other down. An object inside a portal, a panel, a
+// group, a grouped button, a button bar or a popover's panel is written
+// from that container's top-left corner, and placed here on the layout. File4Base places objects the same way (a
 // part is the band its objects' tops fall in), so a part keeps its height
 // and an object its box, and the layout reads as it did.
 //
@@ -58,6 +60,11 @@ type layoutObjectContext struct {
 
 	counts map[string]*LayoutObjectCount
 	media  map[string]map[string]interface{}
+
+	// nestedAbsolute: the file writes the bounds of objects inside a
+	// container in layout coordinates, not from the container's corner
+	// (see nestedInLayoutCoordinates).
+	nestedAbsolute bool
 }
 
 func newLayoutObjectContext(root *xmlNode, bundle *schema.SolutionBundle, binding formulaBinding, dateOrder string) *layoutObjectContext {
@@ -110,7 +117,61 @@ func newLayoutObjectContext(root *xmlNode, bundle *schema.SolutionBundle, bindin
 	if ctx.defaultTheme == nil && len(ctx.themes) == 1 {
 		ctx.defaultTheme = only
 	}
+	ctx.nestedAbsolute = nestedInLayoutCoordinates(root)
 	return ctx
+}
+
+// nestedInLayoutCoordinates tells how a file writes the bounds of the
+// objects inside a container: a portal, a tab or slide control and its
+// panels, a group, a grouped button, a button bar or a popover's panel.
+// FileMaker's Save as XML writes them from the top-left corner of the
+// container they are in, so a portal's row objects sit in its first row
+// whatever the portal's place on the layout. An XML written by another
+// tool may give them in layout coordinates, as FileMaker gives the
+// containers on the layout. The file is taken to use layout coordinates
+// only when more of its nested objects lie within their container read
+// that way than read from the container's corner. A popover's panel is
+// the exception: FileMaker places it on the layout, wherever its button
+// is.
+func nestedInLayoutCoordinates(root *xmlNode) bool {
+	box := func(n *xmlNode) (b [4]float64, ok bool) {
+		bn := findFirstChild(n, "Bounds")
+		if bn == nil {
+			return b, false
+		}
+		for i, k := range []string{"top", "left", "bottom", "right"} {
+			b[i], _ = strconv.ParseFloat(firstAttr(bn, k), 64)
+		}
+		return b, true
+	}
+	within := func(b, c [4]float64) bool {
+		const slack = 1 // FileMaker rounds bounds to fractions of a point
+		return b[0] >= c[0]-slack && b[1] >= c[1]-slack && b[2] <= c[2]+slack && b[3] <= c[3]+slack
+	}
+	layoutOnly, cornerOnly := 0, 0
+	var walk func(n *xmlNode, container *[4]float64)
+	walk = func(n *xmlNode, container *[4]float64) {
+		for _, c := range n.Children {
+			b, ok := box(c)
+			if c.Name != "LayoutObject" || !ok {
+				walk(c, container)
+				continue
+			}
+			if container != nil && firstAttr(c, "type") != "PopoverPanel" {
+				asWritten := within(b, *container)
+				fromCorner := within(b, [4]float64{0, 0, container[2] - container[0], container[3] - container[1]})
+				switch {
+				case asWritten && !fromCorner:
+					layoutOnly++
+				case fromCorner && !asWritten:
+					cornerOnly++
+				}
+			}
+			walk(c, &b)
+		}
+	}
+	walk(root, nil)
+	return layoutOnly > cornerOnly
 }
 
 // isNativeLayout reports whether a layout is written the <FMSaveAsXML> way,
@@ -208,6 +269,7 @@ type nativeLayout struct {
 	formatsOff     int             // conditional formats switched off in FileMaker, left out
 	popovers       map[string]bool // ids of the popover buttons, whose panels open over the layout
 	inPortal       bool            // converting a portal's row objects
+	origin         [2]float64      // layout coordinates (x, y) the bounds being read are written from
 	vectorImage    int
 	mergeKept      int
 }
@@ -410,7 +472,7 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 		// sit.
 		if g := findFirstChild(obj, "GroupedButton"); g != nil {
 			if list := findFirstChild(g, "ObjectList"); list != nil {
-				l.convertList(list)
+				l.inside(obj, func() { l.convertList(list) })
 			}
 		}
 		l.ctx.count(kind).Migrated++
@@ -817,7 +879,7 @@ func (l *nativeLayout) panelControl(obj *xmlNode, kind string) {
 		start := len(l.objects)
 		if inner != nil {
 			if objects := findFirstChild(inner, "ObjectList"); objects != nil {
-				l.convertList(objects)
+				l.inside(obj, func() { l.inside(p, func() { l.convertList(objects) }) })
 			}
 		}
 		for _, o := range l.objects[start:] {
@@ -840,7 +902,7 @@ func (l *nativeLayout) baseObject(obj *xmlNode) map[string]interface{} {
 	num := func(k string) float64 { f, _ := strconv.ParseFloat(firstAttr(b, k), 64); return f }
 	top, left, bottom, right := num("top"), num("left"), num("bottom"), num("right")
 	out := map[string]interface{}{
-		"x": left, "y": top,
+		"x": l.origin[0] + left, "y": l.origin[1] + top,
 		"width": math.Max(0, right-left), "height": math.Max(0, bottom-top),
 	}
 	if name := firstAttr(obj, "name"); name != "" {
@@ -867,6 +929,20 @@ func (l *nativeLayout) baseObject(obj *xmlNode) map[string]interface{} {
 		}
 	}
 	return out
+}
+
+// inside converts the objects of a container with their bounds read from
+// its top-left corner, as FileMaker writes them (see
+// nestedInLayoutCoordinates).
+func (l *nativeLayout) inside(container *xmlNode, convert func()) {
+	outer := l.origin
+	if b := findFirstChild(container, "Bounds"); b != nil && !l.ctx.nestedAbsolute {
+		top, _ := strconv.ParseFloat(firstAttr(b, "top"), 64)
+		left, _ := strconv.ParseFloat(firstAttr(b, "left"), 64)
+		l.origin = [2]float64{outer[0] + left, outer[1] + top}
+	}
+	convert()
+	l.origin = outer
 }
 
 // bindFormula binds a calculation of the layout to the imported names.
@@ -1786,16 +1862,32 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 	if list := findFirstChild(p, "ObjectList"); list != nil {
 		outer, first := l.inPortal, len(l.objects)
 		l.inPortal = true
-		l.convertList(list)
+		l.inside(obj, func() { l.convertList(list) })
 		l.inPortal = outer
 		// The portal's row objects say they are its, as FileMaker nests
-		// them in it: their bounds alone do not tell.
+		// them in it: their bounds alone do not tell. FileMaker draws them
+		// within the portal, so one jutting out of it, often by a fraction
+		// of a point at its border, is drawn to the portal's edge.
 		for _, o := range l.objects[first:] {
 			if _, ok := o["portal"]; !ok {
 				o["portal"] = base["id"]
+				clipToBox(o, base)
 			}
 		}
 	}
+}
+
+// clipToBox trims the box of o to the part of it within box, when they
+// overlap.
+func clipToBox(o, box map[string]interface{}) {
+	num := func(m map[string]interface{}, k string) float64 { f, _ := m[k].(float64); return f }
+	left, top := math.Max(num(o, "x"), num(box, "x")), math.Max(num(o, "y"), num(box, "y"))
+	right := math.Min(num(o, "x")+num(o, "width"), num(box, "x")+num(box, "width"))
+	bottom := math.Min(num(o, "y")+num(o, "height"), num(box, "y")+num(box, "height"))
+	if right <= left || bottom <= top {
+		return
+	}
+	o["x"], o["y"], o["width"], o["height"] = left, top, right-left, bottom-top
 }
 
 // popover converts a popover button: the button, then its panel's
@@ -1832,6 +1924,10 @@ func (l *nativeLayout) popover(obj *xmlNode) {
 		return
 	}
 	start := len(l.objects)
+	// The panel is placed on the layout, its objects from its corner.
+	outer := l.origin
+	l.origin = [2]float64{}
+	defer func() { l.origin = outer }()
 	if back := l.baseObject(panel); back != nil {
 		back["type"] = "rect"
 		style := l.style(panel, []string{"popover"}, false)
@@ -1848,7 +1944,7 @@ func (l *nativeLayout) popover(obj *xmlNode) {
 		l.ctx.count("PopoverPanel").Migrated++
 	}
 	if list := findFirstChild(panel, "ObjectList"); list != nil {
-		l.convertList(list)
+		l.inside(panel, func() { l.convertList(list) })
 	}
 	for _, o := range l.objects[start:] {
 		if _, nested := o["panel"]; !nested {
@@ -1865,7 +1961,7 @@ func (l *nativeLayout) groupedButton(obj *xmlNode) {
 		return
 	}
 	if list := findFirstChild(g, "ObjectList"); list != nil {
-		l.convertList(list)
+		l.inside(obj, func() { l.convertList(list) })
 	}
 	base := l.baseObject(obj)
 	if base == nil {
@@ -1890,26 +1986,28 @@ func (l *nativeLayout) buttonBar(obj *xmlNode) {
 	if list == nil {
 		return
 	}
-	for _, seg := range list.Children {
-		if seg.Name != "LayoutObject" {
-			continue
+	l.inside(obj, func() {
+		for _, seg := range list.Children {
+			if seg.Name != "LayoutObject" {
+				continue
+			}
+			if firstAttr(seg, "type") == "Popover Button" {
+				l.popover(seg) // a segment opening a popover
+				continue
+			}
+			base := l.baseObject(seg)
+			if base == nil {
+				continue
+			}
+			if l.button(seg, findFirstChild(seg, "Button"), base) {
+				base["id"] = l.objectID(seg)
+				l.conditionalFormats(seg, base)
+				l.textHideSelf(seg, base)
+				l.objects = append(l.objects, base)
+				l.ctx.count("Button").Migrated++
+			}
 		}
-		if firstAttr(seg, "type") == "Popover Button" {
-			l.popover(seg) // a segment opening a popover
-			continue
-		}
-		base := l.baseObject(seg)
-		if base == nil {
-			continue
-		}
-		if l.button(seg, findFirstChild(seg, "Button"), base) {
-			base["id"] = l.objectID(seg)
-			l.conditionalFormats(seg, base)
-			l.textHideSelf(seg, base)
-			l.objects = append(l.objects, base)
-			l.ctx.count("Button").Migrated++
-		}
-	}
+	})
 	l.ctx.count("Button Bar").Migrated++
 }
 

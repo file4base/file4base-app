@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -286,4 +287,78 @@ func TestAPI_MigrationGrantsFMRestOnlyToRolesItFills(t *testing.T) {
 	assert.Contains(t, manual[0].Detail, "already had accounts")
 	assert.Equal(t, "Clerks", manual[0].SourceName)
 	assert.Equal(t, len(report.Translated), report.Counts.TranslatedCount)
+}
+
+// A layout migrated before objects inside containers were placed from them
+// is repaired by migrating the file again into the same database: the
+// migrated layout is replaced, not duplicated.
+func TestAPI_MigratingAgainReplacesMisplacedNestedObjects(t *testing.T) {
+	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
+	dbName := uniqueDB("f4b_mig_nest")
+	h.createDatabase(dbName, "alice", "alice-secret")
+	ownerTok := h.login(dbName, "alice", "alice-secret")
+
+	// As FileMaker's Save as XML writes it: the group's member from the
+	// group's corner.
+	design := `<?xml version="1.0" encoding="UTF-8"?>
+<FMSaveAsXML Has_DDR_INFO="True"><File name="Notes.fmp12">
+  <BaseTableCatalog><BaseTable id="1" name="Notes"/></BaseTableCatalog>
+  <FieldsForTables><FieldCatalog><BaseTableSourceReference id="1" name="Notes"/>
+    <Field id="1" name="Body" datatype="text" fieldtype="normal"/></FieldCatalog></FieldsForTables>
+  <RelationshipGraph><TableList><Table id="1" name="Notes" baseTable="Notes" baseTableId="1"/></TableList><RelationshipList/></RelationshipGraph>
+  <LayoutCatalog><Layout id="1" name="Note" width="400">
+    <TableOccurrenceReference id="1" name="Notes"/>
+    <PartsList><Part type="Body"><Definition type="Body" kind="4" size="300" absolute="0"/><ObjectList>
+      <LayoutObject type="Group"><UUID>00000000-0000-0000-0000-000000000001</UUID><Bounds top="100" left="50" bottom="140" right="250"/>
+        <GroupedButton><ObjectList>
+          <LayoutObject type="Text" name="caption"><UUID>00000000-0000-0000-0000-000000000002</UUID><Bounds top="5" left="5" bottom="25" right="105"/>
+            <Text><StyledText><Data><![CDATA[Caption]]></Data></StyledText></Text>
+          </LayoutObject>
+        </ObjectList></GroupedButton>
+      </LayoutObject>
+    </ObjectList></Part></PartsList>
+    <UUID>00000000-0000-0000-0000-0000000000ff</UUID>
+  </Layout></LayoutCatalog>
+</File></FMSaveAsXML>`
+	migrate := func() {
+		rec := h.do(http.MethodPost, "/api/v1/solutions/migrate/apply", ownerTok, map[string]interface{}{"design_xml": design}, nil)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	}
+	caption := func() (schema.LayoutMetadata, map[string]interface{}, map[string]interface{}) {
+		var found []schema.LayoutMetadata
+		for _, l := range h.observeLayouts(ownerTok) {
+			if l.Name == "Note" {
+				found = append(found, l)
+			}
+		}
+		require.Len(t, found, 1)
+		var def map[string]interface{}
+		require.NoError(t, json.Unmarshal(found[0].Definition, &def))
+		for _, o := range def["objects"].([]interface{}) {
+			if m := o.(map[string]interface{}); m["name"] == "caption" {
+				return found[0], def, m
+			}
+		}
+		t.Fatalf("no caption: %s", found[0].Definition)
+		return schema.LayoutMetadata{}, nil, nil
+	}
+
+	migrate()
+	_, _, o := caption()
+	assert.Equal(t, []interface{}{55.0, 105.0}, []interface{}{o["x"], o["y"]})
+
+	// Where an earlier migration put it, at the corner of the layout.
+	layout, def, o := caption()
+	o["x"], o["y"] = 5.0, 5.0
+	raw, err := json.Marshal(def)
+	require.NoError(t, err)
+	rec := h.do(http.MethodPut, "/api/v1/layouts/"+layout.ID, ownerTok, map[string]interface{}{"name": layout.Name, "definition": json.RawMessage(raw)}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	_, _, o = caption()
+	require.Equal(t, []interface{}{5.0, 5.0}, []interface{}{o["x"], o["y"]})
+
+	migrate()
+	again, _, o := caption()
+	assert.Equal(t, layout.ID, again.ID)
+	assert.Equal(t, []interface{}{55.0, 105.0}, []interface{}{o["x"], o["y"]})
 }

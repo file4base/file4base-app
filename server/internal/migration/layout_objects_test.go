@@ -17,9 +17,11 @@ import (
 )
 
 // layoutObjectsFixture is a handwritten <FMSaveAsXML> layout in the shape
-// FileMaker writes one: parts with their size, objects with their bounds in
-// layout coordinates, a theme with CSS, a library picture and the usual
-// nesting of groups and tab panels. The names are invented.
+// FileMaker writes one: parts with their size, a theme with CSS, a library
+// picture and the usual nesting of groups and tab panels. Its objects,
+// nested ones too, have their bounds in layout coordinates, as some tools
+// write them; nestedRelativeBody is written as FileMaker does. The names
+// are invented.
 const layoutObjectsFixture = `<?xml version="1.0" encoding="UTF-8"?>
 <FMSaveAsXML Has_DDR_INFO="True">
   <File name="Recipes.fmp12">
@@ -1496,5 +1498,172 @@ func TestNativeLayoutEditBoxKeepsItsValueListAndConcealment(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no edit box at 220,200")
+	}
+}
+
+// nestedRelativeBody is the body of a layout as FileMaker's Save as XML
+// writes it: an object inside a portal, a tab panel, a group, a grouped
+// button, a button bar or a popover's panel has its bounds from the
+// container's top-left corner, a popover's panel its own on the layout.
+// The objects are invented.
+const nestedRelativeBody = `<ObjectList>
+              <LayoutObject type="Portal" name="rows"><UUID>00000000-0000-0000-0000-0000000000a1</UUID><Bounds top="70" left="20" bottom="170" right="320"/>
+                <Portal><TableOccurrenceReference id="2" name="Ingredients"/><Options index="1" show="4"/>
+                  <ObjectList>
+                    <LayoutObject type="Edit Box" name="qty"><UUID>00000000-0000-0000-0000-0000000000a2</UUID><Bounds top="2" left="4" bottom="22" right="104"/>
+                      <Field><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference><Display Style="0" show="1"/></Field>
+                    </LayoutObject>
+                    <LayoutObject type="Text" name="edge"><UUID>00000000-0000-0000-0000-0000000000a3</UUID><Bounds top="-0.5" left="110" bottom="20" right="200"/>
+                      <Text><StyledText><Data><![CDATA[Edge]]></Data></StyledText></Text>
+                    </LayoutObject>
+                    <LayoutObject type="Grouped Button" name="rowbutton"><UUID>00000000-0000-0000-0000-0000000000a4</UUID><Bounds top="2" left="210" bottom="22" right="290"/>
+                      <GroupedButton><ObjectList>
+                        <LayoutObject type="Text" name="rowlabel"><UUID>00000000-0000-0000-0000-0000000000a5</UUID><Bounds top="2" left="2" bottom="18" right="78"/>
+                          <Text><StyledText><Data><![CDATA[Open]]></Data></StyledText></Text>
+                        </LayoutObject>
+                      </ObjectList>
+                      <action><Step enable="True" id="16" name="Go to Record/Request/Page"><Options>0</Options></Step></action></GroupedButton>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>
+              <LayoutObject type="Tab Control" name="tabs"><UUID>00000000-0000-0000-0000-0000000000b1</UUID><Bounds top="130" left="340" bottom="250" right="590"/>
+                <TabControl default="0"><ObjectList>
+                  <LayoutObject type="Panel"><Bounds top="0" left="0" bottom="120" right="250"/>
+                    <TabPanel><Calculation><Text><![CDATA["One"]]></Text></Calculation><ObjectList>
+                      <LayoutObject type="Group" name="group"><UUID>00000000-0000-0000-0000-0000000000b2</UUID><Bounds top="40" left="10" bottom="80" right="200"/>
+                        <GroupedButton><ObjectList>
+                          <LayoutObject type="Edit Box" name="title"><UUID>00000000-0000-0000-0000-0000000000b3</UUID><Bounds top="5" left="5" bottom="25" right="105"/>
+                            <Field><FieldReference name="Title" id="1"><TableOccurrenceReference name="Recipes" id="1"/></FieldReference><Display Style="0" show="1"/></Field>
+                          </LayoutObject>
+                        </ObjectList></GroupedButton>
+                      </LayoutObject>
+                    </ObjectList></TabPanel>
+                  </LayoutObject>
+                </ObjectList></TabControl>
+              </LayoutObject>
+              <LayoutObject type="Popover Button" name="pop"><UUID>00000000-0000-0000-0000-0000000000c1</UUID><Bounds top="180" left="20" bottom="195" right="100"/>
+                <PopoverButton>
+                  <Label><Text><StyledText><Data><![CDATA[More]]></Data></StyledText></Text></Label>
+                  <LayoutObject type="PopoverPanel" name="poppanel"><UUID>00000000-0000-0000-0000-0000000000c2</UUID><Bounds top="200" left="110" bottom="250" right="300"/>
+                    <ObjectList>
+                      <LayoutObject type="Text" name="inside"><UUID>00000000-0000-0000-0000-0000000000c3</UUID><Bounds top="10" left="10" bottom="30" right="100"/>
+                        <Text><StyledText><Data><![CDATA[Inside]]></Data></StyledText></Text>
+                      </LayoutObject>
+                    </ObjectList>
+                  </LayoutObject>
+                </PopoverButton>
+              </LayoutObject>
+              <LayoutObject type="Button Bar" name="bar"><UUID>00000000-0000-0000-0000-0000000000d1</UUID><Bounds top="230" left="20" bottom="245" right="220"/>
+                <ButtonBar><ObjectList membercount="1">
+                  <LayoutObject type="Button" name="segment"><UUID>00000000-0000-0000-0000-0000000000d2</UUID><Bounds top="0" left="100" bottom="15" right="200"/>
+                    <Button><Label><Text><StyledText><Data><![CDATA[Next]]></Data></StyledText></Text></Label>
+                    <action><Step enable="True" id="16" name="Go to Record/Request/Page"><Options>0</Options></Step></action></Button>
+                  </LayoutObject>
+                </ObjectList></ButtonBar>
+              </LayoutObject>
+            </ObjectList>`
+
+// withBody is layoutObjectsFixture with body as its body's objects.
+func withBody(t *testing.T, body string) string {
+	t.Helper()
+	at := strings.Index(layoutObjectsFixture, `<Definition type="Body"`)
+	start := at + strings.Index(layoutObjectsFixture[at:], "<ObjectList>")
+	end := at + strings.Index(layoutObjectsFixture[at:], "</ObjectList>\n          </Part>") + len("</ObjectList>")
+	if at < 0 || start < at || end < start {
+		t.Fatal("the fixture's body moved")
+	}
+	return layoutObjectsFixture[:start] + body + layoutObjectsFixture[end:]
+}
+
+// convertedByName converts design and answers its layout's objects by name.
+func convertedByName(t *testing.T, design string) (map[string]map[string]interface{}, []map[string]interface{}) {
+	t.Helper()
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(raw, &def); err != nil {
+		t.Fatal(err)
+	}
+	named := map[string]map[string]interface{}{}
+	var all []map[string]interface{}
+	for _, o := range def["objects"].([]interface{}) {
+		m := o.(map[string]interface{})
+		all = append(all, m)
+		if n, _ := m["name"].(string); n != "" {
+			named[n] = m
+		}
+	}
+	return named, all
+}
+
+func box(o map[string]interface{}) [4]float64 {
+	return [4]float64{o["x"].(float64), o["y"].(float64), o["width"].(float64), o["height"].(float64)}
+}
+
+func TestNativeLayoutNestedBoundsFromTheirContainer(t *testing.T) {
+	named, _ := convertedByName(t, withBody(t, nestedRelativeBody))
+	want := map[string][4]float64{
+		"rows":      {20, 70, 300, 100},
+		"qty":       {24, 72, 100, 20},
+		"edge":      {130, 70, 90, 20}, // jutting half a point above the portal: drawn from its edge
+		"rowbutton": {230, 72, 80, 20},
+		"rowlabel":  {232, 74, 76, 16},
+		"tabs":      {340, 130, 250, 120},
+		"title":     {355, 175, 100, 20}, // tab control + panel + group + its own
+		"pop":       {20, 180, 80, 15},
+		"poppanel":  {110, 200, 190, 50}, // a popover's panel is placed on the layout
+		"inside":    {120, 210, 90, 20},
+		"segment":   {120, 230, 100, 15},
+	}
+	for name, b := range want {
+		o := named[name]
+		if o == nil {
+			t.Fatalf("%s not migrated: %v", name, named)
+		}
+		if box(o) != b {
+			t.Errorf("%s: %v, want %v", name, box(o), b)
+		}
+	}
+	portal := named["rows"]
+	for _, name := range []string{"qty", "edge", "rowbutton", "rowlabel"} {
+		if named[name]["portal"] != portal["id"] {
+			t.Errorf("%s is not a row object of the portal: %v", name, named[name])
+		}
+	}
+	if p, _ := named["title"]["panel"].(map[string]interface{}); p == nil || p["control"] != named["tabs"]["id"] {
+		t.Errorf("title is not on the tab panel: %v", named["title"])
+	}
+}
+
+// A file whose nested objects lie within their containers only in layout
+// coordinates, as some tools write them, is read in layout coordinates.
+func TestNativeLayoutNestedBoundsInLayoutCoordinates(t *testing.T) {
+	named, _ := convertedByName(t, withBody(t, `<ObjectList>
+              <LayoutObject type="Portal" name="rows"><UUID>00000000-0000-0000-0000-0000000000a1</UUID><Bounds top="130" left="20" bottom="230" right="320"/>
+                <Portal><TableOccurrenceReference id="2" name="Ingredients"/><Options index="1" show="4"/>
+                  <ObjectList>
+                    <LayoutObject type="Edit Box" name="qty"><UUID>00000000-0000-0000-0000-0000000000a2</UUID><Bounds top="132" left="24" bottom="152" right="124"/>
+                      <Field><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference><Display Style="0" show="1"/></Field>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>
+            </ObjectList>`))
+	if b := box(named["qty"]); b != [4]float64{24, 132, 100, 20} || named["qty"]["portal"] != named["rows"]["id"] {
+		t.Fatalf("qty: %v", named["qty"])
+	}
+	// The handwritten fixture, written so throughout, keeps its places.
+	named, all := convertedByName(t, layoutObjectsFixture)
+	for _, o := range all {
+		if o["type"] == "oval" && (o["x"] != 430.0 || o["y"] != 160.0) {
+			t.Fatalf("oval on the tab panel: %v", o)
+		}
+	}
+	if b := box(named["price"]); b[0] != 20 || b[1] != 70 {
+		t.Fatalf("grouped field: %v", named["price"])
 	}
 }
