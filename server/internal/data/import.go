@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"maps"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -548,7 +550,13 @@ func (s *Service) ImportRecords(
 	if err != nil {
 		return nil, err
 	}
-	problems := importProblems{report: report, required: required}
+	problems := importProblems{report: report, required: required, calculated: calculated,
+		match: map[string]bool{}}
+	if opts.Action == ImportUpdateMatching {
+		for _, field := range opts.MatchFields {
+			problems.match[field] = true
+		}
+	}
 
 	// The found set is read in the transaction, so a record deleted since
 	// it was taken is passed over rather than written to.
@@ -579,9 +587,12 @@ func (s *Service) ImportRecords(
 	// record is the row's own: each record a row updates gets a copy. It
 	// answers false when validation skipped the record.
 	update := func(rowNumber int, id string, record map[string]interface{}, row *rowProblems) (bool, error) {
+		leftOut, entered, admitted, err := problems.enter(ctx, checker, row, id, record)
+		if err != nil || !admitted {
+			return false, err
+		}
 		var current map[string]interface{}
 		var counted modification
-		var err error
 		if countsModifications {
 			// Read with its identity, as this transaction sees it: a row
 			// updating a record an earlier row updated sees that.
@@ -617,7 +628,7 @@ func (s *Service) ImportRecords(
 		for field := range record {
 			changed[field] = true
 		}
-		if admitted, err := problems.admit(ctx, checker, row, id, record, changed, recalculate); err != nil || !admitted {
+		if admitted, err := problems.admit(ctx, checker, row, id, record, changed, entered, leftOut, recalculate); err != nil || !admitted {
 			scope.drop(db, tableName, id)
 			return false, err
 		}
@@ -670,7 +681,7 @@ func (s *Service) ImportRecords(
 					// validation is; a record cannot be matched without
 					// one of its match fields.
 					why := fmt.Sprintf("%s %s", key, err.Error())
-					if opts.Action == ImportUpdateMatching && slices.Contains(opts.MatchFields, field) {
+					if n == 0 && opts.Action == ImportUpdateMatching && slices.Contains(opts.MatchFields, field) {
 						unmatchable = true
 						problems.skip(row, key, ProblemType, why)
 						break
@@ -784,6 +795,14 @@ func (s *Service) ImportRecords(
 		if recordID > 0 {
 			scope.put(db, tableName, id, Identity{RecordID: recordID})
 		}
+		leftOut, entered, admitted, err := problems.enter(ctx, checker, row, id, record)
+		if err != nil {
+			return nil, err
+		}
+		if !admitted {
+			scope.drop(db, tableName, id) // its record ID is spent, as a failed write's is
+			continue
+		}
 		if ae != nil {
 			if err := ae.enterNew(ctx, autoMode{overwrite: true, tx: tx}, record); err != nil {
 				return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
@@ -793,7 +812,7 @@ func (s *Service) ImportRecords(
 		if err := recalculate(); err != nil {
 			return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 		}
-		admitted, err := problems.admit(ctx, checker, row, id, record, nil, recalculate)
+		admitted, err = problems.admit(ctx, checker, row, id, record, nil, entered, leftOut, recalculate)
 		if err != nil {
 			return nil, err
 		}
@@ -819,6 +838,7 @@ func (s *Service) ImportRecords(
 		// The transaction rolls back: nothing of the file is written, and
 		// the report says what would have been skipped.
 		first := report.Problems[0]
+		report.Added, report.Updated, report.RecordIDs = 0, 0, nil
 		return report, fmt.Errorf("%w: %w: %d record(s) skipped and %d value(s) left out, the first at row %d: %s; "+
 			"nothing was imported", ErrImport, ErrImportProblems, report.SkippedErrors, report.FieldsSkipped,
 			first.Row, first.Message)
@@ -867,6 +887,11 @@ type importProblems struct {
 	report *ImportReport
 	// required are the fields whose column cannot be stored empty.
 	required map[string]bool
+	// calculated are the calculation fields, whose values are not entered.
+	calculated map[string]*calculation
+	// match are an update's match fields: a record cannot be added without
+	// one, or it would match nothing the next time.
+	match map[string]bool
 }
 
 // skip reports a record skipped due to an error.
@@ -876,12 +901,47 @@ func (p importProblems) skip(row *rowProblems, field, rule, message string) {
 		Value: row.quote(field, nil), Message: message, RecordSkipped: true})
 }
 
-// admit validates a record a row is about to write, as FileMaker validates an
-// imported record (#231): each value that breaks a rule checked as it is
-// entered is left out of record, and the calculations recomputed without it;
-// then the record is skipped if it fails a rule checked on commit. changed
-// are the fields an update writes, nil for a new record. It answers whether
-// the record is to be written, and reports what was left out or skipped.
+// enter validates the values a row gives a record as FileMaker validates a
+// value entered into a field (#231): one that breaks strict data type, range,
+// maximum length, unique or existing value is left out of record, before the
+// auto-enter options and calculations read it. A match field so broken skips
+// the record instead. It answers what the row left out of this record, the
+// values entered, to tell later what auto-enter changed, and whether the
+// record goes on.
+func (p importProblems) enter(
+	ctx context.Context, checker *validation.Checker, row *rowProblems, id string, record map[string]interface{},
+) ([]ImportProblem, map[string]interface{}, bool, error) {
+	keys := make(map[string]bool, len(record))
+	for key := range record {
+		if field, _, _ := repetition.Split(key); p.calculated[field] == nil {
+			keys[field] = true
+		}
+	}
+	broken, err := checker.CheckImportedFields(ctx, id, record, keys)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("%w: row %d: %v", ErrImport, row.number, err)
+	}
+	leftOut := append([]ImportProblem(nil), row.leftOut...)
+	for _, invalid := range broken {
+		if p.match[invalid.Field] {
+			p.skip(row, invalid.Field, invalid.Rule, invalid.Message)
+			return nil, nil, false, nil
+		}
+		leftOut = append(leftOut, ImportProblem{Row: row.number, Field: invalid.Field, Rule: invalid.Rule,
+			Value: row.quote(invalid.Field, record[invalid.Field]), Message: invalid.Message})
+		delete(record, invalid.Field)
+	}
+	return leftOut, maps.Clone(record), true, nil
+}
+
+// admit validates a record a row is about to write, once its auto-enter
+// options and calculations are applied, as FileMaker validates an imported
+// record (#231): a value an auto-enter option gave that breaks a rule checked
+// as it is entered is left out, and the calculations recomputed without it;
+// then the record is skipped if it fails a rule checked on commit. entered
+// and leftOut are what enter answered; changed are the fields an update
+// writes, nil for a new record. It answers whether the record is to be
+// written, and reports what was left out or skipped.
 //
 // The record is validated before it is written, so a skipped record leaves
 // nothing to undo. Writing each row in a savepoint and rolling back to it
@@ -889,36 +949,47 @@ func (p importProblems) skip(row *rowProblems, field, rule, message string) {
 // times on MariaDB.
 func (p importProblems) admit(
 	ctx context.Context, checker *validation.Checker, row *rowProblems, id string,
-	record map[string]interface{}, changed map[string]bool, recalculate func() error,
+	record map[string]interface{}, changed map[string]bool, entered map[string]interface{},
+	leftOut []ImportProblem, recalculate func() error,
 ) (bool, error) {
-	broken, err := checker.CheckImportedFields(ctx, id, record, changed)
-	if err != nil {
-		return false, fmt.Errorf("%w: row %d: %v", ErrImport, row.number, err)
+	// Only the values auto-enter gave are checked again: those of the row
+	// were checked as they were entered.
+	later := map[string]bool{}
+	for key, value := range record {
+		field, _, _ := repetition.Split(key)
+		if was, ok := entered[key]; p.calculated[field] == nil && (!ok || !reflect.DeepEqual(was, value)) {
+			later[field] = true
+		}
 	}
-	leftOut := append([]ImportProblem(nil), row.leftOut...)
-	for _, invalid := range broken {
-		leftOut = append(leftOut, ImportProblem{Row: row.number, Field: invalid.Field, Rule: invalid.Rule,
-			Value: row.quote(invalid.Field, record[invalid.Field]), Message: invalid.Message})
-		delete(record, invalid.Field)
-		delete(changed, invalid.Field)
-	}
-	if len(broken) > 0 {
-		if err := recalculate(); err != nil {
+	if len(later) > 0 {
+		broken, err := checker.CheckImportedFields(ctx, id, record, later)
+		if err != nil {
 			return false, fmt.Errorf("%w: row %d: %v", ErrImport, row.number, err)
+		}
+		for _, invalid := range broken {
+			leftOut = append(leftOut, ImportProblem{Row: row.number, Field: invalid.Field, Rule: invalid.Rule,
+				Value: row.quote(invalid.Field, record[invalid.Field]), Message: invalid.Message})
+			delete(record, invalid.Field)
+			delete(changed, invalid.Field)
+		}
+		if len(broken) > 0 {
+			if err := recalculate(); err != nil {
+				return false, fmt.Errorf("%w: row %d: %v", ErrImport, row.number, err)
+			}
 		}
 	}
 	if changed == nil {
 		// A new record cannot be stored without a value its column requires,
 		// so a value left out of it skips the record, as a field that must
-		// not be empty does.
+		// not be empty does, unless an auto-enter option gave it another.
 		for _, cause := range leftOut {
-			if p.required[cause.Field] {
+			if p.required[cause.Field] && record[cause.Field] == nil {
 				p.skip(row, cause.Field, cause.Rule, cause.Message+"; "+cause.Field+" requires a value")
 				return false, nil
 			}
 		}
 	}
-	err = checker.CheckImportedRecord(ctx, id, record, changed)
+	err := checker.CheckImportedRecord(ctx, id, record, changed)
 	var invalid *validation.Error
 	if errors.As(err, &invalid) {
 		// A value left out may be why: the record is reported with that

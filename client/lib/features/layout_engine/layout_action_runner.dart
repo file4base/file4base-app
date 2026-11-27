@@ -2477,7 +2477,8 @@ class LayoutActionRunner {
     if ((report.unpaired.isNotEmpty || problems && !session.errorCapture) && host is DocumentActionHost) {
       // FileMaker imports the fields whose names match and goes on; the
       // user is told which ones were left out, and what was skipped.
-      final first = report.rejected.take(3).map((r) => r.describe());
+      // Set Error Capture keeps what was skipped to the script.
+      final first = session.errorCapture ? const <String>[] : report.rejected.take(3).map((r) => r.describe());
       await (host as DocumentActionHost)
           .actionNotify('${['$label "$name": ${report.describeCounts()}', ...first].join('; ')}.');
     }

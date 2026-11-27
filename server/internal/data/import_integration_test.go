@@ -432,9 +432,15 @@ func TestImportHonoursValidationRules(t *testing.T) {
 		},
 		AbortOnError: true,
 	}
-	_, err := f.dataSvc.ImportRecords(ctx, f.table, source, opts)
+	opts.ReturnRecordIDs = true
+	refused, err := f.dataSvc.ImportRecords(ctx, f.table, source, opts)
 	require.ErrorIs(t, err, data.ErrImportProblems)
 	assert.Contains(t, err.Error(), "row 2")
+	require.NotNil(t, refused)
+	assert.Zero(t, refused.Added, "the rows before the problem were rolled back")
+	assert.Empty(t, refused.RecordIDs)
+	assert.Len(t, refused.Problems, 1)
+	opts.ReturnRecordIDs = false
 	rows, err := f.dataSvc.ListRows(ctx, f.table, data.QueryOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, rows, "nothing was imported")
@@ -609,6 +615,45 @@ func TestImportSkipsAsFileMakerValidates(t *testing.T) {
 		}
 		assert.Equal(t, "Old", stored["Lee"], "the first record is as it was")
 		assert.Equal(t, "Paris", stored["Kim"], "and the second row still went to the second record")
+	})
+
+	t.Run("an auto-enter calculation reads the record without the value left out", func(t *testing.T) {
+		f := newImportFixture(t, ctx, driver)
+		setRules(t, ctx, f, "city", "City", `{"max_length_enabled":true,"max_length":5,"not_empty_timing":"always"}`)
+		tableID, columnID := importColumnID(t, ctx, f, "customer_type")
+		_, err := f.schemaSvc.UpdateColumn(ctx, tableID, columnID, schema.UpdateColumnOptions{
+			DisplayName: "Customer Type", UpdateDefaultValue: true,
+			DefaultValue: options(map[string]any{"calculated_enabled": true, "calculated_formula": `"from " & city`,
+				"calculated_skip_if_empty": false}),
+		})
+		require.NoError(t, err)
+		report, err := f.dataSvc.ImportRecords(ctx, f.table,
+			parseCSV(t, "Surname,Town\nLee,Paris\nKim,Brussels\n"),
+			data.ImportOptions{Action: data.ImportAdd, Mappings: mappings, PerformAutoEnter: true})
+		require.NoError(t, err)
+		assert.Equal(t, 2, report.Added)
+		assert.Equal(t, 1, report.FieldsSkipped)
+		types := map[string]string{}
+		for _, row := range listAll(t, ctx, f) {
+			types[fmt.Sprint(row["last_name"])] = fmt.Sprint(row["customer_type"])
+		}
+		assert.Equal(t, "from Paris", types["Lee"])
+		assert.Equal(t, "from ", types["Kim"], "the value left out is not entered, so not read")
+	})
+
+	t.Run("a match field left out skips a row that would be added", func(t *testing.T) {
+		f := newImportFixture(t, ctx, driver)
+		setRules(t, ctx, f, "last_name", "Last Name", `{"max_length_enabled":true,"max_length":5,"not_empty_timing":"always"}`)
+		report, err := f.dataSvc.ImportRecords(ctx, f.table,
+			parseCSV(t, "Surname,Town\nLee,Paris\nLongname,Lyon\n"),
+			data.ImportOptions{Action: data.ImportUpdateMatching, MatchFields: []string{"last_name"},
+				AddUnmatched: true, Mappings: mappings})
+		require.NoError(t, err)
+		assert.Equal(t, 1, report.Added, "no record is added without its key, to be added again next time")
+		assert.Equal(t, 1, report.SkippedErrors)
+		require.Len(t, report.Problems, 1)
+		assert.Equal(t, "max_length", report.Problems[0].Rule)
+		assert.True(t, report.Problems[0].RecordSkipped)
 	})
 
 	t.Run("a match field that cannot be read skips its row", func(t *testing.T) {

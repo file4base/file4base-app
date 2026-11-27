@@ -203,7 +203,8 @@ class TransferRejectionModel {
         value: json['value'] as String? ?? '',
         reason: json['reason'] as String? ?? '',
         rule: json['rule'] as String? ?? '',
-        recordSkipped: json['record_skipped'] as bool? ?? false,
+        // A server before #231 skipped every row it rejected.
+        recordSkipped: json['record_skipped'] as bool? ?? true,
       );
 
   /// The 1-based position of the record in the source found set.
@@ -264,7 +265,8 @@ class TransferRunReport {
         added: (json['added'] as num?)?.toInt() ?? 0,
         updated: (json['updated'] as num?)?.toInt() ?? 0,
         skipped: (json['skipped'] as num?)?.toInt() ?? 0,
-        skippedErrors: (json['skipped_errors'] as num?)?.toInt() ?? 0,
+        // A server before #231 skipped every row it rejected.
+        skippedErrors: (json['skipped_errors'] as num?)?.toInt() ?? (json['rejected'] as List<dynamic>?)?.length ?? 0,
         fieldsSkipped: (json['fields_skipped'] as num?)?.toInt() ?? 0,
         rejected: ((json['rejected'] as List<dynamic>?) ?? const [])
             .map((item) => TransferRejectionModel.fromJson(item as Map<String, dynamic>))

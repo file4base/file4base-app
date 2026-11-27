@@ -131,7 +131,11 @@ record, reported with the cause (`unique`, say); so does a value left out of
 a new record whose column is not nullable, which cannot be stored empty. An
 update validates the
 fields it writes, not those it leaves alone, and a row whose match field cannot
-be read is skipped, as it cannot be matched.
+be read, or breaks a rule, is skipped: it cannot be matched, and added without
+its key it would be added again at the next import. A value is left out before
+the auto-enter options are performed, so an auto-entered calculation reads the
+record without it, as FileMaker never enters it; a value an auto-enter option
+gives is then validated in turn.
 
 **A value the field's type cannot hold.** FileMaker keeps text typed into a
 number field as typed, and `IsValid` reports it; a typed column cannot hold
