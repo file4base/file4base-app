@@ -204,6 +204,22 @@ func (s *Service) loadAutoEnter(ctx context.Context, tableName string, types fie
 	return a, nil
 }
 
+// only keeps the options of the named fields, as an import that performs
+// auto-enter field by field applies them (#191).
+func (a *autoEnter) only(names []string) {
+	keep := make(map[string]bool, len(names))
+	for _, n := range names {
+		keep[strings.ToLower(strings.TrimSpace(n))] = true
+	}
+	kept := a.fields[:0]
+	for _, f := range a.fields {
+		if keep[strings.ToLower(f.name)] {
+			kept = append(kept, f)
+		}
+	}
+	a.fields = kept
+}
+
 // active reports whether the table has an option a write has to apply.
 func (a *autoEnter) active() bool {
 	return len(a.fields) > 0 || len(a.prohibited) > 0

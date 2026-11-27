@@ -60,6 +60,11 @@ abstract final class TransferMode {
   /// The destination record whose match fields hold the same values is
   /// updated. This is the mode that makes a transfer replayable.
   static const updateMatching = 'update_matching';
+
+  /// FileMaker's "Replace field contents in found set, in order": the n-th
+  /// source record replaces the n-th record of the destination found set
+  /// (#191). It matches on nothing.
+  static const replaceFoundSet = 'replace_found_set';
 }
 
 /// What happens to a source record that matches no destination record.
@@ -93,6 +98,8 @@ class TransferDefinitionModel {
     this.onRejected = TransferRejected.abort,
     this.dateOrder = 'iso',
     this.hasFoundSet = false,
+    this.performAutoEnter = false,
+    this.autoEnterFields = const [],
   });
 
   factory TransferDefinitionModel.fromJson(Map<String, dynamic> json) {
@@ -115,6 +122,10 @@ class TransferDefinitionModel {
       onRejected: json['on_rejected'] as String? ?? TransferRejected.abort,
       dateOrder: json['date_order'] as String? ?? 'iso',
       hasFoundSet: foundSet is List && foundSet.isNotEmpty,
+      performAutoEnter: json['perform_auto_enter'] as bool? ?? false,
+      autoEnterFields: ((json['auto_enter_fields'] as List<dynamic>?) ?? const [])
+          .map((item) => item.toString())
+          .toList(),
     );
   }
 
@@ -132,6 +143,15 @@ class TransferDefinitionModel {
   /// Whether the transfer sends a found set rather than the whole table.
   final bool hasFoundSet;
 
+  /// Whether the destination fields' auto-enter options are performed, on
+  /// [autoEnterFields] only when it names any.
+  final bool performAutoEnter;
+  final List<String> autoEnterFields;
+
+  /// Whether a run works on the destination's found set: replacing it in
+  /// order, or updating the matching records it holds.
+  bool get usesDestinationFoundSet => mode != TransferMode.add;
+
   /// The other solution this transfer reaches, or an empty string when both
   /// ends are the solution holding the definition.
   ///
@@ -146,7 +166,11 @@ class TransferDefinitionModel {
   /// One line for a script step or a dialog, e.g.
   /// "Send answers: answers → results_db.project_answers (update matching on code)".
   String describe() {
-    final keys = matchFields.isEmpty ? '' : ' (update matching on ${matchFields.join(', ')})';
+    final keys = mode == TransferMode.replaceFoundSet
+        ? ' (replace the found set, in order)'
+        : matchFields.isEmpty
+            ? ''
+            : ' (update matching on ${matchFields.join(', ')})';
     return '$name: ${source.label} → ${destination.label}$keys';
   }
 }
@@ -196,6 +220,7 @@ class TransferRunReport {
     this.rejected = const [],
     this.committed = false,
     this.error,
+    this.recordIds = const [],
   });
 
   factory TransferRunReport.fromJson(Map<String, dynamic> json) => TransferRunReport(
@@ -215,6 +240,9 @@ class TransferRunReport {
             .toList(),
         committed: json['committed'] as bool? ?? false,
         error: json['error'] as String?,
+        recordIds: ((json['record_ids'] as List<dynamic>?) ?? const [])
+            .map((item) => item.toString())
+            .toList(),
       );
 
   final String transfer;
@@ -241,6 +269,10 @@ class TransferRunReport {
   /// Why the transfer was refused, when it was.
   final String? error;
 
+  /// The destination records the run added or updated, when the run asked
+  /// for them: the found set an Import Records step shows once done (#191).
+  final List<String> recordIds;
+
   int get rejectedCount => rejected.length;
 
   /// "2 added, 1 updated, 0 skipped, 1 rejected of 4 records".
@@ -262,4 +294,300 @@ class TransferRunReport {
     }
     return parts.join('; ');
   }
+}
+
+/// A migrated Import Records step that imports from another FileMaker file
+/// and waits, disabled, for the transfer the migration review creates (#191).
+class ImportStepModel {
+  const ImportStepModel({
+    required this.stepId,
+    required this.scriptId,
+    required this.scriptName,
+    required this.stepIndex,
+    this.sourceFile = '',
+    this.targetTable = '',
+    this.method = '',
+    this.addRemaining = false,
+    this.autoEnterFields = const [],
+    this.mappings = const [],
+    this.suggestedDatabase = '',
+    this.suggestedBy = '',
+    this.problem = '',
+    this.enabledInFileMaker = false,
+  });
+
+  factory ImportStepModel.fromJson(Map<String, dynamic> json) => ImportStepModel(
+        stepId: json['step_id'] as String? ?? '',
+        scriptId: json['script_id'] as String? ?? '',
+        scriptName: json['script_name'] as String? ?? '',
+        stepIndex: (json['step_index'] as num?)?.toInt() ?? 0,
+        sourceFile: json['source_file'] as String? ?? '',
+        targetTable: json['target_table'] as String? ?? '',
+        method: json['method'] as String? ?? '',
+        addRemaining: json['add_remaining'] as bool? ?? false,
+        autoEnterFields: ((json['auto_enter_fields'] as List<dynamic>?) ?? const [])
+            .map((item) => item.toString())
+            .toList(),
+        mappings: ((json['mappings'] as List<dynamic>?) ?? const [])
+            .map((item) => ImportStepMappingModel.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        suggestedDatabase: json['suggested_database'] as String? ?? '',
+        suggestedBy: json['suggested_by'] as String? ?? '',
+        problem: json['problem'] as String? ?? '',
+        enabledInFileMaker: json['enabled_in_filemaker'] as bool? ?? false,
+      );
+
+  final String stepId;
+  final String scriptId;
+  final String scriptName;
+
+  /// The step's 1-based place in its script.
+  final int stepIndex;
+
+  /// The FileMaker file it read, empty when its path is computed.
+  final String sourceFile;
+  final String targetTable;
+
+  /// FileMaker's method: `add`, `update` (matching records) or `replace`
+  /// (the found set, in order).
+  final String method;
+  final bool addRemaining;
+
+  /// The fields auto-enter is performed on; `*` is every field.
+  final List<String> autoEnterFields;
+  final List<ImportStepMappingModel> mappings;
+
+  /// The solution the source file most likely became, and why:
+  /// `this_file`, `file_reference` or `database_name`.
+  final String suggestedDatabase;
+  final String suggestedBy;
+
+  /// Why no transfer can be created for the step as it is.
+  final String problem;
+
+  /// Whether confirming its transfer enables the step: FileMaker had it
+  /// enabled.
+  final bool enabledInFileMaker;
+
+  /// Replacing overwrites the fields of records already there.
+  bool get isDestructive => method == 'replace';
+
+  /// "update matching on code, adding the others", for the review.
+  String describeMethod() {
+    switch (method) {
+      case 'update':
+        final keys = mappings.where((m) => m.match).map((m) => m.targetField).join(', ');
+        return 'update matching records on ${keys.isEmpty ? 'no field' : keys}'
+            '${addRemaining ? ', adding the others' : ''}';
+      case 'replace':
+        return 'replace the found set, in order${addRemaining ? ', adding the remaining records' : ''}';
+      default:
+        return 'add new records';
+    }
+  }
+}
+
+/// One target field a step writes or matches on, fed from a source position.
+class ImportStepMappingModel {
+  const ImportStepMappingModel({required this.position, required this.targetField, this.match = false});
+
+  factory ImportStepMappingModel.fromJson(Map<String, dynamic> json) => ImportStepMappingModel(
+        position: (json['position'] as num?)?.toInt() ?? 0,
+        targetField: json['target_field'] as String? ?? '',
+        match: json['match'] as bool? ?? false,
+      );
+
+  final int position;
+  final String targetField;
+  final bool match;
+}
+
+/// A table of the source solution weighed for a step.
+class ImportSourceCandidate {
+  const ImportSourceCandidate({
+    required this.table,
+    this.fields = 0,
+    this.typesMatched = 0,
+    this.namesMatched = 0,
+    this.positions = 0,
+    this.fits = false,
+    this.deletedPositions = 0,
+    this.pairs = const [],
+  });
+
+  factory ImportSourceCandidate.fromJson(Map<String, dynamic> json) => ImportSourceCandidate(
+        table: json['table'] as String? ?? '',
+        fields: (json['fields'] as num?)?.toInt() ?? 0,
+        typesMatched: (json['types_matched'] as num?)?.toInt() ?? 0,
+        namesMatched: (json['names_matched'] as num?)?.toInt() ?? 0,
+        positions: (json['positions'] as num?)?.toInt() ?? 0,
+        fits: json['fits'] as bool? ?? false,
+        deletedPositions: (json['deleted_positions'] as num?)?.toInt() ?? 0,
+        pairs: ((json['pairs'] as List<dynamic>?) ?? const [])
+            .map((item) => ImportPositionPair.fromJson(item as Map<String, dynamic>))
+            .toList(),
+      );
+
+  final String table;
+  final int fields;
+  final int typesMatched;
+  final int namesMatched;
+  final int positions;
+
+  /// Whether the table's fields fit every position the step reads by type.
+  final bool fits;
+
+  /// How many positions the step reads hold a field deleted since the
+  /// migration.
+  final int deletedPositions;
+
+  /// What each position the step reads would be with this table.
+  final List<ImportPositionPair> pairs;
+
+  /// "3/3 types, 2 names" for the picker.
+  String describe() => '$typesMatched/$positions types, $namesMatched names, $fields fields';
+
+  /// "1 code → code (match), 2 amount → total", the pairing a person
+  /// confirms with the table.
+  String describePairs() => pairs.map((p) => p.describe()).join(', ');
+}
+
+/// One source position a step reads, the field of the table it is, and the
+/// target field it goes to.
+class ImportPositionPair {
+  const ImportPositionPair({
+    required this.position,
+    this.sourceField = '',
+    this.targetField = '',
+    this.match = false,
+    this.deleted = false,
+    this.missing = false,
+  });
+
+  factory ImportPositionPair.fromJson(Map<String, dynamic> json) => ImportPositionPair(
+        position: (json['position'] as num?)?.toInt() ?? 0,
+        sourceField: json['source_field'] as String? ?? '',
+        targetField: json['target_field'] as String? ?? '',
+        match: json['match'] as bool? ?? false,
+        deleted: json['deleted'] as bool? ?? false,
+        missing: json['missing'] as bool? ?? false,
+      );
+
+  final int position;
+  final String sourceField;
+  final String targetField;
+  final bool match;
+
+  /// The field at this position was deleted since the migration.
+  final bool deleted;
+
+  /// The table has no field at this position.
+  final bool missing;
+
+  String describe() {
+    final source = deleted
+        ? '(deleted field)'
+        : missing
+            ? '(no field)'
+            : sourceField;
+    return '$position $source → $targetField${match ? ' (match)' : ''}';
+  }
+}
+
+/// What a source solution says about one step: the inferred table, when one
+/// alone fits, and every table weighed.
+class ImportStepInference {
+  const ImportStepInference({
+    required this.stepId,
+    this.table = '',
+    this.confidence = '',
+    this.reason = '',
+    this.candidates = const [],
+    this.error = '',
+    this.tablesHidden = 0,
+  });
+
+  factory ImportStepInference.fromJson(Map<String, dynamic> json) => ImportStepInference(
+        stepId: json['step_id'] as String? ?? '',
+        table: json['table'] as String? ?? '',
+        confidence: json['confidence'] as String? ?? '',
+        reason: json['reason'] as String? ?? '',
+        candidates: ((json['candidates'] as List<dynamic>?) ?? const [])
+            .map((item) => ImportSourceCandidate.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        error: json['error'] as String? ?? '',
+        tablesHidden: (json['tables_hidden'] as num?)?.toInt() ?? 0,
+      );
+
+  final String stepId;
+
+  /// The inferred source table, empty when none or several fit.
+  final String table;
+
+  /// `high` or `medium` when [table] is set.
+  final String confidence;
+  final String reason;
+  final List<ImportSourceCandidate> candidates;
+  final String error;
+
+  /// How many tables of the source solution were not weighed, as the
+  /// account signed in to it may not export from them: the inference is
+  /// then unique among the others only.
+  final int tablesHidden;
+
+  bool get isInferred => table.isNotEmpty;
+
+  /// The candidate weighed for [name], if any.
+  ImportSourceCandidate? candidate(String? name) => candidates.where((c) => c.table == name).firstOrNull;
+}
+
+/// The inference of several steps against one source solution.
+class ImportStepsInferResult {
+  const ImportStepsInferResult({this.sourceDatabase = '', this.tables = const [], this.steps = const []});
+
+  factory ImportStepsInferResult.fromJson(Map<String, dynamic> json) => ImportStepsInferResult(
+        sourceDatabase: json['source_database'] as String? ?? '',
+        tables: ((json['tables'] as List<dynamic>?) ?? const []).map((item) => item.toString()).toList(),
+        steps: ((json['steps'] as List<dynamic>?) ?? const [])
+            .map((item) => ImportStepInference.fromJson(item as Map<String, dynamic>))
+            .toList(),
+      );
+
+  final String sourceDatabase;
+  final List<String> tables;
+  final List<ImportStepInference> steps;
+}
+
+/// The source a person confirmed for one step.
+class ImportStepChoice {
+  const ImportStepChoice({required this.stepId, required this.sourceDatabase, required this.sourceTable});
+
+  final String stepId;
+
+  /// The source solution; empty is this one.
+  final String sourceDatabase;
+  final String sourceTable;
+
+  Map<String, dynamic> toJson() => {
+        'step_id': stepId,
+        'source_database': sourceDatabase,
+        'source_table': sourceTable,
+      };
+}
+
+/// What confirming one step did: the transfer it created, or why not.
+class ImportStepOutcome {
+  const ImportStepOutcome({required this.stepId, this.transfer = '', this.error = ''});
+
+  factory ImportStepOutcome.fromJson(Map<String, dynamic> json) => ImportStepOutcome(
+        stepId: json['step_id'] as String? ?? '',
+        transfer: json['transfer'] as String? ?? '',
+        error: json['error'] as String? ?? '',
+      );
+
+  final String stepId;
+  final String transfer;
+  final String error;
+
+  bool get created => transfer.isNotEmpty && error.isEmpty;
 }

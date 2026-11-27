@@ -35,6 +35,13 @@ const (
 	// values and updates it. Rows matching nothing are added or skipped
 	// according to AddUnmatched.
 	ImportUpdateMatching ImportAction = "update_matching"
+
+	// ImportReplaceFoundSet is FileMaker's "Replace field contents in found
+	// set, in order": the first row replaces the mapped fields of the first
+	// record of the found set, the second of the second, and so on. Rows
+	// left over once the found set runs out are added or skipped according
+	// to AddUnmatched; records left over keep what they hold (#191).
+	ImportReplaceFoundSet ImportAction = "replace_found_set"
 )
 
 // DateOrder says how a date like 03/04/2011 is to be read. There is no way to
@@ -64,8 +71,26 @@ type ImportOptions struct {
 	MatchFields []string `json:"match_fields"`
 
 	// ImportUpdateMatching: add the rows that match no record, rather than
-	// passing over them.
+	// passing over them. ImportReplaceFoundSet: add the rows left over once
+	// the found set runs out.
 	AddUnmatched bool `json:"add_unmatched"`
+
+	// FoundSet is the records of the table the import works on, in the
+	// order they are in: the ones ImportReplaceFoundSet replaces (it is
+	// required), and the only ones ImportUpdateMatching matches, every
+	// matching one being updated as FileMaker updates them. Nil, an update
+	// updates the first record of the table that matches. An id no longer
+	// in the table keeps its place, and its row is passed over.
+	FoundSet []string `json:"found_set,omitempty"`
+
+	// ReturnRecordIDs lists in the report the records the import added or
+	// updated, which FileMaker makes the found set once it is done.
+	ReturnRecordIDs bool `json:"return_record_ids,omitempty"`
+
+	// PassOver are rows, by 0-based index, that are not imported but still
+	// take their place: ImportReplaceFoundSet leaves the record they would
+	// have replaced as it is. A transfer passes over the rows it rejected.
+	PassOver map[int]bool `json:"-"`
 
 	DateOrder DateOrder `json:"date_order"`
 
@@ -75,6 +100,11 @@ type ImportOptions struct {
 	// does not replace an imported value. Off, the imported values are
 	// written as they are (see docs/specs/auto_enter_options.md).
 	PerformAutoEnter bool `json:"perform_auto_enter"`
+
+	// AutoEnterFields, when given, are the only fields whose auto-enter
+	// options PerformAutoEnter applies, as FileMaker 2023 and later choose
+	// them field by field in the import field map.
+	AutoEnterFields []string `json:"auto_enter_fields,omitempty"`
 }
 
 // ImportReport says what an import did.
@@ -87,6 +117,10 @@ type ImportReport struct {
 	// Fields that were written to, in the order they were mapped, so the
 	// report can name them.
 	Fields []string `json:"fields"`
+
+	// RecordIDs are the records added or updated, in the order the rows
+	// reached them, when ReturnRecordIDs asked for them.
+	RecordIDs []string `json:"record_ids,omitempty"`
 }
 
 // importError names where a value went wrong, because "that will not convert"
@@ -237,8 +271,19 @@ func coerce(fieldType dbal.AgnosticFieldType, text string, order DateOrder) (int
 func (s *Service) checkImportOptions(
 	fields fieldSet, tableName string, source *dataio.Table, opts ImportOptions,
 ) ([]string, error) {
-	if opts.Action != ImportAdd && opts.Action != ImportUpdateMatching {
+	switch opts.Action {
+	case ImportAdd, ImportUpdateMatching, ImportReplaceFoundSet:
+	default:
 		return nil, fmt.Errorf("%w: %q is not something an import can do", ErrImport, opts.Action)
+	}
+	if opts.Action == ImportReplaceFoundSet && len(opts.MatchFields) > 0 {
+		return nil, fmt.Errorf("%w: replacing the found set in order matches records by position, not on fields",
+			ErrImport)
+	}
+	if opts.Action == ImportReplaceFoundSet && opts.FoundSet == nil {
+		// Never the whole table by default: what is overwritten is what
+		// the found set holds, and nobody said what it holds.
+		return nil, fmt.Errorf("%w: replacing field contents works on a found set, and none was given", ErrImport)
 	}
 
 	written := make([]string, 0, len(opts.Mappings))
@@ -336,6 +381,9 @@ func (s *Service) ImportRecords(
 		if ae, err = s.loadAutoEnter(ctx, tableName, fields); err != nil {
 			return nil, err
 		}
+		if opts.AutoEnterFields != nil {
+			ae.only(opts.AutoEnterFields)
+		}
 		if !ae.active() {
 			ae = nil
 		} else {
@@ -344,10 +392,12 @@ func (s *Service) ImportRecords(
 	}
 
 	// An updated record is modified when the row sets a field stored with it,
-	// which counts the modification.
+	// which counts the modification. Replacing updates records as matching
+	// does.
+	updates := opts.Action == ImportUpdateMatching || opts.Action == ImportReplaceFoundSet
 	var modifying map[string]bool
 	countsModifications, numbered := false, false
-	if opts.Action == ImportUpdateMatching {
+	if updates {
 		if countsModifications, err = HasModCount(ctx, s.driver, tableName); err != nil {
 			return nil, err
 		}
@@ -362,16 +412,17 @@ func (s *Service) ImportRecords(
 	}
 	// The record IDs of the records added are taken outside the transaction,
 	// as a failed import spends them: before it when every row is added, one
-	// by one for the rows an update does not match.
+	// by one for the rows an update does not match or a replace has no record
+	// left for.
 	var recordIDs []int64
-	if opts.Action != ImportUpdateMatching {
+	if !updates {
 		if recordIDs, err = ReserveRecordIDs(ctx, s.driver, tableName, len(source.Rows)); err != nil {
 			return nil, err
 		}
 	}
 	nextRecordID := func() (int64, error) {
 		if len(recordIDs) == 0 {
-			if opts.Action != ImportUpdateMatching {
+			if !updates {
 				return 0, nil // a table not numbered yet
 			}
 			ids, err := ReserveRecordIDs(ctx, s.driver, tableName, 1)
@@ -390,8 +441,17 @@ func (s *Service) ImportRecords(
 	report := &ImportReport{Rows: len(source.Rows), Fields: written}
 	// An updated record loses the original texts of the fields it is given
 	// (#124); the table they are kept in has to exist before the transaction.
-	if opts.Action == ImportUpdateMatching {
+	if opts.Action != ImportAdd {
 		if err := sourcetext.Ensure(ctx, db); err != nil {
+			return nil, err
+		}
+	}
+	usesFoundSet := opts.Action != ImportAdd && (opts.FoundSet != nil || opts.Action == ImportReplaceFoundSet)
+	// The creation order is resolved outside the transaction, which holds
+	// a connection of its own.
+	var order string
+	if usesFoundSet {
+		if order, err = s.creationOrder(ctx, tableName); err != nil {
 			return nil, err
 		}
 	}
@@ -409,8 +469,93 @@ func (s *Service) ImportRecords(
 	checker := &validation.Checker{Dialect: dialect, DB: tx, Table: tableName, Fields: rules,
 		Calculate: s.validationCalculator(tableName)}
 
+	// The found set is read in the transaction, so a record deleted since
+	// it was taken is passed over rather than written to.
+	var foundSet []string
+	var inFoundSet map[string]bool
+	if usesFoundSet {
+		if foundSet, err = s.importFoundSet(ctx, tx, tableName, order, opts.FoundSet); err != nil {
+			return nil, err
+		}
+		if opts.FoundSet != nil {
+			inFoundSet = make(map[string]bool, len(foundSet))
+			for _, id := range foundSet {
+				if id != "" {
+					inFoundSet[id] = true
+				}
+			}
+		}
+	}
+	reached := map[string]bool{}
+	reach := func(id string) {
+		if opts.ReturnRecordIDs && !reached[id] {
+			reached[id] = true
+			report.RecordIDs = append(report.RecordIDs, id)
+		}
+	}
+
+	// update writes the mapped values of a row over a stored record. The
+	// record is the row's own: each record a row updates gets a copy.
+	update := func(rowNumber int, id string, record map[string]interface{}) error {
+		var current map[string]interface{}
+		var counted modification
+		var err error
+		if countsModifications {
+			// Read with its identity, as this transaction sees it: a row
+			// updating a record an earlier row updated sees that.
+			var read Identity
+			var found bool
+			if current, read, found, err = storedRowIdentity(ctx, tx, dialect, tableName, id, fields, numbered); err != nil {
+				return fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+			}
+			counted = modification{counted: true, modifies: setsStoredField(fields, modifying, record),
+				modifying: modifying}
+			if found && numbered {
+				scope.put(db, tableName, id, read) // as before this row's write
+			}
+		} else if ae != nil {
+			if current, err = storedRow(ctx, tx, dialect, tableName, id, fields); err != nil {
+				return fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+			}
+		}
+		if ae != nil {
+			if err := ae.enterModified(ctx, autoMode{overwrite: true, tx: tx}, record, current); err != nil {
+				return fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+			}
+		}
+		counted.alsoModifiedBy(fields, record)
+		if err := applyCalculationsForUpdate(
+			ctx, tx, dialect, tableName, id, fields, calculations, record,
+		); err != nil {
+			return fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+		}
+		if err := checker.Check(ctx, id, record, nil, false); err != nil {
+			return fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+		}
+		writes, err := packRepetitions(ctx, tx, dialect, fields, tableName, id, record)
+		if err != nil {
+			return fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+		}
+		if err := updateInTx(ctx, tx, dialect, tableName, id, writes, counted); err != nil {
+			return fmt.Errorf("%w: row %d could not be updated: %v", ErrImport, rowNumber, err)
+		}
+		scope.drop(db, tableName, id)
+		updatedFields := make([]string, 0, len(record))
+		for field := range record {
+			updatedFields = append(updatedFields, field)
+		}
+		if err := sourcetext.ClearFields(ctx, tx, dialect, tableName, id, updatedFields); err != nil {
+			return fmt.Errorf("%w: row %d could not be updated: %v", ErrImport, rowNumber, err)
+		}
+		reach(id)
+		return nil
+	}
+
 	for i := range source.Rows {
 		rowNumber := i + 1
+		if opts.PassOver[i] {
+			continue
+		}
 		record := make(map[string]interface{}, len(written))
 
 		for _, mapping := range opts.Mappings {
@@ -439,64 +584,68 @@ func (s *Service) ImportRecords(
 		}
 		normalizeTemporalValues(fields, record)
 
-		if opts.Action == ImportUpdateMatching {
+		switch opts.Action {
+		case ImportUpdateMatching:
 			// The match is looked up before the calculations are computed: an
 			// update evaluates its formulas over the stored row merged with the
 			// mapped values, so a formula reading a field this row does not
 			// carry sees what the record holds rather than nothing (#92).
-			id, err := findMatchingRecord(ctx, tx, dialect, fields, tableName, opts.MatchFields, record)
-			if err != nil {
-				return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+			// A row whose match fields are all empty is neither matched nor
+			// added, even with the rows that match nothing added, as
+			// FileMaker imports it.
+			if allEmpty(record, opts.MatchFields) {
+				report.Skipped++
+				continue
 			}
-			if id != "" {
-				var current map[string]interface{}
-				var counted modification
-				if countsModifications {
-					// Read with its identity, as this transaction sees it: a
-					// row updating a record an earlier row updated sees that.
-					var read Identity
-					var found bool
-					if current, read, found, err = storedRowIdentity(ctx, tx, dialect, tableName, id, fields, numbered); err != nil {
-						return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
-					}
-					counted = modification{counted: true, modifies: setsStoredField(fields, modifying, record),
-						modifying: modifying}
-					if found && numbered {
-						scope.put(db, tableName, id, read) // as before this row's write
-					}
-				} else if ae != nil {
-					if current, err = storedRow(ctx, tx, dialect, tableName, id, fields); err != nil {
-						return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
-					}
-				}
-				if ae != nil {
-					if err := ae.enterModified(ctx, autoMode{overwrite: true, tx: tx}, record, current); err != nil {
-						return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
-					}
-				}
-				counted.alsoModifiedBy(fields, record)
-				if err := applyCalculationsForUpdate(
-					ctx, tx, dialect, tableName, id, fields, calculations, record,
-				); err != nil {
-					return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
-				}
-				if err := checker.Check(ctx, id, record, nil, false); err != nil {
-					return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
-				}
-				writes, err := packRepetitions(ctx, tx, dialect, fields, tableName, id, record)
+			var ids []string
+			if inFoundSet == nil {
+				id, err := findMatchingRecord(ctx, tx, dialect, fields, tableName, opts.MatchFields, record)
 				if err != nil {
 					return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 				}
-				if err := updateInTx(ctx, tx, dialect, tableName, id, writes, counted); err != nil {
-					return nil, fmt.Errorf("%w: row %d could not be updated: %v", ErrImport, rowNumber, err)
+				if id != "" {
+					ids = []string{id}
 				}
-				scope.drop(db, tableName, id)
-				updatedFields := make([]string, 0, len(record))
-				for field := range record {
-					updatedFields = append(updatedFields, field)
+			} else {
+				matches, err := findMatchingRecords(ctx, tx, dialect, fields, tableName, opts.MatchFields, record)
+				if err != nil {
+					return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 				}
-				if err := sourcetext.ClearFields(ctx, tx, dialect, tableName, id, updatedFields); err != nil {
-					return nil, fmt.Errorf("%w: row %d could not be updated: %v", ErrImport, rowNumber, err)
+				// Every match the found set holds is updated, in the found
+				// set's order.
+				matched := make(map[string]bool, len(matches))
+				for _, id := range matches {
+					matched[id] = true
+				}
+				for _, id := range foundSet {
+					if id != "" && matched[id] {
+						ids = append(ids, id)
+					}
+				}
+			}
+			if len(ids) > 0 {
+				for _, id := range ids {
+					if err := update(rowNumber, id, copyRecord(record)); err != nil {
+						return nil, err
+					}
+				}
+				report.Updated += len(ids)
+				continue
+			}
+			if !opts.AddUnmatched {
+				report.Skipped++
+				continue
+			}
+		case ImportReplaceFoundSet:
+			if i < len(foundSet) {
+				if foundSet[i] == "" {
+					// The record in this place is gone: its row is passed
+					// over, and the next row still goes to the next record.
+					report.Skipped++
+					continue
+				}
+				if err := update(rowNumber, foundSet[i], record); err != nil {
+					return nil, err
 				}
 				report.Updated++
 				continue
@@ -540,6 +689,7 @@ func (s *Service) ImportRecords(
 			}
 			return nil, fmt.Errorf("%w: row %d could not be added: %v", ErrImport, rowNumber, err)
 		}
+		reach(id)
 		report.Added++
 	}
 
@@ -627,6 +777,48 @@ func storedRow(
 	return stored[0], nil
 }
 
+func allEmpty(record map[string]interface{}, fields []string) bool {
+	for _, field := range fields {
+		if value := record[field]; value != nil && fmt.Sprint(value) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// matchClauses are the conditions a record's match fields meet when they
+// hold the row's values, or false when a key is empty. Text is compared
+// whatever its case; a date or a timestamp as the day or the instant it is,
+// a number as the number and a boolean as the boolean the column holds,
+// since none of their texts is the same on two engines (MariaDB writes a
+// number with all its decimals and a boolean as 1).
+func matchClauses(
+	dialect dbal.Dialect, fields fieldSet, matchFields []string, record map[string]interface{},
+) ([]string, []interface{}, bool) {
+	clauses := make([]string, 0, len(matchFields))
+	values := make([]interface{}, 0, len(matchFields))
+	for i, field := range matchFields {
+		value := record[field]
+		if value == nil || fmt.Sprint(value) == "" {
+			return nil, nil, false
+		}
+		column := dialect.QuoteIdentifier(field)
+		switch fields[field] {
+		case dbal.FieldTypeDate, dbal.FieldTypeTimestamp:
+			clauses = append(clauses, fmt.Sprintf("%s = %s", column, dialect.Placeholder(i+1)))
+			values = append(values, dbal.TemporalValue(dialect.Engine(), fields[field], value))
+		case dbal.FieldTypeNumber, dbal.FieldTypeBoolean:
+			clauses = append(clauses, fmt.Sprintf("%s = %s", column, dialect.Placeholder(i+1)))
+			values = append(values, value)
+		default:
+			clauses = append(clauses, fmt.Sprintf("LOWER(%s) = LOWER(%s)",
+				dialect.CastToText(column), dialect.Placeholder(i+1)))
+			values = append(values, fmt.Sprint(value))
+		}
+	}
+	return clauses, values, true
+}
+
 // findMatchingRecord returns the id of the record whose match fields hold the
 // same values as the row, or "" when none does. Text is compared whatever its
 // case; a date or a timestamp is compared as the day or the instant it is, as
@@ -636,25 +828,11 @@ func findMatchingRecord(
 	ctx context.Context, tx execer, dialect dbal.Dialect, fields fieldSet,
 	tableName string, matchFields []string, record map[string]interface{},
 ) (string, error) {
-	clauses := make([]string, 0, len(matchFields))
-	values := make([]interface{}, 0, len(matchFields))
-	for i, field := range matchFields {
-		value := record[field]
-		if value == nil || fmt.Sprint(value) == "" {
-			// An empty key matches nothing, the same rule a relationship
-			// follows (#36).
-			return "", nil
-		}
-		column := dialect.QuoteIdentifier(field)
-		switch fields[field] {
-		case dbal.FieldTypeDate, dbal.FieldTypeTimestamp:
-			clauses = append(clauses, fmt.Sprintf("%s = %s", column, dialect.Placeholder(i+1)))
-			values = append(values, dbal.TemporalValue(dialect.Engine(), fields[field], value))
-		default:
-			clauses = append(clauses, fmt.Sprintf("LOWER(%s) = LOWER(%s)",
-				dialect.CastToText(column), dialect.Placeholder(i+1)))
-			values = append(values, fmt.Sprint(value))
-		}
+	clauses, values, ok := matchClauses(dialect, fields, matchFields, record)
+	if !ok {
+		// An empty key matches nothing, the same rule a relationship
+		// follows (#36).
+		return "", nil
 	}
 
 	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s LIMIT 1",
@@ -670,6 +848,98 @@ func findMatchingRecord(
 		return "", err
 	}
 	return id, nil
+}
+
+// findMatchingRecords returns every record whose match fields hold the same
+// values as the row, in creation order, compared as findMatchingRecord
+// compares them.
+func findMatchingRecords(
+	ctx context.Context, tx execer, dialect dbal.Dialect, fields fieldSet,
+	tableName string, matchFields []string, record map[string]interface{},
+) ([]string, error) {
+	clauses, values, ok := matchClauses(dialect, fields, matchFields, record)
+	if !ok {
+		return nil, nil // an empty key matches nothing
+	}
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s",
+		dialect.QuoteIdentifier("id"), dialect.QuoteIdentifier(tableName),
+		strings.Join(clauses, " AND "))
+	rows, err := tx.QueryContext(ctx, query, values...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// importFoundSet is the found set an import works on, read and locked in
+// its transaction, so no record of it is deleted or changed by another
+// writer until the import is done: the ids given, in the order given, an id
+// no longer in the table keeping its place as "", or every record of the
+// table in creation order when none are. order is the table's creation
+// order column, resolved before the transaction began.
+func (s *Service) importFoundSet(
+	ctx context.Context, tx execer, tableName, order string, given []string,
+) ([]string, error) {
+	dialect := s.driver.Dialect()
+	query := fmt.Sprintf("SELECT %s FROM %s %s", dialect.QuoteIdentifier("id"),
+		dialect.QuoteIdentifier(tableName), thenBy(dialect, "", order, false))
+	if order != "id" {
+		query = thenBy(dialect, query, "id", false)
+	}
+	query += " FOR UPDATE"
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("%w: the found set could not be read: %v", ErrImport, err)
+	}
+	defer rows.Close()
+	var all []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		all = append(all, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if given == nil {
+		return all, nil
+	}
+	present := make(map[string]bool, len(all))
+	for _, id := range all {
+		present[id] = true
+	}
+	kept := make([]string, 0, len(given))
+	seen := make(map[string]bool, len(given))
+	for _, id := range given {
+		if seen[id] {
+			continue // a record is in a found set once
+		}
+		seen[id] = true
+		if !present[id] {
+			id = ""
+		}
+		kept = append(kept, id)
+	}
+	return kept, nil
+}
+
+func copyRecord(record map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(record))
+	for k, v := range record {
+		out[k] = v
+	}
+	return out
 }
 
 // insertInTx adds a record, with its record ID when recordID is not 0.
@@ -831,10 +1101,10 @@ func (s *Service) exportRows(
 ) ([]map[string]interface{}, error) {
 	all := make([]map[string]interface{}, 0, 256)
 	for {
+		// With no sort the records come in creation order, as FileMaker
+		// exports an unsorted found set; every order ends on it, so the
+		// pages are stable.
 		query := QueryOptions{Limit: MaxPageSize, Offset: len(all), Sort: opts.Sort}
-		if len(query.Sort) == 0 {
-			query.SortBy, query.SortAsc = "id", true // a stable order to page in
-		}
 
 		var page []map[string]interface{}
 		var err error

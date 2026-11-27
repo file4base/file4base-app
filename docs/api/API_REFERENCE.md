@@ -2650,11 +2650,13 @@ An **empty `database`** on either end means *the solution holding the definition
 
 | Field | Values | Meaning |
 | --- | --- | --- |
-| `mode` | `update_matching` (default), `add` | `update_matching` finds the destination record whose match fields hold the same values and updates it; this is the mode that makes a transfer replayable. `add` makes every source record a new record, every run. |
+| `mode` | `update_matching` (default), `add`, `replace_found_set` | `update_matching` finds the destination record whose match fields hold the same values and updates it; this is the mode that makes a transfer replayable. `add` makes every source record a new record, every run. `replace_found_set` is FileMaker's *Replace field contents in found set, in order* (`#191`): the n-th source record is written into the n-th record of the destination found set (the run must name it: without `destination_found_set` the run is refused with `422`, never widened to the whole table), and the source records left once it runs out are added under `on_unmatched: "add"` or passed over under `skip`. It matches on nothing, so `match_fields` is refused. |
 | `match_fields` | destination field names | The stable business keys. Required by `update_matching`, refused by `add`. Every one of them must be mapped, so the source always supplies the key it is matched on. |
 | `on_unmatched` | `add` (default), `skip` | What happens to a source record that matches no destination record. Consulted by `update_matching` only. |
 | `on_rejected` | `abort` (default), `skip` | What happens to a source value the destination field cannot hold. See the transaction contract below. |
 | `date_order` | `iso` (default), `dmy`, `mdy` | How a date written `03/04/2011` is to be read. There is no way to tell from the value, so the definition says. |
+| `perform_auto_enter` | `false` (default), `true` | Whether the destination's auto-enter options run on the records written, as the import option of the same name does. |
+| `auto_enter_fields` | destination field names | With `perform_auto_enter`, only these fields' auto-enter options run, as FileMaker's per-field choice in the import field mapping does. Absent (`null`) means every field's; an empty list means no field's, and is stored as such. Refused without `perform_auto_enter`. |
 
 ### `POST /api/v1/transfers`
 Creates a definition. Requires `owner`/`admin` and an unlocked design. The body is the object above without `id`, `created_by`, `created_at` and `updated_at`.
@@ -2681,6 +2683,15 @@ Runs one definition.
 ```
 
 `peer_token` is required when the two ends are different solutions and refused when they are the same one. The body may be omitted entirely for a transfer inside one solution.
+
+Two optional fields serve the `Import Records` script step (`#191`):
+
+| Field | Meaning |
+| --- | --- |
+| `destination_found_set` | Destination record ids, in order: the found set of the window the step runs in. `update_matching` then updates every matching record it holds and only those, in that order, each counted in `updated`, as FileMaker does; `replace_found_set` writes into it in that order. The found set is locked for the run; a record deleted before it keeps its place, and its source row is skipped. Ignored by `add`. |
+| `return_record_ids` | Answer `record_ids`, the destination records added or updated, so the window can show them as its found set afterwards. |
+
+The destination is written as the account of the session that reaches it, so an auto-enter of the account name enters that account.
 
 #### Response `200 OK` — the destination was written
 ```json
@@ -2752,6 +2763,43 @@ One transfer writes **one destination table, inside one transaction**. A transfe
 - **Retrying is replaying.** A refused run wrote nothing, so the same request can simply be sent again. A *committed* run can be sent again too: with `mode: "update_matching"` and stable match keys, a replay updates the same records instead of duplicating them, so a transfer of parents and then children neither duplicates a parent nor orphans a child. `mode: "add"` is deliberately not replayable — it is for an append-only destination — and the capability parity matrix says so.
 
 Values cross through the same conversion a manual import runs (`data.CoerceImportValue`), so a number keeps its exact decimal, text keeps its spaces and its accents, a date is read in the definition's `date_order`, and a container crosses as the same bytes.
+
+### FileMaker Import Records steps (`#191`)
+
+A FileMaker *Import Records* step that imports from another FileMaker file saves its source fields **by position only** and never names the source table. A migrated step of that kind is kept **disabled**, with `awaiting_transfer: true` in its parameters, until a transfer is created for it. These endpoints, used by the migration review, list those steps, infer their source table and create the transfer once a developer confirms it. All three require `owner`/`admin`; confirming also requires an unlocked design.
+
+#### `GET /api/v1/transfers/import-steps`
+```json
+{ "steps": [ {
+  "step_id": "…", "script_id": "…", "script_name": "Pull ledger", "step_index": 2,
+  "source_file": "Ledger", "target_table": "orders", "method": "update", "add_remaining": true,
+  "auto_enter_fields": ["stamp"],
+  "mappings": [ { "position": 1, "target_field": "code", "match": true }, { "position": 2, "target_field": "total" } ],
+  "suggested_database": "ledger", "suggested_by": "database_name", "enabled_in_filemaker": true
+} ] }
+```
+`method` is `add`, `update` or `replace`. `auto_enter_fields` is `["*"]` when FileMaker performs every field's auto-enter options. `suggested_by` says why a solution is suggested: `this_file` (the step imports from its own file), `file_reference` or `database_name`. A step whose file path is computed as the script runs has no `source_file` and no suggestion. `problem` says why a step cannot get a transfer as saved: a field it imports or matches on was saved without its source position, it matches on no field, or it splits repeating values into separate records. `enabled_in_filemaker` says whether confirming its transfer enables the step. A step migrated before `#191` (enabled, naming no transfer) is listed too.
+
+#### `POST /api/v1/transfers/import-steps/infer`
+```json
+{ "source_database": "ledger", "peer_token": "eyJ…", "step_ids": ["…"] }
+```
+An empty `source_database` is this solution; another one needs a session token of it, as a run does, and only the tables that account may export from are considered. A step's source positions are the source table's fields **in creation order**, which a migrated field keeps as its FileMaker id. A migrated field deleted since keeps its position (`sys_deleted_source_fields` records its FileMaker id), so the positions after it do not shift; a step reading that position fits no table. A table **fits** when it has at least as many fields as the highest position and the type at every imported or match position is the type of the field it goes into. The answer per step is:
+
+- `high`: of the tables that fit, exactly one has field names agreeing with the step's at half of the positions or more (names can single out one of several tables that fit by type; `reason` then says how many others fit by type alone);
+- `medium`: exactly one table fits, and the names do not confirm it;
+- no `table`: none fits, or several do and names do not single one out; `reason` says which, and `candidates` lists every table with its counts (`fields`, `positions`, `types_matched`, `names_matched`, `fits`) for a developer to pick from, with `deleted_positions` and `pairs`: per position the step reads, `{ "position": 2, "source_field": "amount", "target_field": "total", "match": false }`, with `deleted` or `missing` when the table has no live field there. The review shows the pairing of the picked table.
+
+When the source account may not export from some tables, they are left out of `tables` and `candidates`, `tables_hidden` counts them and `reason` says so: uniqueness is then among the visible tables only, and the review leaves such a step out of its bulk confirmation.
+
+When the source is this solution, the step's target table is not offered as its own source. Nothing is written.
+
+#### `POST /api/v1/transfers/import-steps/confirm`
+```json
+{ "items": [ { "step_id": "…", "source_database": "ledger", "source_table": "entries" } ],
+  "peer_tokens": { "ledger": "eyJ…" } }
+```
+Every source solution, and its session, is checked before anything is created; a refusal there creates nothing. Then, for each item, in one transaction of its own (the step locked, so two confirmations cannot both create one): the transfer is planned from the step (Add → `add`; Update → `update_matching` on the step's match fields; Replace → `replace_found_set`; *add remaining* → `on_unmatched: "add"`; `on_rejected: "skip"`; the step's auto-enter choice), created under a unique name, named in the step, and the step is enabled again **if FileMaker had it enabled**. A source table that lacks a position the step reads, or an update step with no match field, is refused: File4Base never invents a match field. The answer is `{"steps": [{"step_id": "…", "transfer": "Import orders from ledger.entries (Pull ledger, step 2)"}]}`, with `error` instead of `transfer` for a step that could not be created; the others are unaffected.
 
 ---
 

@@ -21,6 +21,9 @@ var ErrNotAuthorized = errors.New("not authorized")
 type Account struct {
 	ID   string
 	Role string
+	// Name is the account name the destination's auto-enter options stamp
+	// a record with, as the account importing by hand would.
+	Name string
 }
 
 // CheckEnd verifies that an account may do one end's work: it holds the
@@ -77,7 +80,7 @@ func ResolveAccount(ctx context.Context, driver dbal.DatabaseDriver, database, u
 			return Account{}, fmt.Errorf("%w: the account %s on %s is disabled",
 				ErrNotAuthorized, username, describeEnd(database))
 		}
-		return Account{ID: u.ID, Role: u.Role}, nil
+		return Account{ID: u.ID, Role: u.Role, Name: u.Username}, nil
 	}
 	return Account{}, fmt.Errorf("%w: %s has no account %s",
 		ErrNotAuthorized, describeEnd(database), username)

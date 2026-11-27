@@ -155,7 +155,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         RelatedFieldHost,
         PortalRowHost,
         ScriptTriggerHost,
-        DocumentActionHost {
+        DocumentActionHost,
+        ImportRecordsHost {
   /// Without privileges, this solution's records take every command, the
   /// server deciding, and another solution's are only read.
   RecordPrivileges get _privileges =>
@@ -5697,9 +5698,17 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       return false;
     }
     final removedId = _records[_currentIndex]['id'];
+    // Omitting from the whole table makes a found set no find describes:
+    // the table's records not read yet are read first, so it holds them.
+    final wholeTable = !_isFoundSet;
+    if (wholeTable && (!await _readWholeFoundSet() || !mounted)) return false;
+    final at = removedId == null ? _currentIndex : _records.indexWhere((r) => r['id'] == removedId);
+    if (at < 0) return false;
     setState(() {
+      if (wholeTable) _foundSetInHand = true;
       if (removedId != null) _omittedIds.add(removedId.toString());
-      _records.removeAt(_currentIndex);
+      _currentIndex = at;
+      _records.removeAt(at);
       _unsortedRecords.removeWhere((r) => r['id'] == removedId);
       if (_currentIndex >= _records.length && _records.isNotEmpty) {
         _currentIndex = _records.length - 1;
@@ -5716,6 +5725,48 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     for (var i = 0; i < count && _records.isNotEmpty; i++) {
       await actionOmitRecord();
     }
+  }
+
+  @override
+  String get actionImportTable => widget.externalDatabase == null ? widget.table.name : '';
+
+  @override
+  Future<bool> actionCommitBeforeImport() async {
+    if (_records.isEmpty) return true;
+    FocusManager.instance.primaryFocus?.unfocus();
+    return _saveCurrentRecord();
+  }
+
+  @override
+  Future<List<String>?> actionFoundSetIds() async {
+    if (!await _readWholeFoundSet() || !mounted) return null;
+    return _records.map((r) => r['id']?.toString()).whereType<String>().where((id) => id.isNotEmpty).toList();
+  }
+
+  @override
+  Future<bool> actionShowImportedRecords(List<String> ids) async {
+    final List<Map<String, dynamic>> all;
+    try {
+      all = await widget.apiClient.listAllRows(widget.table.name);
+    } on Exception {
+      return false;
+    }
+    if (!mounted) return false;
+    final byId = {for (final r in all) r['id']?.toString(): r};
+    final imported = [for (final id in ids) ?byId[id]];
+    setState(() {
+      _sortOrder = const [];
+      _unsortedRecords = List<Map<String, dynamic>>.from(imported);
+      _records = List<Map<String, dynamic>>.from(imported);
+      _currentIndex = 0;
+      _isFoundSet = true;
+      _foundSetFind = null;
+      _foundSetInHand = true;
+      _omittedIds.clear();
+    });
+    _rebuildFieldControllers();
+    _recordChanged();
+    return true;
   }
 
   @override
