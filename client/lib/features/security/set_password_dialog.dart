@@ -14,6 +14,7 @@ class SetPasswordDialog extends StatefulWidget {
     required this.apiClient,
     required this.user,
     this.databaseName,
+    this.isOwnAccount = false,
     super.key,
   });
 
@@ -23,6 +24,10 @@ class SetPasswordDialog extends StatefulWidget {
   /// The database the account is in, when it is not the session's.
   final String? databaseName;
 
+  /// The account is the signed-in user's own: changing its password takes the
+  /// current one (#209). Another account's password is set without it.
+  final bool isOwnAccount;
+
   /// Shows the dialog. Returns the account as it now is when a password was
   /// saved, or null when the dialog was cancelled.
   static Future<UserModel?> show(
@@ -30,10 +35,16 @@ class SetPasswordDialog extends StatefulWidget {
     required ApiClient apiClient,
     required UserModel user,
     String? databaseName,
+    bool isOwnAccount = false,
   }) {
     return showDialog<UserModel>(
       context: context,
-      builder: (_) => SetPasswordDialog(apiClient: apiClient, user: user, databaseName: databaseName),
+      builder: (_) => SetPasswordDialog(
+        apiClient: apiClient,
+        user: user,
+        databaseName: databaseName,
+        isOwnAccount: isOwnAccount,
+      ),
     );
   }
 
@@ -42,9 +53,11 @@ class SetPasswordDialog extends StatefulWidget {
 }
 
 class _SetPasswordDialogState extends State<SetPasswordDialog> {
+  final _current = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
   bool _obscure = true;
+  bool _obscureCurrent = true;
   bool _saving = false;
   String? _error;
 
@@ -54,6 +67,7 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
 
   @override
   void dispose() {
+    _current.dispose();
     _password.dispose();
     _confirm.dispose();
     super.dispose();
@@ -61,6 +75,10 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
 
   Future<void> _save() async {
     final p1 = _password.text;
+    if (widget.isOwnAccount && _current.text.isEmpty) {
+      setState(() => _error = 'Enter your current password.');
+      return;
+    }
     if (p1.trim().isEmpty) {
       setState(() => _error = 'Password cannot be empty.');
       return;
@@ -89,6 +107,7 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
         user.id,
         role: '',
         password: p1,
+        currentPassword: widget.isOwnAccount ? _current.text : null,
         isActive: activate ? true : null,
         database: widget.databaseName,
       );
@@ -98,7 +117,9 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _error = e.toString().replaceFirst('Exception: ', '').replaceFirst('ApiException ', '');
+        _error = e is ApiException && e.detail.isNotEmpty
+            ? '${e.detail[0].toUpperCase()}${e.detail.substring(1)}${e.detail.endsWith('.') ? '' : '.'}'
+            : e.toString().replaceFirst('Exception: ', '').replaceFirst('ApiException ', '');
       });
     }
   }
@@ -139,11 +160,32 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
               style: const TextStyle(fontSize: 12, color: Colors.grey),
             ),
             const SizedBox(height: 16),
+            if (widget.isOwnAccount) ...[
+              TextField(
+                key: const Key('set-password-current'),
+                controller: _current,
+                obscureText: _obscureCurrent,
+                autofocus: true,
+                enabled: !_saving,
+                decoration: InputDecoration(
+                  labelText: 'Current password',
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                  prefixIcon: const Icon(Icons.lock_open_outlined, size: 18),
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscureCurrent ? Icons.visibility_off : Icons.visibility, size: 18),
+                    tooltip: _obscureCurrent ? 'Show password' : 'Hide password',
+                    onPressed: () => setState(() => _obscureCurrent = !_obscureCurrent),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             TextField(
               key: const Key('set-password-new'),
               controller: _password,
               obscureText: _obscure,
-              autofocus: true,
+              autofocus: !widget.isOwnAccount,
               enabled: !_saving,
               decoration: InputDecoration(
                 labelText: 'New password',

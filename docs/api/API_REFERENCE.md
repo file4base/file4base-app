@@ -1771,7 +1771,7 @@ The `?database=<name>` query parameter and the `X-Database-Name` header are stil
 ---
 
 ### `POST /api/v1/security/users`
-Creates a new user account with hashed password (`bcrypt`). Requires the `owner` or `admin` role; only an `owner` can create another `owner`.
+Creates a new user account with hashed password (`bcrypt`). Requires the `owner` or `admin` role; only an `owner` can create another `owner`. Only a super-owner can create an account whose name `FILE4BASE_SUPER_OWNER` seeds for this database (`403`), since it would sign in as a super-owner.
 
 #### Request Body
 ```json
@@ -1798,9 +1798,13 @@ Creates a new user account with hashed password (`bcrypt`). Requires the `owner`
 ### `PUT /api/v1/security/users/{id}`
 Updates password, role and/or `is_active` of an existing user account.
 
-- `owner`: any account.
+- `owner`: any account, except a super-owner account unless the caller is a super-owner.
 - `admin`: `admin` and `user` accounts; cannot modify owner accounts nor promote to `owner`.
 - `user`: only their own password (role and status must stay unchanged).
+
+Only a super-owner can manage another super-owner account (stored flag, `FILE4BASE_SUPER_OWNER` seed, or owner of the `FILE4BASE_ADMIN_DATABASE`): anyone else gets `403` *only a super-owner can manage a super-owner account* (#209). The same rule applies to `DELETE /api/v1/security/users/{id}` and to the MFA endpoints.
+
+Changing **your own** password requires `current_password`, whatever your role: `403` when it is missing or wrong. Wrong current passwords count against the sign-in throttle of the account (`429` with `Retry-After` once it is locked). Setting the password of another account does not take that account's current password.
 
 The last active owner cannot be demoted or deactivated. When the password, role or status changes, the other sessions of that user are revoked. Setting a password clears `password_pending` (#198); a password of only spaces is refused (`400`). An owner with `password_pending` cannot sign in, so it does not count as the active owner a database must keep. An empty or omitted `role` keeps the stored one.
 
@@ -1808,17 +1812,20 @@ The last active owner cannot be demoted or deactivated. When the password, role 
 ```json
 {
   "password": "newpassword",
+  "current_password": "oldpassword",
   "role": "admin",
   "is_active": true
 }
 ```
+
+`current_password` is read only when the account is the caller's own.
 
 To let an account migrated without a password sign in, send its `password` together with `"is_active": true`.
 
 ---
 
 ### `DELETE /api/v1/security/users/{id}`
-Deletes a user account and revokes its sessions. Requires the `owner` or `admin` role (only an `owner` can delete an owner). You cannot delete your own account nor the only remaining owner account.
+Deletes a user account and revokes its sessions. Requires the `owner` or `admin` role (only an `owner` can delete an owner, only a super-owner can delete a super-owner). You cannot delete your own account nor the only remaining owner account.
 
 ---
 
@@ -2471,13 +2478,13 @@ File4Base supports RFC 6238 Time-Based One-Time Password (TOTP) two-factor authe
 When `mfa_enabled` is `true` for an account, `POST /api/v1/auth/login` requires `"totp_code": "123456"` in addition to `username` and `password`. If `totp_code` is omitted when MFA is enabled, `POST /api/v1/auth/login` returns `401 Unauthorized` with `"mfa_required": true`.
 
 ### `POST /api/v1/security/users/{id}/mfa/setup`
-*Requires `admin` or `owner` role (or the user's own session).* Generates a fresh 160-bit Base32 TOTP secret and `otpauth://totp/` URI for QR code provisioning without enabling enforcement until verified.
+*Requires `admin` or `owner` role (or the user's own session); only a super-owner for another super-owner's account.* Generates a fresh 160-bit Base32 TOTP secret and `otpauth://totp/` URI for QR code provisioning without enabling enforcement until verified.
 
 ### `POST /api/v1/security/users/{id}/mfa/enable`
-*Requires `admin` or `owner` role (or the user's own session).* Verifies a 6-digit TOTP code (`{"code": "123456", "secret": "..."}`) and activates MFA (`mfa_enabled = true`) on the account.
+*Requires `admin` or `owner` role (or the user's own session); only a super-owner for another super-owner's account.* Verifies a 6-digit TOTP code (`{"code": "123456", "secret": "..."}`) and activates MFA (`mfa_enabled = true`) on the account.
 
 ### `POST /api/v1/security/users/{id}/mfa/disable`
-*Requires `admin` or `owner` role (or the user's own session).* Disables MFA (`mfa_enabled = false`) and clears the stored TOTP secret for account `{id}`.
+*Requires `admin` or `owner` role (or the user's own session); only a super-owner for another super-owner's account.* Disables MFA (`mfa_enabled = false`) and clears the stored TOTP secret for account `{id}`.
 
 ---
 
