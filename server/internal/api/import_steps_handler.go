@@ -43,6 +43,9 @@ type ImportStepView struct {
 	AddRemain   bool                `json:"add_remaining,omitempty"`
 	AutoEnter   []string            `json:"auto_enter_fields,omitempty"`
 	Mappings    []ImportStepMapping `json:"mappings"`
+	// MatchByName: FileMaker pairs the fields by matching names each time
+	// the step runs, and so does its transfer.
+	MatchByName bool `json:"match_by_name,omitempty"`
 
 	// SuggestedDatabase is the solution the source file most likely became:
 	// this one when the step imports from the file the design was saved
@@ -89,7 +92,7 @@ func (h *TransferHandler) ListImportSteps(w http.ResponseWriter, r *http.Request
 		v := ImportStepView{
 			StepID: st.StepID, ScriptID: st.ScriptID, ScriptName: st.ScriptName, StepIndex: st.StepIndex,
 			SourceFile: step.SourceFile, TargetTable: step.TargetTable, Method: step.Method,
-			AddRemain: step.AddRemaining, Mappings: []ImportStepMapping{},
+			AddRemain: step.AddRemaining, Mappings: []ImportStepMapping{}, MatchByName: step.MatchByName,
 			EnabledInFileMaker: st.EnabledInFileMaker,
 		}
 		for _, m := range step.Maps {

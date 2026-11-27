@@ -201,3 +201,193 @@ func TestTransferNameFitsTheLimit(t *testing.T) {
 		t.Fatalf("name is %d characters", len([]rune(name)))
 	}
 }
+
+// FileMaker imports a value into a field of another type without converting
+// it; only container data and other fields do not mix (#191). A table that
+// fits only so is inferred with low confidence, the differing pairs named,
+// and never when another one does.
+func TestInferSourceUnderFileMakersTypeRule(t *testing.T) {
+	step, _ := ParseImportStep(importStepParams())
+	target := NewTargetColumns(table("orders",
+		"code", "TEXT", "1", "total", "NUMBER", "2", "stamp", "TEXT", "9"))
+	entries := PositionTable(table("entries", "x", "NUMBER", "1", "code", "TEXT", "2", "total", "NUMBER", "3"))
+	loose := PositionTable(table("loose", "x", "TEXT", "1", "ref", "NUMBER", "2", "total", "NUMBER", "3"))
+	pictures := PositionTable(table("pictures", "x", "TEXT", "1", "code", "TEXT", "2", "scan", "CONTAINER", "3"))
+	short := PositionTable(table("short", "x", "NUMBER", "1", "y", "TEXT", "2"))
+
+	t.Run("the only table FileMaker could import from is low, its differing pairs named", func(t *testing.T) {
+		inf := InferSource(step, target, []PositionedTable{short, pictures, loose}, "")
+		if inf.Table != "loose" || inf.Confidence != ConfidenceLow {
+			t.Fatalf("inference = %#v", inf)
+		}
+		if !strings.Contains(inf.Reason, "2 ref (NUMBER) → code (TEXT)") || !strings.Contains(inf.Reason, "1 value(s)") {
+			t.Fatalf("reason = %q", inf.Reason)
+		}
+		c := inf.Candidates[0]
+		if c.Table != "loose" || c.Fits || !c.Possible || c.Pairs[0].SourceType != dbal.FieldTypeNumber ||
+			c.Pairs[0].TargetType != dbal.FieldTypeText || c.Pairs[1].SourceType != "" {
+			t.Fatalf("candidate = %#v", c)
+		}
+		for _, other := range inf.Candidates[1:] {
+			if other.Possible {
+				t.Fatalf("%s is possible: %#v", other.Table, other)
+			}
+		}
+		if p := inf.Candidates[1].Pairs; inf.Candidates[1].Table == "pictures" && !p[1].Incompatible {
+			t.Fatalf("container data into a number is not marked: %#v", p)
+		}
+	})
+	t.Run("a table that fits by type wins over one FileMaker could import from", func(t *testing.T) {
+		inf := InferSource(step, target, []PositionedTable{loose, entries}, "")
+		if inf.Table != "entries" || inf.Confidence != ConfidenceHigh {
+			t.Fatalf("inference = %#v", inf)
+		}
+	})
+	t.Run("two such tables are left to a person", func(t *testing.T) {
+		twin := loose
+		twin.Name = "loose_copy"
+		inf := InferSource(step, target, []PositionedTable{loose, twin}, "")
+		if inf.Table != "" || inf.Confidence != "" || !strings.Contains(inf.Reason, "2 tables FileMaker could import from") {
+			t.Fatalf("inference = %#v", inf)
+		}
+	})
+	t.Run("container data goes into no other field", func(t *testing.T) {
+		inf := InferSource(step, target, []PositionedTable{pictures}, "")
+		if inf.Table != "" || inf.Candidates[0].Possible {
+			t.Fatalf("inference = %#v", inf)
+		}
+	})
+	t.Run("the pair as a person reads it", func(t *testing.T) {
+		p := PositionPair{Position: 2, SourceField: "amount", TargetField: "total",
+			SourceType: dbal.FieldTypeText, TargetType: dbal.FieldTypeNumber}
+		if got := p.Describe(); got != "2 amount (TEXT) → total (NUMBER)" {
+			t.Fatalf("describe = %q", got)
+		}
+	})
+}
+
+// A step matching names pairs its fields by name, whatever their case, at
+// each run (#191).
+func TestInferSourceByMatchingNames(t *testing.T) {
+	p := importStepParams()
+	p["match_field_names"] = true
+	maps := p["field_mappings"].([]interface{})
+	delete(maps[1].(map[string]interface{}), "source_position") // positions say nothing here
+	step, _ := ParseImportStep(p)
+	if !step.MatchByName || step.Problem() != "" || len(step.Maps) != 2 {
+		t.Fatalf("step = %#v (%s)", step, step.Problem())
+	}
+	target := NewTargetColumns(table("orders",
+		"code", "TEXT", "1", "total", "NUMBER", "2", "stamp", "TEXT", "9"))
+	named := PositionTable(table("named", "Total", "NUMBER", "1", "x", "TEXT", "2", "CODE", "TEXT", "3"))
+	texts := PositionTable(table("texts", "code", "TEXT", "1", "total", "TEXT", "2"))
+	partial := PositionTable(table("partial", "code", "TEXT", "1", "x", "NUMBER", "2", "y", "NUMBER", "3"))
+
+	t.Run("the only table naming every target field", func(t *testing.T) {
+		inf := InferSource(step, target, []PositionedTable{partial, named}, "")
+		if inf.Table != "named" || inf.Confidence != ConfidenceHigh || !inf.ByName {
+			t.Fatalf("inference = %#v", inf)
+		}
+		pairs := inf.Candidates[0].Pairs
+		if pairs[0].SourceField != "CODE" || pairs[0].Position != 0 || pairs[1].SourceField != "Total" {
+			t.Fatalf("pairs = %#v", pairs)
+		}
+		in, err := PlanTransfer(step, "n", "", named, target)
+		if err != nil || !in.MatchByName || in.Mappings[0].SourceField != "CODE" || in.Mappings[1].SourceField != "Total" ||
+			in.MatchFields[0] != "code" {
+			t.Fatalf("input = %#v, %v", in, err)
+		}
+	})
+	t.Run("a pair of another type is low", func(t *testing.T) {
+		inf := InferSource(step, target, []PositionedTable{texts, partial}, "")
+		if inf.Table != "texts" || inf.Confidence != ConfidenceLow ||
+			!strings.Contains(inf.Reason, "total (TEXT) → total (NUMBER)") {
+			t.Fatalf("inference = %#v", inf)
+		}
+	})
+	t.Run("a table naming only some is left to a person, and pairs again at each run", func(t *testing.T) {
+		inf := InferSource(step, target, []PositionedTable{partial}, "")
+		if inf.Table != "" || !strings.Contains(inf.Reason, "partial names 1 of them") {
+			t.Fatalf("inference = %#v", inf)
+		}
+		in, err := PlanTransfer(step, "n", "", partial, target)
+		if err != nil || !in.MatchByName || in.Mappings[1].SourceField != "total" {
+			t.Fatalf("input = %#v, %v", in, err)
+		}
+	})
+	t.Run("two tables naming every field are left to a person", func(t *testing.T) {
+		twin := named
+		twin.Name = "named_copy"
+		if inf := InferSource(step, target, []PositionedTable{named, twin}, ""); inf.Table != "" {
+			t.Fatalf("inference = %#v", inf)
+		}
+	})
+}
+
+// A stored calculation is matched on and never written, as FileMaker
+// matches on one "for matching only" (#191).
+func TestPlanTransferMatchesOnAStoredCalculation(t *testing.T) {
+	step, _ := ParseImportStep(importStepParams())
+	entries := PositionTable(table("entries", "x", "NUMBER", "1", "code", "TEXT", "2", "total", "NUMBER", "3"))
+	orders := func(formula string) TargetColumns {
+		t := table("orders", "total", "NUMBER", "2", "stamp", "TEXT", "9")
+		t.Columns = append(t.Columns, schema.ColumnMetadata{
+			Name: "code", FieldType: dbal.FieldTypeCalculation, SourceFieldID: "1", CalculationFormula: &formula,
+		})
+		return NewTargetColumns(t)
+	}
+	stored := orders(`{"formula":"Upper ( x )","result_type":"Text"}`)
+	if inf := InferSource(step, stored, []PositionedTable{entries}, ""); inf.Table != "entries" {
+		t.Fatalf("the calculation's result type was not weighed: %#v", inf)
+	}
+	if in, err := PlanTransfer(step, "n", "", entries, stored); err != nil || in.MatchFields[0] != "code" {
+		t.Fatalf("input = %#v, %v", in, err)
+	}
+	unstored := orders(`{"formula":"Upper ( x )","result_type":"Text","stored":false}`)
+	if _, err := PlanTransfer(step, "n", "", entries, unstored); err == nil ||
+		!strings.Contains(err.Error(), "unstored calculation") {
+		t.Fatalf("an unstored match field was planned: %v", err)
+	}
+	p := importStepParams()
+	p["import_method"] = "add"
+	add, _ := ParseImportStep(p)
+	if _, err := PlanTransfer(add, "n", "", entries, stored); err == nil ||
+		!strings.Contains(err.Error(), "calculation field") {
+		t.Fatalf("an import into a calculation was planned: %v", err)
+	}
+}
+
+func TestImportStepWhoseTargetWasDeleted(t *testing.T) {
+	p := importStepParams()
+	p["field_mappings"] = []interface{}{}
+	p["deleted_target_fields"] = float64(3)
+	s, _ := ParseImportStep(p)
+	if !strings.Contains(s.Problem(), "the 3 field(s) the step imports into or matches on were deleted from the "+
+		"target table in FileMaker") {
+		t.Fatalf("problem = %q", s.Problem())
+	}
+}
+
+// Names pair whatever their case, FileMaker field names being unique within a
+// table regardless of it; two source names a case apart are not guessed at.
+func TestPairByName(t *testing.T) {
+	def := &schema.TransferDefinition{Name: "n", Mappings: []schema.TransferMapping{
+		{SourceField: "old", DestinationField: "total"},
+		{SourceField: "x", DestinationField: "note"},
+	}}
+	paired, unpaired, err := pairByName(def, map[string]dbal.AgnosticFieldType{
+		"Total": dbal.FieldTypeNumber, "code": dbal.FieldTypeText, "Total[]": "REPETITIONS:2",
+	})
+	if err != nil || len(paired.Mappings) != 1 || paired.Mappings[0].SourceField != "Total" ||
+		len(unpaired) != 1 || unpaired[0] != "note" || def.Mappings[0].SourceField != "old" {
+		t.Fatalf("paired = %#v, unpaired = %v, %v", paired, unpaired, err)
+	}
+	if _, _, err := pairByName(def, map[string]dbal.AgnosticFieldType{
+		"Total": dbal.FieldTypeNumber, "TOTAL": dbal.FieldTypeNumber,
+	}); err == nil {
+		t.Fatal("two source fields a case apart were paired")
+	}
+	if _, _, err := pairByName(def, map[string]dbal.AgnosticFieldType{"code": dbal.FieldTypeText}); err == nil {
+		t.Fatal("a run writing nothing was not refused")
+	}
+}

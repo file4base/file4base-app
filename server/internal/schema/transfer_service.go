@@ -101,7 +101,9 @@ func (e TransferEnd) DatabaseOr(fallback string) string {
 // TransferMapping sends one field of the source table to one field of the
 // destination table. Every field a transfer writes is mapped explicitly:
 // there is no "match the names and hope", because two solutions that were
-// developed apart never agree on every name.
+// developed apart never agree on every name. A transfer that pairs by name
+// (MatchByName), as a FileMaker import order matching names does, still
+// lists every destination field it may write.
 type TransferMapping struct {
 	SourceField      string `json:"source_field" msgpack:"source_field"`
 	DestinationField string `json:"destination_field" msgpack:"destination_field"`
@@ -151,6 +153,14 @@ type TransferDefinition struct {
 	PerformAutoEnter bool     `json:"perform_auto_enter,omitempty"`
 	AutoEnterFields  []string `json:"auto_enter_fields"`
 
+	// MatchByName pairs each destination field, at every run, with the
+	// source field of the same name, as FileMaker's "matching names" import
+	// order does each time its step runs (#191). The mappings then say which
+	// destination fields are written; their source fields are what the names
+	// paired when the transfer was saved. A destination field no source field
+	// is named as is left out of the run and listed in its report.
+	MatchByName bool `json:"match_by_name,omitempty"`
+
 	// CreatedBy is the account that saved it.
 	CreatedBy string `json:"created_by,omitempty"`
 
@@ -193,6 +203,7 @@ type TransferInput struct {
 
 	PerformAutoEnter bool     `json:"perform_auto_enter,omitempty"`
 	AutoEnterFields  []string `json:"auto_enter_fields"`
+	MatchByName      bool     `json:"match_by_name,omitempty"`
 }
 
 // transferPayload is the part of a definition stored as JSON. The ends are
@@ -210,6 +221,7 @@ type transferPayload struct {
 
 	PerformAutoEnter bool     `json:"perform_auto_enter,omitempty"`
 	AutoEnterFields  []string `json:"auto_enter_fields"`
+	MatchByName      bool     `json:"match_by_name,omitempty"`
 }
 
 func (s *Service) transferPlaceholder(n int) string {
@@ -423,6 +435,7 @@ func (s *Service) CreateTransfer(ctx context.Context, in TransferInput, createdB
 		DateOrder:   in.DateOrder,
 
 		PerformAutoEnter: in.PerformAutoEnter,
+		MatchByName:      in.MatchByName,
 		AutoEnterFields:  in.AutoEnterFields,
 
 		CreatedBy: createdBy,
@@ -486,6 +499,7 @@ func (s *Service) UpdateTransfer(ctx context.Context, id string, in TransferInpu
 		DateOrder:   in.DateOrder,
 
 		PerformAutoEnter: in.PerformAutoEnter,
+		MatchByName:      in.MatchByName,
 		AutoEnterFields:  in.AutoEnterFields,
 
 		CreatedBy: current.CreatedBy,
@@ -606,6 +620,7 @@ func encodeTransferPayload(def *TransferDefinition) (string, error) {
 		DateOrder:   def.DateOrder,
 
 		PerformAutoEnter: def.PerformAutoEnter,
+		MatchByName:      def.MatchByName,
 		AutoEnterFields:  def.AutoEnterFields,
 	})
 	if err != nil {
@@ -642,5 +657,6 @@ func scanTransfer(row rowScanner) (*TransferDefinition, error) {
 	def.DateOrder = payload.DateOrder
 	def.PerformAutoEnter = payload.PerformAutoEnter
 	def.AutoEnterFields = payload.AutoEnterFields
+	def.MatchByName = payload.MatchByName
 	return &def, nil
 }

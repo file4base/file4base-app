@@ -79,6 +79,11 @@ type Report struct {
 	// Fields are the destination fields that were written, in mapping order.
 	Fields []string `json:"fields"`
 
+	// Unpaired are the destination fields of a transfer matching names that
+	// no source field was named as on this run, and so were left out of it,
+	// as FileMaker leaves a target field no source name matches (#191).
+	Unpaired []string `json:"unpaired,omitempty"`
+
 	// RecordIDs are the destination records the run added or updated, when
 	// RunOptions.ReturnRecordIDs asked for them: the found set FileMaker
 	// shows once an Import Records step is done (#191).
@@ -182,6 +187,13 @@ func RunWith(
 		return report, fmt.Errorf("%w: the destination table %q of %s cannot be read: %v",
 			ErrTransfer, def.Destination.Table, describeDatabase(destinationDatabase), err)
 	}
+	if def.MatchByName {
+		paired, unpaired, err := pairByName(def, sourceTypes)
+		if err != nil {
+			return report, err
+		}
+		def, report.Unpaired, report.Fields = paired, unpaired, paired.DestinationFields()
+	}
 	for _, m := range def.Mappings {
 		if _, ok := sourceTypes[m.SourceField]; !ok {
 			return report, fmt.Errorf("%w: %q is not a field of the source table %q",
@@ -279,6 +291,61 @@ func RunWith(
 	report.RecordIDs = imported.RecordIDs
 	report.Committed = true
 	return report, nil
+}
+
+// pairByName pairs each destination field of a transfer matching names with
+// the source field named as it, on this run, as FileMaker matches the names
+// each time its Import Records step is performed. FileMaker field names are
+// unique within a table whatever their case, so the names are compared
+// without it. A destination field no source field is named as is left out
+// and answered in unpaired, unless records are matched on it: the run is
+// then refused, as it would match on nothing.
+func pairByName(
+	def *schema.TransferDefinition, sourceTypes map[string]dbal.AgnosticFieldType,
+) (*schema.TransferDefinition, []string, error) {
+	byName := make(map[string]string, len(sourceTypes))
+	twice := map[string]bool{}
+	for field := range sourceTypes {
+		if strings.HasSuffix(field, "[]") {
+			continue // a repeating field's internal entry, not a field
+		}
+		key := strings.ToLower(field)
+		if _, taken := byName[key]; taken {
+			twice[key] = true
+		}
+		byName[key] = field
+	}
+	matched := make(map[string]bool, len(def.MatchFields))
+	for _, field := range def.MatchFields {
+		matched[field] = true
+	}
+	paired := *def
+	paired.Mappings = make([]schema.TransferMapping, 0, len(def.Mappings))
+	var unpaired []string
+	for _, m := range def.Mappings {
+		key := strings.ToLower(m.DestinationField)
+		if twice[key] {
+			return def, nil, fmt.Errorf("%w: %q pairs fields by name, and the source table %q has two fields "+
+				"named %q whatever their case", ErrTransfer, def.Name, def.Source.Table, m.DestinationField)
+		}
+		source, ok := byName[key]
+		if !ok {
+			if matched[m.DestinationField] {
+				return def, nil, fmt.Errorf("%w: %q pairs fields by name and matches records on %q, and the "+
+					"source table %q has no field of that name", ErrTransfer, def.Name, m.DestinationField,
+					def.Source.Table)
+			}
+			unpaired = append(unpaired, m.DestinationField)
+			continue
+		}
+		paired.Mappings = append(paired.Mappings,
+			schema.TransferMapping{SourceField: source, DestinationField: m.DestinationField})
+	}
+	if len(paired.Mappings) == 0 {
+		return def, unpaired, fmt.Errorf("%w: %q pairs fields by name, and the source table %q has no field "+
+			"named as any of its destination fields", ErrTransfer, def.Name, def.Source.Table)
+	}
+	return &paired, unpaired, nil
 }
 
 // screen converts every mapped cell the way the destination import will, and

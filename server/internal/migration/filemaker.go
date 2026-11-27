@@ -906,12 +906,13 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	if len(bundle.Tables) > 0 {
 		defaultContextTable = bundle.Tables[0].Name
 	}
+	layoutTables := layoutTableByName(bundle, occTableByName)
 	for _, sn := range scriptNodes {
 		// Skip <script> references inside <layout>
 		if firstAttr(sn, "where") != "" && len(sn.Children) == 0 {
 			continue
 		}
-		sc, items := convertScriptNode(sn, defaultContextTable, occTableByName)
+		sc, items := convertScriptNode(sn, defaultContextTable, occTableByName, layoutTables)
 		for _, it := range items {
 			addReportItem(report, it)
 		}
@@ -2335,10 +2336,58 @@ func layoutOccurrenceDetail(occName string, occurrences []schema.BundleOccurrenc
 	return fmt.Sprintf("Layout bound to table occurrence %q", occName)
 }
 
+// layoutTableByName maps each layout's lower-cased name to the table of this
+// solution its occurrence shows; a layout of another file's table is left
+// out.
+func layoutTableByName(bundle *schema.SolutionBundle, occTableByName map[string]string) map[string]string {
+	occName := make(map[string]string, len(bundle.TableOccurrences))
+	for _, o := range bundle.TableOccurrences {
+		if o.External == nil {
+			occName[o.ID] = o.Name
+		}
+	}
+	out := make(map[string]string, len(bundle.Layouts))
+	for _, l := range bundle.Layouts {
+		if name := occName[l.TableOccurrenceID]; name != "" {
+			if table := occTableByName[strings.ToLower(name)]; table != "" {
+				out[strings.ToLower(strings.TrimSpace(l.Name))] = table
+			}
+		}
+	}
+	return out
+}
+
+// nextLayoutTable is the table of the layout a script is on once a step has
+// run, as far as it is fixed before the script runs: a Go to Layout naming
+// its layout fixes it, and a branch, a loop, another window or another
+// script makes it unknown again, since which way it goes is decided only as
+// the script runs.
+func nextLayoutTable(current, canonical string, params map[string]interface{}, layoutTables map[string]string) string {
+	switch canonical {
+	case "Go to Layout":
+		name, _ := params["layout_name"].(string)
+		if params["layout_destination"] != "selected" || strings.TrimSpace(name) == "" {
+			return ""
+		}
+		return layoutTables[strings.ToLower(strings.TrimSpace(name))]
+	case "If", "Else If", "Else", "End If", "Loop", "Exit Loop If", "End Loop",
+		"Perform Script", "Perform Script on Server", "Go to Related Record",
+		"New Window", "Select Window", "Close Window":
+		return ""
+	}
+	return current
+}
+
 // occTableByName maps a lower-cased table occurrence name to the File4Base
 // table it shows, so a step naming an occurrence can say which table it
 // writes.
-func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName map[string]string) (*schema.BundleScript, []ReportItem) {
+//
+// layoutTables maps a lower-cased layout name to the table of this solution
+// it shows: an Import Records step saved without its target occurrence
+// imports into the table of the layout a Go to Layout just before it fixes.
+func convertScriptNode(
+	sn *xmlNode, defaultContextTable string, occTableByName, layoutTables map[string]string,
+) (*schema.BundleScript, []ReportItem) {
 	var items []ReportItem
 	name := firstAttr(sn, "name", "Name")
 	if name == "" || nativeFolderMarker(sn) || nativeSeparatorMarker(sn) {
@@ -2351,6 +2400,9 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName m
 
 	stepNodes := findDirectOrCatalogChildren(sn, "StepList", "steps", "Step", "step")
 	steps := make([]schema.BundleStep, 0, len(stepNodes))
+	// layoutTable is the table of the layout the script is known to be on,
+	// "" when that is not known before it runs.
+	layoutTable := ""
 
 	for idx, stNode := range stepNodes {
 		rawStepName := strings.TrimSpace(firstAttr(stNode, "name", "type", "Name"))
@@ -2407,12 +2459,21 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName m
 			})
 		}
 
+		if canonical == "Import Records" && enabled {
+			if occ, _ := params["target_occurrence"].(string); occ == "" && layoutTable != "" {
+				params["current_layout_table"] = layoutTable
+			}
+		}
+		if enabled {
+			layoutTable = nextLayoutTable(layoutTable, canonical, params, layoutTables)
+		}
 		if isSupported {
 			for _, it := range stepOptionItems(canonical, params, occTableByName) {
 				it.SourceName = fmt.Sprintf("%s > %s (step %d)", name, rawStepName, idx+1)
 				it.TargetName = name
 				items = append(items, it)
 			}
+			delete(params, "current_layout_table")
 			if _, done := params["migration_note"]; !done && needsTransferDefinition(canonical) {
 				items = append(items, ReportItem{
 					Category:   CategoryManualActionRequired,

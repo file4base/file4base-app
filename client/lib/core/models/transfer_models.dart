@@ -100,6 +100,7 @@ class TransferDefinitionModel {
     this.hasFoundSet = false,
     this.performAutoEnter = false,
     this.autoEnterFields = const [],
+    this.matchByName = false,
   });
 
   factory TransferDefinitionModel.fromJson(Map<String, dynamic> json) {
@@ -126,6 +127,7 @@ class TransferDefinitionModel {
       autoEnterFields: ((json['auto_enter_fields'] as List<dynamic>?) ?? const [])
           .map((item) => item.toString())
           .toList(),
+      matchByName: json['match_by_name'] as bool? ?? false,
     );
   }
 
@@ -147,6 +149,11 @@ class TransferDefinitionModel {
   /// [autoEnterFields] only when it names any.
   final bool performAutoEnter;
   final List<String> autoEnterFields;
+
+  /// Whether each destination field is paired, at every run, with the
+  /// source field of the same name, as FileMaker's "matching names" import
+  /// order does (#191).
+  final bool matchByName;
 
   /// Whether a run works on the destination's found set: replacing it in
   /// order, or updating the matching records it holds.
@@ -171,7 +178,8 @@ class TransferDefinitionModel {
         : matchFields.isEmpty
             ? ''
             : ' (update matching on ${matchFields.join(', ')})';
-    return '$name: ${source.label} → ${destination.label}$keys';
+    final byName = matchByName ? ' (fields paired by name)' : '';
+    return '$name: ${source.label} → ${destination.label}$keys$byName';
   }
 }
 
@@ -221,6 +229,7 @@ class TransferRunReport {
     this.committed = false,
     this.error,
     this.recordIds = const [],
+    this.unpaired = const [],
   });
 
   factory TransferRunReport.fromJson(Map<String, dynamic> json) => TransferRunReport(
@@ -240,6 +249,7 @@ class TransferRunReport {
             .toList(),
         committed: json['committed'] as bool? ?? false,
         error: json['error'] as String?,
+        unpaired: ((json['unpaired'] as List<dynamic>?) ?? const []).map((item) => item.toString()).toList(),
         recordIds: ((json['record_ids'] as List<dynamic>?) ?? const [])
             .map((item) => item.toString())
             .toList(),
@@ -272,6 +282,10 @@ class TransferRunReport {
   /// The destination records the run added or updated, when the run asked
   /// for them: the found set an Import Records step shows once done (#191).
   final List<String> recordIds;
+
+  /// The destination fields of a transfer pairing by name that no source
+  /// field was named as on this run, and so were left out of it.
+  final List<String> unpaired;
 
   int get rejectedCount => rejected.length;
 
@@ -314,6 +328,7 @@ class ImportStepModel {
     this.suggestedBy = '',
     this.problem = '',
     this.enabledInFileMaker = false,
+    this.matchByName = false,
   });
 
   factory ImportStepModel.fromJson(Map<String, dynamic> json) => ImportStepModel(
@@ -335,6 +350,7 @@ class ImportStepModel {
         suggestedBy: json['suggested_by'] as String? ?? '',
         problem: json['problem'] as String? ?? '',
         enabledInFileMaker: json['enabled_in_filemaker'] as bool? ?? false,
+        matchByName: json['match_by_name'] as bool? ?? false,
       );
 
   final String stepId;
@@ -368,6 +384,10 @@ class ImportStepModel {
   /// Whether confirming its transfer enables the step: FileMaker had it
   /// enabled.
   final bool enabledInFileMaker;
+
+  /// Whether FileMaker pairs the step's fields by matching names each time
+  /// it runs, rather than by position; so does its transfer.
+  final bool matchByName;
 
   /// Replacing overwrites the fields of records already there.
   bool get isDestructive => method == 'replace';
@@ -411,6 +431,7 @@ class ImportSourceCandidate {
     this.namesMatched = 0,
     this.positions = 0,
     this.fits = false,
+    this.possible = false,
     this.deletedPositions = 0,
     this.pairs = const [],
   });
@@ -422,6 +443,7 @@ class ImportSourceCandidate {
         namesMatched: (json['names_matched'] as num?)?.toInt() ?? 0,
         positions: (json['positions'] as num?)?.toInt() ?? 0,
         fits: json['fits'] as bool? ?? false,
+        possible: json['possible'] as bool? ?? false,
         deletedPositions: (json['deleted_positions'] as num?)?.toInt() ?? 0,
         pairs: ((json['pairs'] as List<dynamic>?) ?? const [])
             .map((item) => ImportPositionPair.fromJson(item as Map<String, dynamic>))
@@ -436,6 +458,10 @@ class ImportSourceCandidate {
 
   /// Whether the table's fields fit every position the step reads by type.
   final bool fits;
+
+  /// Whether FileMaker could import from the table at all: a field at every
+  /// position, whatever its type, but container data and other fields.
+  final bool possible;
 
   /// How many positions the step reads hold a field deleted since the
   /// migration.
@@ -462,6 +488,9 @@ class ImportPositionPair {
     this.match = false,
     this.deleted = false,
     this.missing = false,
+    this.sourceType = '',
+    this.targetType = '',
+    this.incompatible = false,
   });
 
   factory ImportPositionPair.fromJson(Map<String, dynamic> json) => ImportPositionPair(
@@ -471,6 +500,9 @@ class ImportPositionPair {
         match: json['match'] as bool? ?? false,
         deleted: json['deleted'] as bool? ?? false,
         missing: json['missing'] as bool? ?? false,
+        sourceType: json['source_type'] as String? ?? '',
+        targetType: json['target_type'] as String? ?? '',
+        incompatible: json['incompatible'] as bool? ?? false,
       );
 
   final int position;
@@ -481,16 +513,36 @@ class ImportPositionPair {
   /// The field at this position was deleted since the migration.
   final bool deleted;
 
-  /// The table has no field at this position.
+  /// The table has no field at this position, or, for a step matching
+  /// names, none named as the target field.
   final bool missing;
 
+  /// The two types, given when they differ: the value goes into a field of
+  /// another type, which a person has to accept.
+  final String sourceType;
+  final String targetType;
+
+  /// Container data and a field that is not a container, which FileMaker
+  /// does not import between.
+  final bool incompatible;
+
+  /// Whether the value goes into a field of another type.
+  bool get converted => sourceType.isNotEmpty || targetType.isNotEmpty;
+
+  /// "2 amount (TEXT) → total (NUMBER)" for a pair whose types differ; a
+  /// pair matched by name has no position.
   String describe() {
+    final shown = converted && !deleted && !missing;
     final source = deleted
         ? '(deleted field)'
         : missing
             ? '(no field)'
-            : sourceField;
-    return '$position $source → $targetField${match ? ' (match)' : ''}';
+            : shown
+                ? '$sourceField ($sourceType)'
+                : sourceField;
+    final target = shown ? '$targetField ($targetType)' : targetField;
+    final at = position > 0 ? '$position ' : '';
+    return '$at$source → $target${match ? ' (match)' : ''}${incompatible ? ' (cannot be imported)' : ''}';
   }
 }
 
@@ -505,6 +557,7 @@ class ImportStepInference {
     this.candidates = const [],
     this.error = '',
     this.tablesHidden = 0,
+    this.byName = false,
   });
 
   factory ImportStepInference.fromJson(Map<String, dynamic> json) => ImportStepInference(
@@ -517,6 +570,7 @@ class ImportStepInference {
             .toList(),
         error: json['error'] as String? ?? '',
         tablesHidden: (json['tables_hidden'] as num?)?.toInt() ?? 0,
+        byName: json['by_name'] as bool? ?? false,
       );
 
   final String stepId;
@@ -524,7 +578,9 @@ class ImportStepInference {
   /// The inferred source table, empty when none or several fit.
   final String table;
 
-  /// `high` or `medium` when [table] is set.
+  /// `high`, `medium` or `low` when [table] is set. Low: no table fits
+  /// every position by type, and this is the only one FileMaker could
+  /// import from, some values going into fields of another type.
   final String confidence;
   final String reason;
   final List<ImportSourceCandidate> candidates;
@@ -535,7 +591,14 @@ class ImportStepInference {
   /// then unique among the others only.
   final int tablesHidden;
 
+  /// Whether the step pairs its fields by matching names, and the tables
+  /// were weighed by name.
+  final bool byName;
+
   bool get isInferred => table.isNotEmpty;
+
+  /// An inference a person confirms on its own, never in bulk.
+  bool get isLowConfidence => isInferred && confidence == 'low';
 
   /// The candidate weighed for [name], if any.
   ImportSourceCandidate? candidate(String? name) => candidates.where((c) => c.table == name).firstOrNull;

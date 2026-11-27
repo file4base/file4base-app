@@ -178,7 +178,7 @@ func decodeImportField(n *xmlNode, out map[string]interface{}) []string {
 	}
 
 	var mappings []map[string]interface{}
-	skipped := 0
+	skipped, deletedTargets := 0, 0
 	// FileMaker 2023 and later choose auto-enter field by field: a Map whose
 	// Options carry 2 performs the field's auto-enter options, on a field
 	// imported into or not. When the maps carry Options at all, that choice
@@ -193,6 +193,13 @@ func decodeImportField(n *xmlNode, out map[string]interface{}) []string {
 			}
 			ref := findFirstChild(m, "FieldReference")
 			if ref == nil {
+				// A field imported into or matched on whose reference
+				// FileMaker no longer writes was deleted from the target
+				// table, or the table itself was: FileMaker imports
+				// nothing into it.
+				if kind := firstAttr(m, "kind"); kind == "0" || kind == "2" {
+					deletedTargets++
+				}
 				continue
 			}
 			if raw, ok := m.Attrs["Options"]; ok {
@@ -265,6 +272,9 @@ func decodeImportField(n *xmlNode, out map[string]interface{}) []string {
 		out["auto_enter_field_ids"] = autoEnterIDs
 	}
 	out["skipped_source_fields"] = skipped
+	if deletedTargets > 0 {
+		out["deleted_target_fields"] = deletedTargets
+	}
 	return unknown
 }
 
@@ -357,7 +367,18 @@ func importRecordsNote(params map[string]interface{}, targetTable string) string
 	what.WriteString(")")
 
 	var why string
+	byName, _ := params["match_field_names"].(bool)
 	switch kind, _ := source["kind"].(string); {
+	case kind == "filemaker" && len(mappings) == 0 && intParam(params["deleted_target_fields"]) > 0:
+		why = fmt.Sprintf("the %d field(s) it imports into or matches on were deleted from the target table in "+
+			"FileMaker, or the table itself was, so FileMaker imports nothing either. The step stays disabled",
+			intParam(params["deleted_target_fields"]))
+	case kind == "filemaker" && byName:
+		why = fmt.Sprintf("FileMaker pairs its fields by matching names each time the step runs, and did not "+
+			"save the source table. Choose the solution that file became and its table under \"Import Records "+
+			"from other FileMaker files\" in the migration review: it creates a transfer into %s that pairs %s "+
+			"by name at each run and names it in the step, which stays disabled until then",
+			orTable(targetTable), joinOrNone(append(append([]string{}, keys...), imported...)))
 	case kind == "filemaker" && len(positions) > 0:
 		why = fmt.Sprintf("FileMaker saved its source fields by position only, not by name, and did not save "+
 			"the source table. Choose the solution that file became and its table under \"Import Records from "+
@@ -782,7 +803,14 @@ func stepOptionItems(canonical string, params map[string]interface{}, occTableBy
 		table := ""
 		if occ, _ := params["target_occurrence"].(string); occ != "" {
 			table = occTableByName[strings.ToLower(occ)]
+		} else if layout, _ := params["current_layout_table"].(string); layout != "" {
+			// Saved without its target, the step imports into the table
+			// of the current layout, which the Go to Layout before it
+			// fixes.
+			table = layout
+			params["target_table_from_layout"] = true
 		}
+		delete(params, "current_layout_table")
 		if table != "" {
 			params["target_table"] = table
 		}
@@ -816,4 +844,17 @@ func stepOptionItems(canonical string, params map[string]interface{}, occTableBy
 		Domain:   "script",
 		Detail:   note,
 	}}
+}
+
+// intParam reads a count a decoder left in a step's parameters.
+func intParam(v interface{}) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return 0
 }

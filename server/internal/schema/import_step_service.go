@@ -158,7 +158,7 @@ func (s *Service) CreateImportStepTransfer(
 		ID: uuid.NewString(), Name: in.Name, Source: in.Source, Destination: in.Destination,
 		FoundSet: in.FoundSet, Sort: in.Sort, Mappings: in.Mappings, MatchFields: in.MatchFields,
 		Mode: in.Mode, OnUnmatched: in.OnUnmatched, OnRejected: in.OnRejected, DateOrder: in.DateOrder,
-		PerformAutoEnter: in.PerformAutoEnter, AutoEnterFields: in.AutoEnterFields,
+		PerformAutoEnter: in.PerformAutoEnter, AutoEnterFields: in.AutoEnterFields, MatchByName: in.MatchByName,
 		CreatedBy: createdBy, CreatedAt: now, UpdatedAt: now,
 	}
 	encoded, err := encodeTransferPayload(def)

@@ -12,7 +12,40 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 /// Two synthetic files: "Ledger" became another solution, "Shop" is this one.
-List<Map<String, dynamic>> _steps() => [
+List<Map<String, dynamic>> _steps({bool extra = false}) => [
+  if (extra) ...[
+    {
+      'step_id': 's-low',
+      'script_id': 'sc-4',
+      'script_name': 'Pull counts',
+      'step_index': 1,
+      'source_file': 'Ledger',
+      'target_table': 'orders',
+      'method': 'update',
+      'mappings': [
+        {'position': 1, 'target_field': 'code', 'match': true},
+        {'position': 2, 'target_field': 'qty'},
+      ],
+      'suggested_database': 'ledger',
+      'suggested_by': 'database_name',
+    },
+    {
+      'step_id': 's-name',
+      'script_id': 'sc-5',
+      'script_name': 'Notes by name',
+      'step_index': 1,
+      'source_file': 'Ledger',
+      'target_table': 'orders',
+      'method': 'add',
+      'match_by_name': true,
+      'mappings': [
+        {'position': 0, 'target_field': 'code'},
+        {'position': 0, 'target_field': 'note'},
+      ],
+      'suggested_database': 'ledger',
+      'suggested_by': 'database_name',
+    },
+  ],
   {
     'step_id': 's-pull',
     'script_id': 'sc-1',
@@ -63,7 +96,10 @@ List<Map<String, dynamic>> _steps() => [
 ];
 
 class _FakeServer {
-  _FakeServer({this.hidden = 0, this.rejectInfers = 0, this.failLists = 0});
+  _FakeServer({this.hidden = 0, this.rejectInfers = 0, this.failLists = 0, this.extra = false});
+
+  /// Whether a low-confidence step and one matching names wait too.
+  final bool extra;
 
   /// Tables of Ledger the signed-in account may not export from.
   final int hidden;
@@ -91,7 +127,7 @@ class _FakeServer {
         for (final c in confirms)
           for (final i in c['items'] as List) (i as Map)['step_id'],
       };
-      return _json({'steps': _steps().where((s) => !done.contains(s['step_id'])).toList()});
+      return _json({'steps': _steps(extra: extra).where((s) => !done.contains(s['step_id'])).toList()});
     }
     if (path == '/api/v1/databases') {
       return _json({
@@ -150,6 +186,59 @@ class _FakeServer {
                 {'table': 'entries', 'fields': 3, 'types_matched': 1, 'positions': 1, 'fits': true},
               ],
             },
+            if (extra) ...[
+              {
+                'step_id': 's-low',
+                'table': 'entries',
+                'confidence': 'low',
+                'reason':
+                    "no table has a field of the target field's type at every position; this is the only one "
+                    'FileMaker could import from, and 1 value(s) go into a field of another type',
+                'candidates': [
+                  {
+                    'table': 'entries',
+                    'fields': 3,
+                    'types_matched': 1,
+                    'positions': 2,
+                    'possible': true,
+                    'pairs': [
+                      {'position': 1, 'source_field': 'code', 'target_field': 'code', 'match': true},
+                      {
+                        'position': 2,
+                        'source_field': 'count',
+                        'target_field': 'qty',
+                        'source_type': 'TEXT',
+                        'target_type': 'NUMBER',
+                      },
+                    ],
+                  },
+                ],
+              },
+              {
+                'step_id': 's-name',
+                'table': 'entries',
+                'confidence': 'high',
+                'by_name': true,
+                'reason':
+                    'the step pairs its fields by matching names, and this is the only table with a field '
+                    'named as each of its 2 target field(s), of the same type',
+                'candidates': [
+                  {
+                    'table': 'entries',
+                    'fields': 3,
+                    'types_matched': 2,
+                    'names_matched': 2,
+                    'positions': 2,
+                    'fits': true,
+                    'possible': true,
+                    'pairs': [
+                      {'position': 0, 'source_field': 'CODE', 'target_field': 'code'},
+                      {'position': 0, 'source_field': 'NOTE', 'target_field': 'note'},
+                    ],
+                  },
+                ],
+              },
+            ],
           ],
         });
       }
@@ -346,6 +435,56 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Create 1 transfer?'), findsOneWidget);
     expect(find.textContaining('Notes from customers, step 1'), findsNWidgets(2));
+  });
+
+  testWidgets('a low-confidence inference names its converted pairs and is confirmed only on its own', (tester) async {
+    final server = _FakeServer(extra: true);
+    await _pump(tester, server);
+
+    final low = find.byKey(const Key('import-step-s-low'));
+    expect(
+      find.descendant(of: low, matching: find.text('Inferred, low confidence: confirm on its own')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: low,
+        matching: find.text('Source position → target field: 1 code → code (match), 2 count (TEXT) → qty (NUMBER)'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('import-step-converted-s-low')), findsOneWidget);
+    expect(find.byKey(const Key('import-step-converted-s-pull')), findsNothing);
+
+    // Matching names: no position, and the run pairs the names again.
+    final byName = find.byKey(const Key('import-step-s-name'));
+    expect(
+      find.descendant(
+        of: byName,
+        matching: find.text('Source field (by name) → target field: CODE → code, NOTE → note'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.descendant(of: byName, matching: find.textContaining('paired by matching names')), findsOneWidget);
+    expect(find.descendant(of: byName, matching: find.textContaining('each time it runs')), findsOneWidget);
+
+    // The bulk confirmation leaves the low one out.
+    await tester.tap(find.byKey(const Key('import-steps-create-inferred')));
+    await tester.pumpAndSettle();
+    expect(find.text('Create 3 transfers?'), findsOneWidget);
+    expect(find.byKey(const Key('import-steps-confirm-s-low')), findsNothing);
+    expect(find.byKey(const Key('import-steps-confirm-s-name')), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    // On its own, it is created as confirmed.
+    await tester.tap(find.byKey(const Key('import-step-create-s-low')));
+    await tester.pumpAndSettle();
+    expect((server.confirms.single['items'] as List).single, {
+      'step_id': 's-low',
+      'source_database': 'ledger',
+      'source_table': 'entries',
+    });
   });
 
   testWidgets('choosing another solution asks it again', (tester) async {
