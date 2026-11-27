@@ -21,6 +21,10 @@ var ErrContextNotFound = errors.New("the record of the layout is not found")
 // that occurrence (the table's route reads this solution's tables only).
 var ErrOccurrenceElsewhere = errors.New("an occurrence of another solution's table")
 
+// ErrPortalRowNotFound is returned when the active portal row a layout's
+// record is evaluated with is not there.
+var ErrPortalRowNotFound = errors.New("the active portal row is not found")
+
 // evaluatedRecord is the record expressions are evaluated against, and
 // where their related reads start.
 type evaluatedRecord struct {
@@ -72,6 +76,9 @@ type evaluationScope struct {
 		row               map[string]interface{}
 	}
 	pinOccurrence string
+	// activeRow is, for the layout's record (own), the active portal row:
+	// the current record of the portal's occurrence (see PortalRow).
+	activeRow *pinnedRecord
 }
 
 // evaluationScope resolves what the records of tableName, seen from occurrence, are
@@ -83,15 +90,24 @@ type evaluationScope struct {
 // for an occurrence of another solution's table, and the occurrence must
 // be one; and one of this solution's tables when it does not.
 func (r *relatedReader) evaluationScope(
-	ctx context.Context, tableName, occurrence string, in *ContextRecord, external bool,
+	ctx context.Context, tableName, occurrence string, in *ContextRecord, external bool, active *PortalRow,
 ) (*evaluationScope, error) {
 	if in == nil {
 		fields, err := r.s.tableFields(ctx, tableName)
 		if err != nil {
 			return nil, err
 		}
-		return &evaluationScope{table: tableName, fields: fields, describe: r.s.describeContainer(ctx), rows: r,
-			own: true, occurrence: occurrence}, nil
+		sc := &evaluationScope{table: tableName, fields: fields, describe: r.s.describeContainer(ctx), rows: r,
+			own: true, occurrence: occurrence}
+		if active != nil {
+			if sc.activeRow, err = r.activePortalRow(ctx, tableName, occurrence, *active); err != nil {
+				return nil, err
+			}
+		}
+		return sc, nil
+	}
+	if active != nil {
+		return nil, fmt.Errorf("%w: a portal's rows evaluated in the layout's record have no active portal row", ErrInvalidValue)
 	}
 
 	graph, err := r.occurrenceGraph(ctx)
@@ -134,7 +150,7 @@ func (r *relatedReader) evaluationScope(
 	// read through one of its relationships): the row is the current
 	// record of that occurrence, its fields read as its own.
 	if portal.id == layout.id {
-		return r.evaluationScope(ctx, tableName, portal.id, nil, false)
+		return r.evaluationScope(ctx, tableName, portal.id, nil, false, nil)
 	}
 	sc := &evaluationScope{table: tableName, portal: portal, pinOccurrence: portal.id, rows: r}
 	sc.from.table, sc.from.occurrence, sc.from.row = layout.table, layout.id, map[string]interface{}{}
@@ -176,11 +192,61 @@ func (sc *evaluationScope) at(ctx context.Context, recordID string) (*evaluatedR
 	}
 	if sc.own {
 		at.from.table, at.from.occurrence, at.from.row = sc.table, sc.occurrence, at.row
+		at.pin = sc.activeRow
 		return at, nil
 	}
 	at.from = sc.from
 	at.pin = &pinnedRecord{occurrence: sc.pinOccurrence, row: at.row}
 	return at, nil
+}
+
+// activePortalRow reads the active portal row a record of tableName, seen
+// from occurrence (a layout's), is evaluated with: the row's record, read
+// where the portal's occurrence is, there as the account the caller's
+// session group holds for an occurrence of another solution's table, here
+// as the caller. The portal's occurrence must be another one than the
+// layout's.
+func (r *relatedReader) activePortalRow(
+	ctx context.Context, tableName, occurrence string, active PortalRow,
+) (*pinnedRecord, error) {
+	graph, err := r.occurrenceGraph(ctx)
+	if err != nil {
+		return nil, err
+	}
+	layout, ok := graph.named(occurrence)
+	if strings.TrimSpace(occurrence) == "" {
+		layout, err = graph.contextOf(tableName, "")
+		ok = err == nil
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrOccurrenceNotFound, occurrence)
+	}
+	portal, ok := graph.named(active.Occurrence)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrOccurrenceNotFound, active.Occurrence)
+	}
+	if portal.id == layout.id {
+		return nil, fmt.Errorf("%w: the active portal row must be of another occurrence than the layout's", ErrInvalidValue)
+	}
+	if strings.TrimSpace(active.RecordID) == "" {
+		return nil, fmt.Errorf("%w: the active portal row has no record id", ErrInvalidValue)
+	}
+	rows := r
+	if portal.external != nil {
+		if rows, err = r.open(ctx, *portal.external); err != nil {
+			return nil, err
+		}
+	} else if err := r.checkRead(ctx, portal.table); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrNoPermission, err)
+	}
+	row, err := rows.s.GetRow(ctx, portal.table, active.RecordID)
+	if errors.Is(err, ErrRecordNotFound) {
+		return nil, fmt.Errorf("%w: %s", ErrPortalRowNotFound, active.RecordID)
+	}
+	if err != nil {
+		return nil, wrapExternal(portal, err)
+	}
+	return &pinnedRecord{occurrence: portal.id, row: row}, nil
 }
 
 // wrapExternal says, for an occurrence of another solution's table, which

@@ -899,7 +899,7 @@ void main() {
     });
   });
 
-  testWidgets('a button in a portal row is drawn on each row and says it does not run yet', (tester) async {
+  testWidgets('a button in a portal row is drawn on each row and runs with its row active (#237)', (tester) async {
     final base = _layoutWithPortal();
     final layout = base.copyWith(objects: [
       ...base.objects,
@@ -917,8 +917,10 @@ void main() {
     await _pump(tester, layout: layout);
 
     expect(find.text('Open'), findsNWidgets(2), reason: 'once per related record');
-    await tester.tap(find.text('Open').first);
+    await tester.tap(find.text('Open').last);
     await tester.pumpAndSettle();
-    expect(find.text('A button in a portal row does not run yet.'), findsOneWidget);
+    expect(find.text('A button in a portal row does not run yet.'), findsNothing);
+    final state = tester.state<DataBrowserWidgetState>(find.byType(DataBrowserWidget));
+    expect(state.actionActivePortalRow()?.recordId, 'cu-2', reason: 'the row clicked is the active one');
   });
 }

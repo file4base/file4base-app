@@ -493,10 +493,16 @@ class RelatedFieldView extends StatefulWidget {
     this.editable = false,
     this.formulaTrue,
     this.onWritten,
+    this.row,
   });
   final LayoutObjectModel object;
   final RelatedContext related;
   final bool isDark;
+
+  /// The related record to show in place of the first one: a field of a
+  /// portal's occurrence on a popover opened from a row of that portal
+  /// shows the row's record (#237). Only for a field one relationship away.
+  final Map<String, dynamic>? row;
 
   /// Whether a field several relationships away may be typed into: what it
   /// writes is the first record at the end of the chain, the one shown.
@@ -685,7 +691,8 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
       final table = target.isExternal ? await _access.table(target.occurrence) : null;
       if (stale()) return;
       if (table != null) _externalTable = table;
-      final rows = await widget.related.rows(target, limit: 1);
+      final pinned = widget.row;
+      final rows = pinned != null ? [pinned] : await widget.related.rows(target, limit: 1);
       if (stale()) return;
       setState(() {
         _row = rows.isEmpty ? null : rows.first;
@@ -959,6 +966,15 @@ class PortalRowController extends ChangeNotifier {
   /// answers FileMaker's error code. Set by the view.
   Future<int> Function(String rowId, {required bool confirm})? deleteRow;
 
+  /// Writes what was typed in the rows and is not saved yet, so a button's
+  /// script reads what the rows show; false when a row could not be
+  /// written. Set by the view.
+  Future<bool> Function()? flushEdits;
+
+  /// Set by the window: runs [button], an object of row [row] (1-based),
+  /// with that row active, as a click on it does (#237).
+  Future<void> Function(int row, LayoutObjectModel button)? pressButton;
+
   /// Set by the window: told when the user makes a row active, and when a
   /// field box of a row gains or loses the focus.
   VoidCallback? onActivated;
@@ -1011,6 +1027,7 @@ class _PortalViewState extends State<PortalView> {
   final Map<String, FocusNode> _focusNodes = {};
   final ScrollController _scroll = ScrollController();
   final Map<String, Timer?> _debounce = {};
+  final Set<Future<bool>> _inFlight = {};
   final Map<String, bool> _saving = {};
 
   List<Map<String, dynamic>> _rows = const [];
@@ -1068,6 +1085,7 @@ class _PortalViewState extends State<PortalView> {
       ..enterableFields = _enterableFields
       ..writeRow = _writeRow
       ..deleteRow = _deleteRowCode
+      ..flushEdits = _flushEdits
       ..addListener(_rowsChanged);
   }
 
@@ -1079,7 +1097,8 @@ class _PortalViewState extends State<PortalView> {
         ..focusCell = null
         ..enterableFields = null
         ..writeRow = null
-        ..deleteRow = null;
+        ..deleteRow = null
+        ..flushEdits = null;
     }
   }
 
@@ -1598,8 +1617,49 @@ class _PortalViewState extends State<PortalView> {
     });
   }
 
-  /// Saves one cell; false when it could not be saved.
-  Future<bool> _saveCell(String rowId, String field, String value) async {
+  /// Saves now the cells typed in and waiting to be saved, and waits for
+  /// those being saved; false when one could not be.
+  Future<bool> _flushEdits() async {
+    var ok = true;
+    for (final key in _debounce.keys.toList()) {
+      final timer = _debounce[key];
+      if (timer == null || !timer.isActive) continue;
+      timer.cancel();
+      _debounce[key] = null;
+      final controller = _controllers[key];
+      final at = key.indexOf('\u0000');
+      if (controller == null || at < 0) continue;
+      ok = await _saveCell(key.substring(0, at), key.substring(at + 1), controller.text) && ok;
+    }
+    // A save already sent ends first: the script reads what was typed.
+    for (final save in _inFlight.toList()) {
+      ok = await save && ok;
+    }
+    return ok;
+  }
+
+  /// A click on a button of row [row]: the window runs it with the row
+  /// active.
+  Future<void> _pressButton(int row, LayoutObjectModel button) async {
+    final controller = widget.rowController;
+    final press = controller?.pressButton;
+    if (controller == null || press == null) {
+      _report('This button runs from the layout in Browse mode.');
+      return;
+    }
+    await press(row, button);
+  }
+
+  /// Saves one cell; false when it could not be saved. The save is kept
+  /// in flight until it ends, so that a button pressed meanwhile waits for
+  /// it (see [_flushEdits]).
+  Future<bool> _saveCell(String rowId, String field, String value) {
+    final save = _saveCellNow(rowId, field, value);
+    _inFlight.add(save);
+    return save.whenComplete(() => _inFlight.remove(save));
+  }
+
+  Future<bool> _saveCellNow(String rowId, String field, String value) async {
     final target = _target;
     if (target == null) return true;
     final key = _cellKey(rowId, field);
@@ -1846,7 +1906,8 @@ class _PortalViewState extends State<PortalView> {
       Map<String, dynamic> row, int number, Set<String> truths) {
     bool formulaTrue(int i) => truths.contains('${content.id}#$i');
     if (content.type != 'field') {
-      return _staticContent(content, content.style.conditionalLook(content.text, formulaTrue: formulaTrue));
+      return _staticContent(content, content.style.conditionalLook(content.text, formulaTrue: formulaTrue),
+          row: number);
     }
 
     final field = content.fieldBinding?.fieldName ?? '';
@@ -1934,7 +1995,7 @@ class _PortalViewState extends State<PortalView> {
 
   /// An object of a portal row other than a field, with the conditional
   /// formats that apply ([look]).
-  Widget _staticContent(LayoutObjectModel content, ConditionalFormatRule? look) {
+  Widget _staticContent(LayoutObjectModel content, ConditionalFormatRule? look, {required int row}) {
     if (content.type == 'label') {
       return Container(
         alignment: Alignment.centerLeft,
@@ -1954,12 +2015,12 @@ class _PortalViewState extends State<PortalView> {
       );
     }
     if (content.type == 'button' || content.type == 'popover_button') {
-      // Drawn as on the layout. What it runs would need the row's record
-      // as the current one, which a script does not have here yet.
+      // Drawn as on the layout, and run with its row active (#237).
       final fill = parseLayoutColor(look?.fillColor ?? content.style.fillColor);
       final line = parseLayoutColor(content.style.borderColor);
       return InkWell(
-        onTap: () => _report('A button in a portal row does not run yet.'),
+        key: ValueKey('portal-button-${content.id}-$row'),
+        onTap: () => unawaited(_pressButton(row, content)),
         child: Container(
           alignment: Alignment.center,
           decoration: BoxDecoration(

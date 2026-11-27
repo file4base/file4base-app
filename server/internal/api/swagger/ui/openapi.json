@@ -4289,7 +4289,7 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "No such table or record; with a context, no such layout record (even with record_ids), an occurrence that is not there, or a portal occurrence of another table."
+            "description": "No such table or record, or no such active portal row; with a context, no such layout record (even with record_ids), an occurrence that is not there, or a portal occurrence of another table."
           },
           "422": {
             "description": "Too Many Records: more than 100 record_ids in one request; or a context with an occurrence of another solution's table, whose rows are evaluated through /api/v1/occurrences/{occurrence}/records/evaluate."
@@ -4319,6 +4319,7 @@
                   "occurrence": { "type": "string", "description": "Occurrence of the table (id or name) the expressions are evaluated from, as a layout on it does; a related field is read through its relationships. Absent: the table's own occurrence." },
                   "self": { "type": "array", "items": { "type": "object", "nullable": true, "properties": { "field": { "type": "string" }, "occurrence": { "type": "string" }, "repetition": { "type": "integer", "minimum": 1 }, "text": { "type": "string" } } }, "description": "For the expression at the same index, what Self reads, as a layout object's conditions read it: a field of the record (no occurrence) or of an occurrence by name, in the repetition shown (1 by default), or the text a text object or a button shows (text, which wins over field). A null entry, or one with neither, leaves Self unknown." },
                   "context": { "$ref": "#/components/schemas/EvaluationContext" },
+                  "portal_row": { "$ref": "#/components/schemas/ActivePortalRow" },
                   "result_type": { "type": "string" }
                 }
               }
@@ -8487,6 +8488,15 @@
         "properties": {
           "occurrence": { "type": "string", "description": "The layout's occurrence, by id or name." },
           "record_id": { "type": "string", "description": "The layout's record." }
+        }
+      },
+      "ActivePortalRow": {
+        "type": "object",
+        "description": "The active portal row a script's formulas are evaluated with on the layout's record (record_id, seen from occurrence), as FileMaker does while a portal row is active: the layout's record stays the current one and the row is the current record of the portal's occurrence. A field of that occurrence reads the row, one through it the records related to the row; an aggregate of the occurrence covers every record related to the layout's record. A row of another solution's table is read there, as the account the session group holds there. It needs record_id; not with context nor record_ids (422). The caller gives a row related to the record; it is read with the caller's own access. A row that is not there is 404.",
+        "required": ["occurrence", "record_id"],
+        "properties": {
+          "occurrence": { "type": "string", "description": "The portal's occurrence, by id or name; not the layout's." },
+          "record_id": { "type": "string", "description": "The row's record." }
         }
       },
       "RelatedBatchRequest": {

@@ -271,6 +271,16 @@ type EvaluateExpressionBody struct {
 	// (or through it) reads the row (see data.ContextRecord). The caller
 	// must be able to read the layout's table too.
 	Context *data.ContextRecord `json:"context,omitempty"`
+
+	// PortalRow is, for a layout's record (RecordID, seen from Occurrence),
+	// the active portal row, as a script running from a portal row's
+	// button sees it: the portal's occurrence, by name or id, and the row's
+	// record id. A reference to a field of the portal's occurrence then
+	// reads the row, one through it the records related to the row, while
+	// the layout's record stays the current one (see data.PortalRow). A row
+	// of another solution's table is read there, as the portal reads it.
+	// It needs RecordID; not with Context, nor with RecordIDs.
+	PortalRow *data.PortalRow `json:"portal_row,omitempty"`
 }
 
 // EvaluateExpression computes expressions against a record with the engine
@@ -334,6 +344,17 @@ func (h *DataHandler) evaluate(w http.ResponseWriter, r *http.Request, svc *data
 		return
 	}
 
+	if body.PortalRow != nil && (body.Context != nil || len(body.RecordIDs) > 0) {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Portal Row Not Allowed",
+			"an active portal row is given for one layout record: not with a context nor with several records")
+		return
+	}
+	if body.PortalRow != nil && strings.TrimSpace(body.RecordID) == "" {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Record Required",
+			"an active portal row is a row of a portal on a layout's record: give the record's id")
+		return
+	}
+
 	expressions := body.Expressions
 	if len(expressions) == 0 && strings.TrimSpace(body.Expression) != "" {
 		expressions = []string{body.Expression}
@@ -358,7 +379,7 @@ func (h *DataHandler) evaluate(w http.ResponseWriter, r *http.Request, svc *data
 	// another solution's table with the same name is read through its
 	// occurrence's route (data.ErrOccurrenceElsewhere).
 	env := data.EvaluationEnv{Variables: body.Variables, Get: body.Get, Values: body.Values, Self: body.Self,
-		Context: body.Context, External: external}
+		Context: body.Context, External: external, PortalRow: body.PortalRow}
 	if len(body.RecordIDs) > 0 {
 		// Evaluated in one context, resolved once for every record.
 		evaluations, err := svc.EvaluateExpressionsForRecords(r.Context(), table, body.Occurrence, body.RecordIDs,
@@ -448,7 +469,8 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 		writeForbidden(w, r, err.Error())
 	case errors.Is(err, data.ErrTableNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Table Not Found", err.Error())
-	case errors.Is(err, data.ErrRecordNotFound), errors.Is(err, data.ErrContextNotFound):
+	case errors.Is(err, data.ErrRecordNotFound), errors.Is(err, data.ErrContextNotFound),
+		errors.Is(err, data.ErrPortalRowNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Record Not Found", err.Error())
 	case errors.Is(err, data.ErrOccurrenceNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Table Occurrence Not Found", err.Error())

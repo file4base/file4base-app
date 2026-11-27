@@ -262,18 +262,22 @@ class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost, R
   }
 
   @override
-  Future<bool> actionGoToRelatedRecord({
+  Future<int> actionGoToRelatedRecord({
     required String relatedTable,
     String? layoutName,
     bool showOnlyRelated = true,
     bool newWindow = false,
+    bool matchFoundSet = false,
   }) async {
     log.add('gtrr:$relatedTable|layout=$layoutName|only=$showOnlyRelated|newWin=$newWindow');
     if (layoutName != null && layoutName.isNotEmpty) {
-      return actionGoToLayout(layoutName);
+      return await actionGoToLayout(layoutName) ? 0 : 105;
     }
-    return true;
+    return 0;
   }
+
+  @override
+  String? get goToRelatedRecordMessage => null;
 
   @override
   Future<GoToRecordOutcome> actionGoToPortalRow(String target, {bool select = false}) async {

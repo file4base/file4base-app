@@ -855,13 +855,23 @@ class LayoutActionRunner {
           session.windows.add(ScriptWindowEntry(name: winName, layoutName: layoutName.isNotEmpty ? layoutName : currentLayoutName()));
         }
         if (ext != null) {
-          final ok = await ext.actionGoToRelatedRecord(
+          final code = await ext.actionGoToRelatedRecord(
             relatedTable: relatedTable,
             layoutName: layoutName.isEmpty ? null : layoutName,
             showOnlyRelated: showOnly,
             newWindow: newWin,
+            matchFoundSet: boolParam('match_found_set'),
           );
-          if (!ok) return failOrCapture(101, 'No related records found for "$relatedTable".');
+          switch (code) {
+            case 0:
+              break;
+            case 105:
+              return failOrCapture(105, 'Layout "$layoutName" not found.');
+            case 101:
+              return failOrCapture(101, 'No related records found for "$relatedTable".');
+            default:
+              return failOrCapture(code, ext.goToRelatedRecordMessage ?? 'Go to Related Record could not run.');
+          }
         } else if (layoutName.isNotEmpty) {
           if (!await host.actionGoToLayout(layoutName)) {
             return failOrCapture(105, 'Layout "$layoutName" not found.');
@@ -2612,7 +2622,10 @@ class LayoutActionRunner {
     'LayoutName',
     'WindowName',
     'ActiveFieldName',
+    'ActiveFieldTableName',
     'ActiveLayoutObjectName',
+    'ActivePortalRowNumber',
+    'LayoutTableName',
     'FoundCount',
     'RecordNumber',
     'TotalRecordCount',
@@ -2801,6 +2814,8 @@ class LayoutActionRunner {
           return host is PortalRowHost ? (host as PortalRowHost).actionActivePortalRowNumber.toString() : '0';
         case 'activefieldtablename':
           return host is PortalRowHost ? (host as PortalRowHost).actionActiveFieldTableName : '';
+        case 'layouttablename':
+          return host is PortalRowHost ? (host as PortalRowHost).actionLayoutTableName : '';
         case 'foundcount':
           return (ext?.actionFoundCount ?? 0).toString();
         case 'recordnumber':
