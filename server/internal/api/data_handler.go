@@ -482,6 +482,8 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Too Many Related Records", err.Error())
 	case errors.Is(err, data.ErrFindTooBroad):
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Find Too Broad", err.Error())
+	case errors.Is(err, data.ErrTooManyToCompute):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Too Many Records to Compute", err.Error())
 	case errors.Is(err, validation.ErrValidation):
 		var ve *validation.Error
 		errors.As(err, &ve)

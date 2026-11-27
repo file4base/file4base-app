@@ -141,6 +141,9 @@ Permissions are granted per layout (`read_write`, `read_only`, `none`), while th
 | `FILE4BASE_DATA_API_SESSION_TTL` | `15m` | Idle lifetime of a Data API session (Go duration), FileMaker Server's 15 minutes by default. |
 | `FILE4BASE_DATA_API_PRODUCT_NAME` | `File4Base Data API` | The name `productInfo` gives. |
 | `FILE4BASE_DATA_API_PRODUCT_VERSION`, `FILE4BASE_DATA_API_PRODUCT_BUILD_DATE` | *(empty)* | The `version` and `buildDate` `productInfo` gives; left out when empty. |
+| `FILE4BASE_UNSTORED_FIND_MAX_RECORDS` | `50000` | Most records a find, sort or summary computes an unstored calculation for (#149); more answer `422 Too Many Records to Compute`. |
+| `FILE4BASE_UNSTORED_FIND_TIMEOUT` | `30s` | Longest it computes them (Go duration). |
+| `FILE4BASE_UNSTORED_FIND_MAX_BYTES` | `16MiB` | Most bytes of computed values bound to one statement; on MariaDB, at most seven eighths of the server's `max_allowed_packet`. |
 | `FILE4BASE_TRANSFER_SCHEDULER` | `true` | Whether this server process runs due transfer schedules (§ 19). Several processes over the same databases may all leave it on: each occurrence is claimed once. Set it to `false` on a process that should only serve requests. |
 
 ---
@@ -558,7 +561,7 @@ Queries rows with optional pagination and sorting.
 - `offset` (integer, default `0`)
 - `sort_by` (string, optional)
 - `sort_asc` (boolean, default `true`)
-- `sort` (string, optional, repeatable) — orders by several fields in turn. Comma-separated or repeated; a leading `-` sorts that field descending. `?sort=company,-fee_paid` orders by Company ascending and breaks ties by Fee Paid descending. It supersedes `sort_by`/`sort_asc`, which stay for callers that only sort by one field. Every field named must be registered for the table; an unknown one answers `400 Unknown Field`.
+- `sort` (string, optional, repeatable) — orders by several fields in turn. Comma-separated or repeated; a leading `-` sorts that field descending. `?sort=company,-fee_paid` orders by Company ascending and breaks ties by Fee Paid descending. It supersedes `sort_by`/`sort_asc`, which stay for callers that only sort by one field. Every field named must be registered for the table; an unknown one answers `400 Unknown Field`. A sort by an unstored calculation computes it for every record first, within the limits of [`POST …/find`](#post-apiv1datatablefind) (`422 Too Many Records to Compute` past them).
 
 CONTAINER fields are returned as base64 strings (standard alphabet, with padding); `POST` and `PUT` accept base64 strings for them and store the decoded bytes, and a value that is not valid base64 answers `400 Invalid Value`.
 
@@ -710,6 +713,13 @@ Supported operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `RANGE`, `IS_EMPTY
 **How several requests combine.** A record is found when it matches **any** request whose `omit` is false, and is then dropped when it matches **any** request whose `omit` is true. So `[{city: "New York"}, {city: "London"}]` finds the records in either city, and adding `{customer_type: "New", omit: true}` drops the new customers from that set. A find made only of omitting requests starts from every record.
 
 `options` takes the same `limit`, `offset`, `sort_by`/`sort_asc` and `sort` as `GET /api/v1/data/{table}`; `sort` is the array form, `[{"field": "company"}, {"field": "fee_paid", "descending": true}]`.
+
+An omitting request drops only the records it matches: a record whose field is empty does not match `fee_paid > 100`, so `{fee_paid: ">100", omit: true}` keeps it, as in FileMaker.
+
+**Unstored calculations (#149).** A criterion or a sort on an unstored calculation of `{table}` is computed, as FileMaker does: the criteria on stored fields narrow the records first, the calculation is computed for those left, as the caller, and the find and sort run over the values, as on a stored field of its result type. `GET /api/v1/data/{table}` sorted by one and `POST …/summary` over one work the same way. At most 50,000 records are computed per request, in at most 30 seconds and 16 MiB of values (`FILE4BASE_UNSTORED_FIND_MAX_RECORDS`, `FILE4BASE_UNSTORED_FIND_TIMEOUT`, `FILE4BASE_UNSTORED_FIND_MAX_BYTES`); every page of a found set computes them again.
+
+- `422 Too Many Records to Compute` — the request needs an unstored calculation computed for more records, or for longer, than those limits; the detail names the field and the number of records, and a criterion on a stored field narrows it.
+- `422 Unstored Calculation` — a criterion on a related table's unstored calculation (`Lines::Total`).
 
 ---
 
@@ -1197,6 +1207,7 @@ Groups come back in the order their break fields sort, so a report reads top to 
 #### Errors
 - `422 Invalid Summary Field` — a field named in `fields` is not a summary field, or its definition cannot be used.
 - `400 Unknown Field` — a `group_by` field the table does not have.
+- `422 Too Many Records to Compute` — a summary over, a break field or a criterion on an unstored calculation needs it computed for more than the limits of `POST …/find` allow (#149).
 
 ---
 
@@ -1208,7 +1219,7 @@ A **summary field** (`field_type: "SUMMARY"`) works out a figure over a set of r
 {"summary_type": "total", "field": "annual_fee", "running": false}
 ```
 
-`summary_type` is one of `total`, `average`, `count`, `minimum`, `maximum`, `standard_deviation`, `fraction_of_total`. The first two and the last two need a field that **stores** numbers — a calculation whose result type is Number counts. A summary over another summary, or over itself, is refused with `422`.
+`summary_type` is one of `total`, `average`, `count`, `minimum`, `maximum`, `standard_deviation`, `fraction_of_total`. The first two and the last two need a field that **stores** numbers — a calculation whose result type is Number counts, unstored or not: an unstored one is computed for the found set first (#149). A summary over another summary, or over itself, is refused with `422`.
 
 The older shape, `{"operation": "SUM", "target_column": "annual_fee"}`, is read as well, so a field defined before summaries were computed works without being set up again.
 

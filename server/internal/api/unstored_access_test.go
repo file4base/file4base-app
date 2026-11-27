@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/file4base/file4base-app/server/internal/api"
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -103,6 +104,40 @@ func TestAPI_UnstoredCalculationRespectsTableAccess(t *testing.T) {
 	rec = h.do(http.MethodGet, "/api/v1/data/staff/"+id, carolToken, nil, &row)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Nil(t, row["pay"], "no payroll value reaches a user who may not read payroll")
+
+	// A find or a sort on it computes it as the caller too (#149): the
+	// payroll it reads finds nothing for her, and sorts as empty.
+	find := map[string]interface{}{"requests": []map[string]interface{}{
+		{"criteria": []map[string]interface{}{{"field_name": "pay", "value": ">1000"}}},
+	}}
+	var found []map[string]interface{}
+	rec = h.do(http.MethodPost, "/api/v1/data/staff/find", owner, find, &found)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, found, 1)
+	assert.Equal(t, "4200", fmt.Sprint(found[0]["pay"]))
+	found = nil
+	rec = h.do(http.MethodPost, "/api/v1/data/staff/find", carolToken, find, &found)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Empty(t, found, "a find tells no more than the record shows")
+	var listed []map[string]interface{}
+	rec = h.do(http.MethodGet, "/api/v1/data/staff?sort=-pay", carolToken, nil, &listed)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, listed, 1)
+	assert.Nil(t, listed[0]["pay"])
+
+	// Past the most records it computes, the find is refused, saying so.
+	require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/staff", owner, map[string]interface{}{"code": "S-2"}, nil).Code)
+	data.SetUnstoredFindLimits(data.UnstoredFindLimits{Records: 1})
+	defer data.SetUnstoredFindLimits(data.DefaultUnstoredFindLimits)
+	var problem struct {
+		Title  string `json:"title"`
+		Detail string `json:"detail"`
+	}
+	rec = h.do(http.MethodPost, "/api/v1/data/staff/find", owner, find, &problem)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Equal(t, "Too Many Records to Compute", problem.Title)
+	assert.Contains(t, problem.Detail, "computed for 2 records of staff")
+	data.SetUnstoredFindLimits(data.DefaultUnstoredFindLimits)
 
 	var answer struct {
 		Results []evaluationResult `json:"results"`

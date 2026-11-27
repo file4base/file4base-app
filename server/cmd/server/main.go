@@ -16,6 +16,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/clientip"
 	"github.com/file4base/file4base-app/server/internal/control"
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/dbal/mariadb"
 	"github.com/file4base/file4base-app/server/internal/dbal/postgres"
@@ -140,6 +141,20 @@ func splitList(raw string) []string {
 	return out
 }
 
+// envInt reads a positive whole-number environment variable.
+func envInt(name string, def int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	val, err := strconv.Atoi(raw)
+	if err != nil || val <= 0 {
+		log.Printf("Warning: ignoring invalid number %s=%q", name, raw)
+		return def
+	}
+	return val
+}
+
 // envDuration reads a duration environment variable (e.g. "12h", "30m").
 func envDuration(name string, def time.Duration) time.Duration {
 	raw := strings.TrimSpace(os.Getenv(name))
@@ -227,6 +242,14 @@ func main() {
 	sessions := auth.NewStore(envDuration("SESSION_TTL", auth.DefaultSessionTTL))
 	sessions.SetDataAPITTL(envDuration("FILE4BASE_DATA_API_SESSION_TTL", auth.DefaultDataAPISessionTTL))
 	dataAPI := dataAPIConfig()
+
+	// A find, sort or summary on an unstored calculation computes it for
+	// every candidate record (#149); past these it is refused.
+	data.SetUnstoredFindLimits(data.UnstoredFindLimits{
+		Records:  envInt("FILE4BASE_UNSTORED_FIND_MAX_RECORDS", data.DefaultUnstoredFindLimits.Records),
+		Duration: envDuration("FILE4BASE_UNSTORED_FIND_TIMEOUT", data.DefaultUnstoredFindLimits.Duration),
+		Bytes:    int(envBytes("FILE4BASE_UNSTORED_FIND_MAX_BYTES", int64(data.DefaultUnstoredFindLimits.Bytes))),
+	})
 
 	corsOrigins := []string{"*"}
 	if raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS")); raw != "" {
