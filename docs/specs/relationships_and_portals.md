@@ -285,9 +285,18 @@ in a row outside its fields selects that row
 - Its steps act on the row: Set Field on a field of the portal's occurrence
   writes it, Delete Portal Row deletes it
   ([Delete Portal Row](https://help.claris.com/en/pro-help/content/delete-portal-row.html)),
-  Go to Related Record makes its record current (below).
-- What was typed in the rows and is waiting to be saved is written first, so the
-  script reads what the rows show. The record is not committed: FileMaker's
+  and so does Delete Record/Request, never the layout's record
+  ([Delete Record/Request](https://help.claris.com/en/pro-help/content/delete-record-request.html):
+  "Performing Delete Record/Request in an active portal row will delete the
+  related record", even when the relationship does not allow deleting; with no
+  row active, the step deletes the record in hand). Go to Related Record makes
+  its record current (below).
+- A button without an action does nothing, as FileMaker's *Do Nothing*: its
+  label is never read as a command.
+- What was typed in the rows is written first, so the script reads what the rows
+  show: a cell its triggers validate and save is left with them, a save waiting
+  or in flight ends, and what was typed in the empty last row creates its
+  related record. The record is not committed: FileMaker's
   commit events do not include a click on a button
   ([Committing data](https://help.claris.com/en/pro-help/content/committing-data.html)),
   and a button has no option about committing
@@ -295,28 +304,47 @@ in a row outside its fields selects that row
   so a migration has none to carry.
 - A popover button opens its popover in that row: a field of the portal's
   occurrence on the popover shows that row's record. Clicking it again on the
-  same row closes it; on another row it shows that row. The popover opens where
-  the layout places it, not next to the row, and such a field one relationship
-  away is shown, not typed into, as related fields are.
+  same row closes it; on another row it shows that row. It closes once another
+  row, or the record outside the portal, is clicked, and when its row is
+  deleted. The popover opens where the layout places it, not next to the row,
+  and such a field one relationship away is shown, not typed into, as related
+  fields are.
 
-**Go to Related Record**, run from an active row of the occurrence it names,
-makes that row's related record current
-([Go to Related Record](https://help.claris.com/en/pro-help/content/go-to-related-record.html):
-"If this script step is used from an active portal row, and the portal's table is
-the related table, then the related record in that table is made current");
-otherwise the first related record is. With *Show only related records*, the
-found set is the records related to the record in hand (*Match all records in the
-current found set*: to any record of the found set), in the relationship's
-order, and from a row of a filtered portal only the records the portal shows;
-without it, the layout's found set is every record. The layout must be on the
-related table; none named is the current one. Without related records the
-window stays where it is with error 101. Going to the records of another
-solution's table this way is refused (error 3), with a message saying so, as is
-a found set of more than 1,000 related records for a record, or a filtered
-portal with more rows than that.
+**Go to Related Record**
+([Go to Related Record](https://help.claris.com/en/pro-help/content/go-to-related-record.html)),
+run from an active row of the occurrence it names, makes that row's related
+record current ("If this script step is used from an active portal row, and the
+portal's table is the related table, then the related record in that table is
+made current"); otherwise the first related record is. The record in hand is
+committed first, with its triggers, as leaving it commits it; a commit refused
+keeps the window where it is (error 3).
 
-A portal row created or deleted reads the layout's record again in place: the
-found set and the current record stay, as after FileMaker's Delete Portal Row.
+- With *Show only related records*, the found set is the records related to the
+  record in hand ("creates a new found set in the related table"; *Match all
+  records in the current found set*: to any record of the found set), in the
+  relationship's order. From a row of a filtered portal it is only the records
+  the portal shows ("only the filtered records are in the new found set"); from
+  outside the row, every related record.
+- Without it, Claris says only that the step "makes the first record in the
+  table's unsorted order the current record". File4Base keeps the found set of
+  the layout gone to, and shows every record when the related record is not in
+  it; the record made current is the row's, or the first related record in the
+  relationship's order.
+- The layout must be on the related table; none named is the current one.
+  Without related records the window stays where it is with error 101; a layout
+  not found is error 105.
+- Refused with a message (error 3), rather than run otherwise than FileMaker:
+  another solution's table; *Show in new window* ("shows the related records in
+  a new window"), as the window shows one layout at a time and the steps after
+  it would act on the window left; *Match all records in the current found set*
+  from a row of a filtered portal, the other records' portals not being read;
+  more than 1,000 related records for a record, or a filtered portal with more
+  rows than that.
+
+A portal row created or deleted reads the layout's record again in place, with
+its hide conditions, the layout's other portals and its related fields: the found
+set and the current record stay, as after FileMaker's Delete Portal Row. A field
+typed into and not saved yet keeps what was typed.
 
 Not yet as in FileMaker:
 

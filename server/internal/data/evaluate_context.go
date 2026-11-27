@@ -204,8 +204,7 @@ func (sc *evaluationScope) at(ctx context.Context, recordID string) (*evaluatedR
 // from occurrence (a layout's), is evaluated with: the row's record, read
 // where the portal's occurrence is, there as the account the caller's
 // session group holds for an occurrence of another solution's table, here
-// as the caller. The portal's occurrence must be another one than the
-// layout's.
+// as the caller. A row of the layout's own occurrence pins nothing.
 func (r *relatedReader) activePortalRow(
 	ctx context.Context, tableName, occurrence string, active PortalRow,
 ) (*pinnedRecord, error) {
@@ -225,11 +224,15 @@ func (r *relatedReader) activePortalRow(
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrOccurrenceNotFound, active.Occurrence)
 	}
-	if portal.id == layout.id {
-		return nil, fmt.Errorf("%w: the active portal row must be of another occurrence than the layout's", ErrInvalidValue)
-	}
 	if strings.TrimSpace(active.RecordID) == "" {
 		return nil, fmt.Errorf("%w: the active portal row has no record id", ErrInvalidValue)
+	}
+	if portal.id == layout.id {
+		// A portal of the layout's own occurrence: its fields are the
+		// layout record's, there is no other occurrence to pin the row
+		// on. The client, whose layout may not name its occurrence, need
+		// not resolve it the way the server does.
+		return nil, nil
 	}
 	rows := r
 	if portal.external != nil {

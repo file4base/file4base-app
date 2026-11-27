@@ -8495,7 +8495,7 @@
         "description": "The active portal row a script's formulas are evaluated with on the layout's record (record_id, seen from occurrence), as FileMaker does while a portal row is active: the layout's record stays the current one and the row is the current record of the portal's occurrence. A field of that occurrence reads the row, one through it the records related to the row; an aggregate of the occurrence covers every record related to the layout's record. A row of another solution's table is read there, as the account the session group holds there. It needs record_id; not with context nor record_ids (422). The caller gives a row related to the record; it is read with the caller's own access. A row that is not there is 404.",
         "required": ["occurrence", "record_id"],
         "properties": {
-          "occurrence": { "type": "string", "description": "The portal's occurrence, by id or name; not the layout's." },
+          "occurrence": { "type": "string", "description": "The portal's occurrence, by id or name. The layout's own occurrence pins nothing: its fields are the layout record's." },
           "record_id": { "type": "string", "description": "The row's record." }
         }
       },

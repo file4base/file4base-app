@@ -12,6 +12,7 @@ import 'package:file4base_client/features/data_browser/external_access.dart';
 import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/features/layout_engine/script_trigger_runtime.dart';
+import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -628,6 +629,8 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
     if (old.related.recordId != widget.related.recordId ||
         old.related.fromTable != widget.related.fromTable ||
         old.object.id != widget.object.id ||
+        // A popover in a portal row: the row's record, as it is now.
+        !mapEquals(old.row, widget.row) ||
         old.object.fieldBinding?.relationshipId != widget.object.fieldBinding?.relationshipId ||
         old.object.fieldBinding?.tableOccurrence != widget.object.fieldBinding?.tableOccurrence ||
         old.object.fieldBinding?.relationshipSide != widget.object.fieldBinding?.relationshipSide ||
@@ -1617,8 +1620,10 @@ class _PortalViewState extends State<PortalView> {
     });
   }
 
-  /// Saves now the cells typed in and waiting to be saved, and waits for
-  /// those being saved; false when one could not be.
+  /// Saves now the cells typed in and waiting to be saved, waits for those
+  /// being saved, and creates the record typed in the empty last row; false
+  /// when one could not be. A cell whose triggers save it is left, with
+  /// them, by the window first.
   Future<bool> _flushEdits() async {
     var ok = true;
     for (final key in _debounce.keys.toList()) {
@@ -1634,6 +1639,13 @@ class _PortalViewState extends State<PortalView> {
     // A save already sent ends first: the script reads what was typed.
     for (final save in _inFlight.toList()) {
       ok = await save && ok;
+    }
+    // What was typed in the empty last row is the related record it
+    // creates, as FileMaker creates it once typed into.
+    final typed = _newRowController.text;
+    final field = _newRowField?.fieldBinding?.fieldName;
+    if (typed.trim().isNotEmpty && field != null && !_creating) {
+      ok = await _createRow(field, typed) && ok;
     }
     return ok;
   }
@@ -1690,10 +1702,10 @@ class _PortalViewState extends State<PortalView> {
 
   /// Creates the related record the empty last row stands for, and puts what
   /// was typed into it.
-  Future<void> _createRow(String field, String value) async {
+  Future<bool> _createRow(String field, String value) async {
     final recordId = widget.related.recordId;
     final target = _target;
-    if (recordId == null || target == null || _creating) return;
+    if (recordId == null || target == null || _creating) return false;
 
     setState(() => _creating = true);
     try {
@@ -1705,15 +1717,17 @@ class _PortalViewState extends State<PortalView> {
             side: target.requestSide,
             values: value.isEmpty ? const {} : {field: value},
           ));
-      if (!mounted) return;
+      if (!mounted) return true;
       setState(() => _creating = false);
       _newRowController.clear();
       await _load();
       widget.onChanged?.call();
+      return true;
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() => _creating = false);
       _report('The related record could not be created: $e');
+      return false;
     }
   }
 
@@ -2042,10 +2056,13 @@ class _PortalViewState extends State<PortalView> {
 
   /// The empty row at the end of a portal that allows creation: typing in it
   /// creates the related record.
+  /// The field the empty last row types into: the portal's first field.
+  LayoutObjectModel? get _newRowField => widget.contents
+      .where((c) => c.type == 'field' && (c.fieldBinding?.fieldName.isNotEmpty ?? false))
+      .firstOrNull;
+
   Widget _newRow(RelatedTarget target, double rowHeight) {
-    final field = widget.contents
-        .where((c) => c.type == 'field' && (c.fieldBinding?.fieldName.isNotEmpty ?? false))
-        .firstOrNull;
+    final field = _newRowField;
 
     return Container(
       key: const ValueKey('portal-new-row'),

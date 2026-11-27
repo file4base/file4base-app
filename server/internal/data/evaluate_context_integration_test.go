@@ -268,12 +268,21 @@ func TestEvaluateExpressions_ActivePortalRow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"p1", "gold"}, texts(t, got))
 
-	// A row gone, an occurrence that is not there, the layout's own, no
-	// record id, or with a context: the request's.
+	// A row of the layout's own occurrence (as a portal of it, or a layout
+	// that does not name its occurrence, resolved to the table's) pins
+	// nothing: the layout's record, as without a row.
+	for _, layout := range []string{teamsOcc, ""} {
+		own := data.EvaluationEnv{PortalRow: &data.PortalRow{Occurrence: teamsOcc, RecordID: team}}
+		got, err = svc.EvaluateExpressionsIn(ctx, "teams", layout, team, expressions[:4], "Text", own)
+		require.NoError(t, err, layout)
+		assert.Equal(t, []string{"a team", "a team", "p1", "gold"}, texts(t, got), layout)
+	}
+
+	// A row gone, an occurrence that is not there, no record id, or with a
+	// context: the request's.
 	for name, env := range map[string]data.EvaluationEnv{
 		"gone":     {PortalRow: &data.PortalRow{Occurrence: "players", RecordID: "no-such-row"}},
 		"nowhere":  {PortalRow: &data.PortalRow{Occurrence: "no such occurrence", RecordID: p2}},
-		"own":      {PortalRow: &data.PortalRow{Occurrence: teamsOcc, RecordID: team}},
 		"no id":    {PortalRow: &data.PortalRow{Occurrence: "players"}},
 		"in a row": {PortalRow: &data.PortalRow{Occurrence: "players", RecordID: p2}, Context: &data.ContextRecord{Occurrence: teamsOcc, RecordID: team}},
 	} {

@@ -851,8 +851,11 @@ class LayoutActionRunner {
         final showOnly = boolParam('show_only_related', defaultValue: true);
         final newWin = boolParam('new_window');
         if (newWin) {
-          final winName = p('window_name').trim().isNotEmpty ? p('window_name').trim() : (layoutName.isNotEmpty ? layoutName : relatedTable);
-          session.windows.add(ScriptWindowEntry(name: winName, layoutName: layoutName.isNotEmpty ? layoutName : currentLayoutName()));
+          // The window would go to the related records in place, and the
+          // steps after it (Close Window, Set Field) act on the window
+          // left: refused rather than run in the wrong window (#237).
+          return failOrCapture(3,
+              'Go to Related Record in a new window does not run yet: this window shows one layout at a time.');
         }
         if (ext != null) {
           final code = await ext.actionGoToRelatedRecord(
