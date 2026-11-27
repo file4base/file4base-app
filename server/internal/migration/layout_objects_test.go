@@ -1656,6 +1656,22 @@ func TestNativeLayoutNestedBoundsInLayoutCoordinates(t *testing.T) {
 	if b := box(named["qty"]); b != [4]float64{24, 132, 100, 20} || named["qty"]["portal"] != named["rows"]["id"] {
 		t.Fatalf("qty: %v", named["qty"])
 	}
+	// One that fits its portal read either way, but only its first row in
+	// layout coordinates.
+	named, _ = convertedByName(t, withBody(t, `<ObjectList>
+              <LayoutObject type="Portal" name="rows"><UUID>00000000-0000-0000-0000-0000000000a1</UUID><Bounds top="70" left="20" bottom="170" right="320"/>
+                <Portal><TableOccurrenceReference id="2" name="Ingredients"/><Options index="1" show="4"/>
+                  <ObjectList>
+                    <LayoutObject type="Edit Box" name="qty"><UUID>00000000-0000-0000-0000-0000000000a2</UUID><Bounds top="72" left="24" bottom="88" right="124"/>
+                      <Field><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference><Display Style="0" show="1"/></Field>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>
+            </ObjectList>`))
+	if b := box(named["qty"]); b != [4]float64{24, 72, 100, 16} {
+		t.Fatalf("qty in the first row: %v", named["qty"])
+	}
 	// The handwritten fixture, written so throughout, keeps its places.
 	named, all := convertedByName(t, layoutObjectsFixture)
 	for _, o := range all {
@@ -1665,5 +1681,56 @@ func TestNativeLayoutNestedBoundsInLayoutCoordinates(t *testing.T) {
 	}
 	if b := box(named["price"]); b[0] != 20 || b[1] != 70 {
 		t.Fatalf("grouped field: %v", named["price"])
+	}
+}
+
+func TestNativeLayoutPortalRowsAtTheirPortalsEdges(t *testing.T) {
+	named, _ := convertedByName(t, withBody(t, `<ObjectList>
+              <LayoutObject type="Portal" name="rows"><UUID>00000000-0000-0000-0000-0000000000a1</UUID><Bounds top="70" left="20" bottom="170" right="320"/>
+                <Portal><TableOccurrenceReference id="2" name="Ingredients"/><Options index="1" show="5"/>
+                  <ObjectList>
+                    <LayoutObject type="Popover Button" name="pop"><UUID>00000000-0000-0000-0000-0000000000c1</UUID><Bounds top="2" left="250" bottom="18" right="290"/>
+                      <PopoverButton>
+                        <Label><Text><StyledText><Data><![CDATA[More]]></Data></StyledText></Text></Label>
+                        <LayoutObject type="PopoverPanel" name="poppanel"><UUID>00000000-0000-0000-0000-0000000000c2</UUID><Bounds top="100" left="280" bottom="160" right="380"/>
+                          <ObjectList>
+                            <LayoutObject type="Text" name="inside"><UUID>00000000-0000-0000-0000-0000000000c3</UUID><Bounds top="5" left="5" bottom="25" right="80"/>
+                              <Text><StyledText><Data><![CDATA[Inside]]></Data></StyledText></Text>
+                            </LayoutObject>
+                          </ObjectList>
+                        </LayoutObject>
+                      </PopoverButton>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>
+              <LayoutObject type="Portal" name="narrow"><UUID>00000000-0000-0000-0000-0000000000a5</UUID><Bounds top="180" left="0" bottom="230" right="50.1"/>
+                <Portal><TableOccurrenceReference id="2" name="Ingredients"/><Options index="1" show="2"/>
+                  <ObjectList>
+                    <LayoutObject type="Edit Box" name="qty"><UUID>00000000-0000-0000-0000-0000000000a6</UUID><Bounds top="2" left="8.2" bottom="22" right="50.6"/>
+                      <Field><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference><Display Style="0" show="1"/></Field>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>
+            </ObjectList>`))
+	// Rows as short as FileMaker draws them.
+	if c := named["rows"]["portal_config"].(map[string]interface{}); c["row_count"] != 5.0 || c["row_height"] != 20.0 {
+		t.Fatalf("portal rows: %v", c)
+	}
+	// A popover opened from a row is drawn whole over the layout.
+	if b := box(named["pop"]); b != [4]float64{270, 72, 40, 16} || named["pop"]["portal"] != named["rows"]["id"] {
+		t.Fatalf("popover button: %v", named["pop"])
+	}
+	if b := box(named["poppanel"]); b != [4]float64{280, 100, 100, 60} {
+		t.Fatalf("popover panel: %v", named["poppanel"])
+	}
+	if b := box(named["inside"]); b != [4]float64{285, 105, 75, 20} {
+		t.Fatalf("popover object: %v", named["inside"])
+	}
+	// Trimmed to the portal's edge, as a client adds it up.
+	qty, narrow := named["qty"], named["narrow"]
+	if qty["x"] != 8.2 || qty["x"].(float64)+qty["width"].(float64) > narrow["x"].(float64)+narrow["width"].(float64) || qty["width"].(float64) < 41.8 {
+		t.Fatalf("trimmed row object: %v", qty)
 	}
 }

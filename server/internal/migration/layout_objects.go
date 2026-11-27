@@ -145,21 +145,29 @@ func nestedInLayoutCoordinates(root *xmlNode) bool {
 		return b, true
 	}
 	within := func(b, c [4]float64) bool {
-		const slack = 1 // FileMaker rounds bounds to fractions of a point
+		const slack = 1 + 1e-6 // FileMaker rounds bounds to fractions of a point
 		return b[0] >= c[0]-slack && b[1] >= c[1]-slack && b[2] <= c[2]+slack && b[3] <= c[3]+slack
 	}
 	layoutOnly, cornerOnly := 0, 0
-	var walk func(n *xmlNode, container *[4]float64)
-	walk = func(n *xmlNode, container *[4]float64) {
+	// portalRows: the rows a portal container shows, 0 for another
+	// container.
+	var walk func(n *xmlNode, container *[4]float64, portalRows int)
+	walk = func(n *xmlNode, container *[4]float64, portalRows int) {
 		for _, c := range n.Children {
 			b, ok := box(c)
 			if c.Name != "LayoutObject" || !ok {
-				walk(c, container)
+				walk(c, container, portalRows)
 				continue
 			}
 			if container != nil && firstAttr(c, "type") != "PopoverPanel" {
 				asWritten := within(b, *container)
 				fromCorner := within(b, [4]float64{0, 0, container[2] - container[0], container[3] - container[1]})
+				if portalRows > 0 {
+					// A portal's row objects are in its first row.
+					row := (container[2] - container[0]) / float64(portalRows)
+					asWritten = within(b, [4]float64{container[0], container[1], container[0] + row, container[3]})
+					fromCorner = within(b, [4]float64{0, 0, row, container[3] - container[1]})
+				}
 				switch {
 				case asWritten && !fromCorner:
 					layoutOnly++
@@ -167,10 +175,14 @@ func nestedInLayoutCoordinates(root *xmlNode) bool {
 					cornerOnly++
 				}
 			}
-			walk(c, &b)
+			rows := 0
+			if o := childPath(c, "Portal", "Options"); o != nil && firstAttr(c, "type") == "Portal" {
+				rows, _ = strconv.Atoi(firstAttr(o, "show"))
+			}
+			walk(c, &b, rows)
 		}
 	}
-	walk(root, nil)
+	walk(root, nil, 0)
 	return layoutOnly > cornerOnly
 }
 
@@ -1775,6 +1787,10 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 		}
 		if n, err := strconv.Atoi(firstAttr(o, "show")); err == nil && n > 0 {
 			config["row_count"] = n
+			// FileMaker divides the portal into its rows, however short.
+			if h, _ := base["height"].(float64); h > 0 {
+				config["row_height"] = h / float64(n)
+			}
 		}
 	}
 	if spec := findFirstChild(p, "SortSpecification"); spec != nil {
@@ -1871,23 +1887,50 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 		for _, o := range l.objects[first:] {
 			if _, ok := o["portal"]; !ok {
 				o["portal"] = base["id"]
-				clipToBox(o, base)
+				// A popover's panel opened from a row is drawn over the
+				// layout, not in the row.
+				if _, onPanel := o["panel"]; !onPanel {
+					clipToBox(o, base)
+				}
 			}
 		}
 	}
 }
 
 // clipToBox trims the box of o to the part of it within box, when they
-// overlap.
+// overlap, so that a client adding up its x and width (y and height) finds
+// it within box.
 func clipToBox(o, box map[string]interface{}) {
 	num := func(m map[string]interface{}, k string) float64 { f, _ := m[k].(float64); return f }
-	left, top := math.Max(num(o, "x"), num(box, "x")), math.Max(num(o, "y"), num(box, "y"))
-	right := math.Min(num(o, "x")+num(o, "width"), num(box, "x")+num(box, "width"))
-	bottom := math.Min(num(o, "y")+num(o, "height"), num(box, "y")+num(box, "height"))
-	if right <= left || bottom <= top {
+	clip := func(pos, size, boxPos, boxSize string) bool {
+		start, end := num(o, pos), num(o, pos)+num(o, size)
+		limit := num(box, pos) + num(box, boxSize)
+		if start >= num(box, pos) && end <= limit {
+			return true
+		}
+		start, end = math.Max(start, num(box, pos)), math.Min(end, limit)
+		if end <= start {
+			return false
+		}
+		extent := end - start
+		for extent > 0 && start+extent > limit {
+			extent = math.Nextafter(extent, 0)
+		}
+		o[pos], o[size] = start, extent
+		return true
+	}
+	if !overlaps(o, box) {
 		return
 	}
-	o["x"], o["y"], o["width"], o["height"] = left, top, right-left, bottom-top
+	clip("x", "width", "x", "width")
+	clip("y", "height", "y", "height")
+}
+
+// overlaps reports whether the boxes of a and b share some area.
+func overlaps(a, b map[string]interface{}) bool {
+	num := func(m map[string]interface{}, k string) float64 { f, _ := m[k].(float64); return f }
+	return num(a, "x") < num(b, "x")+num(b, "width") && num(b, "x") < num(a, "x")+num(a, "width") &&
+		num(a, "y") < num(b, "y")+num(b, "height") && num(b, "y") < num(a, "y")+num(a, "height")
 }
 
 // popover converts a popover button: the button, then its panel's
