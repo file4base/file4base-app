@@ -222,7 +222,16 @@ type CreateDatabaseRequest struct {
 // with the credentials supplied by the caller. It never touches an existing
 // database: a name that is already taken yields 409 Conflict.
 func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request) {
-	if !h.opts.AllowPublicDatabaseCreation {
+	var req CreateDatabaseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	dbName := strings.ToLower(strings.TrimSpace(req.Database))
+
+	// The setup code also lets the operator create a reserved database on a
+	// server without public creation, which has no account yet (#236).
+	if !h.opts.AllowPublicDatabaseCreation && !(h.bootstrap.reserved(dbName) && h.bootstrap.codeMatches(req.SetupCode)) {
 		sess, ok := auth.FromContext(r.Context())
 		if !ok {
 			writeUnauthorized(w, r, "creating databases requires a signed-in owner on this server")
@@ -234,13 +243,6 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	var req CreateDatabaseRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
-		return
-	}
-
-	dbName := strings.ToLower(strings.TrimSpace(req.Database))
 	ownerUser := strings.ToLower(strings.TrimSpace(req.User))
 	var invalid []telemetry.InvalidParam
 	if dbName == "" {
@@ -256,7 +258,7 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 		telemetry.WriteValidationProblem(w, r, "A database name and the credentials of its first owner are required", invalid)
 		return
 	}
-	if !h.bootstrap.allow(w, r, dbName, req.SetupCode, true) {
+	if !h.bootstrap.allow(w, r, dbName, ownerUser, "user", req.SetupCode, true) {
 		return
 	}
 
@@ -821,7 +823,7 @@ func (h *SolutionHandler) CloneSolution(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	if !h.bootstrap.allow(w, r, targetDB, "", false) {
+	if !h.bootstrap.allow(w, r, targetDB, "", "", "", false) {
 		return
 	}
 
@@ -1158,9 +1160,14 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if targetDB != "" && (!hasSession || !strings.EqualFold(targetDB, sess.Database)) &&
-		!h.bootstrap.allow(w, r, targetDB, req.SetupCode, true) {
-		return
+	if targetDB != "" && (!hasSession || !strings.EqualFold(targetDB, sess.Database)) {
+		owner := strings.ToLower(strings.TrimSpace(req.OwnerUser))
+		if owner == "" && hasSession {
+			owner = sess.Username
+		}
+		if !h.bootstrap.allow(w, r, targetDB, owner, "owner_user", req.SetupCode, true) {
+			return
+		}
 	}
 
 	attachedData := in.hasAttachedData()

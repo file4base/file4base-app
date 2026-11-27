@@ -183,9 +183,12 @@ its owner.
   giving the setup code, can create it (`POST /api/v1/databases`,
   `POST /api/v1/solutions/migrate/apply`); clone requires a super-owner. The
   setup code is 80 random bits drawn at startup and printed in the server log
-  while a reserved database is missing, or `FILE4BASE_SETUP_CODE` (never logged);
-  it is compared in constant time and never stored. Reading the server log is
-  the operator's proof, so a fresh install bootstraps without a restart.
+  while a reserved database is missing (or at the first refused attempt), or
+  `FILE4BASE_SETUP_CODE` (at least 16 characters, never logged); it is compared
+  in constant time and never stored. Reading the server log is the operator's
+  proof, so a fresh install bootstraps without a restart, even with public
+  database creation disabled. A seeded database created with the code must get
+  a seeded account as first owner, so that the super-owner account can exist.
 - **Delegation.** A super-owner grants or revokes the privilege on other
   **owner** accounts with `PUT /api/v1/security/users/{id}/super-owner`
   (`RequireSuperOwner`). The target must be an owner, and a super-owner cannot

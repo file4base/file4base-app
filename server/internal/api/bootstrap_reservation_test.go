@@ -71,9 +71,18 @@ func TestBootstrap_ReservedDatabasesNeedSuperOwnerOrSetupCode(t *testing.T) {
 		assert.False(t, exists(db), "%s was not created", db)
 	}
 
+	// With the code, a seeded database must get its seeded owner, or nobody
+	// could create that super-owner account afterwards.
+	code, _ := create("", map[string]string{"database": opsDB, "user": "admin", "password": "admin-secret-pw", "setup_code": testSetupCode})
+	assert.Equal(t, http.StatusUnprocessableEntity, code)
+	rec := h.do(http.MethodPost, "/api/v1/solutions/migrate/apply", "",
+		map[string]string{"design_xml": "<FMSaveAsXML/>", "target_database": opsDB, "owner_user": "admin", "owner_password": "admin-secret-pw", "setup_code": testSetupCode}, nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.False(t, exists(opsDB))
+
 	// The operator creates the seeded database with the setup code, typed in
 	// any case and grouping; its seeded owner signs in as a super-owner.
-	code, _ := create("", map[string]string{"database": opsDB, "user": "root", "password": "root-secret-pw", "setup_code": " test-setup-code0236 "})
+	code, _ = create("", map[string]string{"database": opsDB, "user": "root", "password": "root-secret-pw", "setup_code": " test-setup-code0236 "})
 	require.Equal(t, http.StatusCreated, code)
 	root := h.login(opsDB, "root", "root-secret-pw")
 	var access accessView
@@ -83,7 +92,7 @@ func TestBootstrap_ReservedDatabasesNeedSuperOwnerOrSetupCode(t *testing.T) {
 	// A super-owner needs no code, for creation as for clone.
 	code, _ = create(root, map[string]string{"database": adminDB, "user": "admin", "password": "admin-secret-pw"})
 	assert.Equal(t, http.StatusCreated, code)
-	rec := h.do(http.MethodPost, "/api/v1/solutions/clone", root,
+	rec = h.do(http.MethodPost, "/api/v1/solutions/clone", root,
 		map[string]string{"target_database": spareDB, "owner_user": "deputy", "owner_password": "deputy-secret-pw"}, nil)
 	assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	if rec.Code == http.StatusCreated {
@@ -93,4 +102,24 @@ func TestBootstrap_ReservedDatabasesNeedSuperOwnerOrSetupCode(t *testing.T) {
 	// Other names are not affected.
 	code, _ = create("", map[string]string{"database": uniqueDB("f4b_free"), "user": "eve", "password": "eve-secret-pw"})
 	assert.Equal(t, http.StatusCreated, code)
+}
+
+// Without public database creation, nobody can sign in on a fresh server, so
+// the setup code alone lets the operator create the admin database (#236).
+func TestBootstrap_SetupCodeWithoutPublicCreation(t *testing.T) {
+	adminDB := uniqueDB("f4b_adm")
+	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: false, AdminDatabase: adminDB})
+	body := map[string]string{"database": adminDB, "user": "admin", "password": "admin-secret-pw"}
+	assert.Equal(t, http.StatusUnauthorized, h.do(http.MethodPost, "/api/v1/databases", "", body, nil).Code)
+	assert.Equal(t, http.StatusUnauthorized, h.do(http.MethodPost, "/api/v1/databases", "",
+		map[string]string{"database": uniqueDB("f4b_free"), "user": "eve", "password": "eve-secret-pw", "setup_code": testSetupCode}, nil).Code,
+		"the code opens only the reserved names")
+
+	body["setup_code"] = testSetupCode
+	rec := h.do(http.MethodPost, "/api/v1/databases", "", body, nil)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	t.Cleanup(func() { _ = h.mgr.DropDatabase(context.Background(), adminDB) })
+	var access accessView
+	h.do(http.MethodGet, "/api/v1/server/access", h.login(adminDB, "admin", "admin-secret-pw"), nil, &access)
+	assert.True(t, access.ServerAdmin)
 }

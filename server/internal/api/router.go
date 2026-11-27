@@ -3,7 +3,6 @@ package api
 import (
 	"net"
 	"net/http"
-	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/clientip"
@@ -172,7 +171,7 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 	solutionHandler.throttle = throttle
 	solutionHandler.clientIP = ipResolver
 	solutionHandler.bootstrap = newBootstrapReservation(opts.AdminDatabase, opts.SuperOwnerSeed, opts.SetupCode)
-	solutionHandler.bootstrap.logStartup(dbMgr, strings.TrimSpace(opts.SetupCode) != "")
+	solutionHandler.bootstrap.logStartup(dbMgr)
 	serverAdminHandler := NewServerAdminHandler(dbMgr, sessions, controlStore, opts.Version)
 	serverAdminHandler.ConfigureAccess(opts.AdminDatabase, opts.BackupsDir)
 	serverAdminHandler.ConfigureTLS(opts.TLSDir)

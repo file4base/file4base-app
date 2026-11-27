@@ -75,7 +75,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
   String? _errorMessage;
 
   /// The server reserves this database for its administrators and asks for
-  /// the setup code it printed at startup (#236).
+  /// the setup code it printed in its log (#236).
   bool _needsSetupCode = false;
 
   @override
@@ -329,6 +329,10 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
                 const SizedBox(height: 8),
                 TextFormField(
                   controller: _dbNameController,
+                  // The setup code is asked for a reserved name only (#236).
+                  onChanged: (_) {
+                    if (_needsSetupCode) setState(() => _needsSetupCode = false);
+                  },
                   decoration: const InputDecoration(
                     labelText: 'Database Name',
                     hintText: 'e.g. invoices_db',
@@ -438,7 +442,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
                     decoration: const InputDecoration(
                       labelText: 'Setup code',
                       hintText: 'XXXX-XXXX-XXXX-XXXX',
-                      helperText: 'Printed in the server log at startup (docker logs file4base-api)',
+                      helperText: 'Printed in the server log (docker logs file4base-api)',
                       border: OutlineInputBorder(),
                       isDense: true,
                       prefixIcon: Icon(Icons.vpn_key_outlined, size: 18),

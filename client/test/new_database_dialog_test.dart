@@ -64,9 +64,9 @@ void main() {
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         bodies.add(body);
         final detail = body.containsKey('setup_code')
-            ? 'the setup code is not valid; it is printed in the server log at startup'
+            ? 'the setup code is not valid; it is printed in the server log'
             : "database 'my_solution_db' is reserved: its owners become server administrators, "
-                'so only a super-owner can create it, or enter the setup code printed in the server log at startup';
+                'so only a super-owner can create it, or enter the setup code printed in the server log';
         return http.Response(
             jsonEncode({'title': 'Reserved Database', 'status': 403, 'detail': detail, 'setup_code_required': true}), 403,
             headers: {'content-type': 'application/problem+json'});
@@ -94,6 +94,11 @@ void main() {
     await tester.tap(find.text('Create & Save Solution'));
     await tester.pumpAndSettle();
     expect(bodies.last['setup_code'], 'abcd-efgh-ijkl-mnop');
-    expect(find.text('The setup code is not valid; it is printed in the server log at startup.'), findsOneWidget);
+    expect(find.text('The setup code is not valid; it is printed in the server log.'), findsOneWidget);
+
+    // Another name is not reserved: the prompt goes away.
+    await tester.enterText(find.widgetWithText(TextFormField, 'Database Name'), 'other_db');
+    await tester.pump();
+    expect(setupCode, findsNothing);
   });
 }
