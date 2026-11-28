@@ -122,6 +122,13 @@ type Table struct {
 	// were read are still returned, and the caller says so rather than
 	// importing part of a file silently.
 	Truncated bool `json:"truncated"`
+
+	// RecordIDs and ModIDs are, for an FMPXMLRESULT file, each row's
+	// RECORDID and MODID: the record ID and modification count FileMaker
+	// gave the record, "" when the file does not say. Nil for any other
+	// file. A migration keeps them (#208); an import has no use for them.
+	RecordIDs []string `json:"-"`
+	ModIDs    []string `json:"-"`
 }
 
 // Cell is the value at a position, or "" when the row is short. A source row

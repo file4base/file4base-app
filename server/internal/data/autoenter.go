@@ -204,6 +204,22 @@ func (s *Service) loadAutoEnter(ctx context.Context, tableName string, types fie
 	return a, nil
 }
 
+// only keeps the options of the named fields, as an import that performs
+// auto-enter field by field applies them (#191).
+func (a *autoEnter) only(names []string) {
+	keep := make(map[string]bool, len(names))
+	for _, n := range names {
+		keep[strings.ToLower(strings.TrimSpace(n))] = true
+	}
+	kept := a.fields[:0]
+	for _, f := range a.fields {
+		if keep[strings.ToLower(f.name)] {
+			kept = append(kept, f)
+		}
+	}
+	a.fields = kept
+}
+
 // active reports whether the table has an option a write has to apply.
 func (a *autoEnter) active() bool {
 	return len(a.fields) > 0 || len(a.prohibited) > 0
@@ -1004,11 +1020,18 @@ func (c *unstoredContext) NextSerialValue(field string) (string, error) {
 }
 
 // Get answers Get ( AccountName ) and Get ( UserName ) with the account the
-// service reads as; the engine answers the clock and the other selectors.
+// service reads as, and Get ( RecordID ) and Get ( RecordModificationCount )
+// with the record's identity; the engine answers the clock and the other
+// selectors.
 func (c *unstoredContext) Get(selector string) (any, error) {
 	switch selector {
 	case "ACCOUNTNAME", "USERNAME":
 		return c.reader.s.account, nil
+	}
+	if v, ok, err := identitySelector(selector, func() (*Identity, error) {
+		return c.reader.s.identityOf(c.ctx, c.table, c.row)
+	}); ok {
+		return v, err
 	}
 	return c.RecordContext.Get(selector)
 }

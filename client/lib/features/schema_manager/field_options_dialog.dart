@@ -1682,7 +1682,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
           ),
           Tooltip(
             message: 'Unchecked, the result is computed each time a record is shown. '
-                'A calculation that reads related fields must be unstored; it cannot then be found or sorted by.',
+                'A calculation that reads related fields must be unstored; a find or sort on it computes it for every record it considers.',
             child: CheckboxListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,

@@ -31,13 +31,6 @@ type sourceCustomFunction struct {
 // have, such as a plug-in's when the plug-in is not installed.
 const functionMissing = "<Function Missing>"
 
-// unsupportedFunctions are FileMaker functions File4Base does not compute,
-// by upper-case name, with why, so a formula calling one says so rather than
-// failing to read.
-var unsupportedFunctions = map[string]string{
-	"EXECUTESQL": "File4Base calculations do not run SQL queries; compute the value from related fields, or fill it with a script",
-}
-
 // readXMLCustomFunctions reads the custom functions of an XML design: a
 // Database Design Report's <CustomFunctionCatalog>, whose functions name
 // their parameters in a parameters attribute, or a Save a Copy as XML
@@ -330,11 +323,7 @@ func (b formulaBinding) unreadable(formula string, err error) string {
 	}
 	var problem *calc.Error
 	if errors.As(err, &problem) && problem.Function != "" {
-		key := strings.ToUpper(problem.Function)
-		if why, ok := unsupportedFunctions[key]; ok {
-			return fmt.Sprintf("calls %[1]s: %[1]s is not supported (%[2]s)", problem.Function, why)
-		}
-		if name, ok := b.dropped[key]; ok {
+		if name, ok := b.dropped[strings.ToUpper(problem.Function)]; ok {
 			return fmt.Sprintf("calls the custom function %s, which could not be migrated", name)
 		}
 	}

@@ -1,0 +1,1888 @@
+{
+  "fixture": "records/range_paging@v2",
+  "scenario": "records/range_paging",
+  "group": "records",
+  "version": "v2",
+  "fresh": false,
+  "title": "Record range: defaults, _offset and _limit edges, offset past the end, huge limits",
+  "rows": ["R1", "R3", "R4", "R5", "R10", "R11", "R12", "R13", "R14", "X21", "EC16"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "default-products",
+      "rows": ["R1", "R3", "R4", "R10", "R12", "R13"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Products",
+              "table": "Products",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 30
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 1,
+                  "ProductCode": "P001",
+                  "ProductName": "Écran 27\"",
+                  "Price": 199.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 2,
+                  "ProductCode": "P002",
+                  "ProductName": "Clavier AZERTY",
+                  "Price": 29.9,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 3,
+                  "ProductCode": "P003",
+                  "ProductName": "Souris sans fil",
+                  "Price": 19.5,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "3",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 4,
+                  "ProductCode": "P004",
+                  "ProductName": "Câble HDMI 2 m",
+                  "Price": 4.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "4",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 5,
+                  "ProductCode": "P005",
+                  "ProductName": "Imprimante laser",
+                  "Price": 349,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "5",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 6,
+                  "ProductCode": "P006",
+                  "ProductName": "Disque SSD 1 To",
+                  "Price": 89.99,
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "6",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 7,
+                  "ProductCode": "P007",
+                  "ProductName": "Mémoire 16 Go",
+                  "Price": 59.95,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "7",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 8,
+                  "ProductCode": "P008",
+                  "ProductName": "Onduleur 1500 VA",
+                  "Price": 420,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "8",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 9,
+                  "ProductCode": "P009",
+                  "ProductName": "Switch 24 ports",
+                  "Price": 129,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "9",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 10,
+                  "ProductCode": "P010",
+                  "ProductName": "Routeur Wi‑Fi",
+                  "Price": 79,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "10",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 11,
+                  "ProductCode": "P011",
+                  "ProductName": "Lecteur code-barres",
+                  "Price": 149.5,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "11",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 12,
+                  "ProductCode": "P012",
+                  "ProductName": "Tablette 10\"",
+                  "Price": 299,
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "12",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 13,
+                  "ProductCode": "P013",
+                  "ProductName": "Station d'accueil",
+                  "Price": 189,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "13",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 14,
+                  "ProductCode": "P014",
+                  "ProductName": "Webcam HD",
+                  "Price": 49.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "14",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 15,
+                  "ProductCode": "P015",
+                  "ProductName": "Casque audio",
+                  "Price": 39,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "15",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 16,
+                  "ProductCode": "P016",
+                  "ProductName": "Prise réseau",
+                  "Price": 2.5,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "16",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 17,
+                  "ProductCode": "P017",
+                  "ProductName": "Baie 42U",
+                  "Price": 899,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "17",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 18,
+                  "ProductCode": "P018",
+                  "ProductName": "Ventilateur",
+                  "Price": 12.99,
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "18",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 19,
+                  "ProductCode": "P019",
+                  "ProductName": "Lampe LED",
+                  "Price": 8.5,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "19",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 20,
+                  "ProductCode": "P020",
+                  "ProductName": "Batterie externe",
+                  "Price": 25,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "20",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 21,
+                  "ProductCode": "P021",
+                  "ProductName": "Pâte thermique",
+                  "Price": 6.75,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "21",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 22,
+                  "ProductCode": "P022",
+                  "ProductName": "Adaptateur USB‑C",
+                  "Price": 14.9,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "22",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 23,
+                  "ProductCode": "P023",
+                  "ProductName": "Hub USB",
+                  "Price": 17,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "23",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 24,
+                  "ProductCode": "P024",
+                  "ProductName": "Carte graphique",
+                  "Price": 650,
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "24",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 25,
+                  "ProductCode": "P025",
+                  "ProductName": "Alimentation 650 W",
+                  "Price": 75,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "25",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 26,
+                  "ProductCode": "P026",
+                  "ProductName": "Boîtier PC",
+                  "Price": 65,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "26",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 27,
+                  "ProductCode": "P027",
+                  "ProductName": "Écran tactile",
+                  "Price": 399,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "27",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 28,
+                  "ProductCode": "P028",
+                  "ProductName": "Scanner A4",
+                  "Price": 120,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "28",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 29,
+                  "ProductCode": "P029",
+                  "ProductName": "Projecteur",
+                  "Price": 540,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "29",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 30,
+                  "ProductCode": "P030",
+                  "ProductName": "Produit sans nom",
+                  "Price": "",
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "30",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "limit-2",
+      "rows": ["R4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_limit=2",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Products",
+              "table": "Products",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 2
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 1,
+                  "ProductCode": "P001",
+                  "ProductName": "Écran 27\"",
+                  "Price": 199.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 2,
+                  "ProductCode": "P002",
+                  "ProductName": "Clavier AZERTY",
+                  "Price": 29.9,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "offset-29-limit-5",
+      "rows": ["R3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_offset=29&_limit=5",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Products",
+              "table": "Products",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 2
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 29,
+                  "ProductCode": "P029",
+                  "ProductName": "Projecteur",
+                  "Price": 540,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "29",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 30,
+                  "ProductCode": "P030",
+                  "ProductName": "Produit sans nom",
+                  "Price": "",
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "30",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "offset-30",
+      "rows": ["R3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_offset=30",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Products",
+              "table": "Products",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 30,
+                  "ProductCode": "P030",
+                  "ProductName": "Produit sans nom",
+                  "Price": "",
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "30",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "offset-31-past-end",
+      "rows": ["R11", "EC16"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_offset=31",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "offset-0",
+      "rows": ["R5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_offset=0&_limit=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "The _offset must be an integer with value greater than 0.",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "offset-negative",
+      "rows": ["R5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_offset=-1&_limit=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "The _offset must be an integer with value greater than 0.",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "offset-text",
+      "rows": ["R5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_offset=abc&_limit=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "The _offset must be an integer with value greater than 0.",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "offset-decimal",
+      "rows": ["R5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_offset=1.5&_limit=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Products",
+              "table": "Products",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 1,
+                  "ProductCode": "P001",
+                  "ProductName": "Écran 27\"",
+                  "Price": 199.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "limit-0",
+      "rows": ["R5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_limit=0",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "The _limit must be an integer with value greater than 0.",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "limit-negative",
+      "rows": ["R5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_limit=-5",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "The _limit must be an integer with value greater than 0.",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "limit-text",
+      "rows": ["R5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_limit=abc",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "The _limit must be an integer with value greater than 0.",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "limit-empty",
+      "rows": ["R5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_limit=",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "The _limit must be an integer with value greater than 0.",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "limit-huge-1e18",
+      "rows": ["R4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_limit=1000000000000000000",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Products",
+              "table": "Products",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 30
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 1,
+                  "ProductCode": "P001",
+                  "ProductName": "Écran 27\"",
+                  "Price": 199.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 2,
+                  "ProductCode": "P002",
+                  "ProductName": "Clavier AZERTY",
+                  "Price": 29.9,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 3,
+                  "ProductCode": "P003",
+                  "ProductName": "Souris sans fil",
+                  "Price": 19.5,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "3",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 4,
+                  "ProductCode": "P004",
+                  "ProductName": "Câble HDMI 2 m",
+                  "Price": 4.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "4",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 5,
+                  "ProductCode": "P005",
+                  "ProductName": "Imprimante laser",
+                  "Price": 349,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "5",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 6,
+                  "ProductCode": "P006",
+                  "ProductName": "Disque SSD 1 To",
+                  "Price": 89.99,
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "6",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 7,
+                  "ProductCode": "P007",
+                  "ProductName": "Mémoire 16 Go",
+                  "Price": 59.95,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "7",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 8,
+                  "ProductCode": "P008",
+                  "ProductName": "Onduleur 1500 VA",
+                  "Price": 420,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "8",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 9,
+                  "ProductCode": "P009",
+                  "ProductName": "Switch 24 ports",
+                  "Price": 129,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "9",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 10,
+                  "ProductCode": "P010",
+                  "ProductName": "Routeur Wi‑Fi",
+                  "Price": 79,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "10",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 11,
+                  "ProductCode": "P011",
+                  "ProductName": "Lecteur code-barres",
+                  "Price": 149.5,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "11",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 12,
+                  "ProductCode": "P012",
+                  "ProductName": "Tablette 10\"",
+                  "Price": 299,
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "12",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 13,
+                  "ProductCode": "P013",
+                  "ProductName": "Station d'accueil",
+                  "Price": 189,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "13",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 14,
+                  "ProductCode": "P014",
+                  "ProductName": "Webcam HD",
+                  "Price": 49.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "14",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 15,
+                  "ProductCode": "P015",
+                  "ProductName": "Casque audio",
+                  "Price": 39,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "15",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 16,
+                  "ProductCode": "P016",
+                  "ProductName": "Prise réseau",
+                  "Price": 2.5,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "16",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 17,
+                  "ProductCode": "P017",
+                  "ProductName": "Baie 42U",
+                  "Price": 899,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "17",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 18,
+                  "ProductCode": "P018",
+                  "ProductName": "Ventilateur",
+                  "Price": 12.99,
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "18",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 19,
+                  "ProductCode": "P019",
+                  "ProductName": "Lampe LED",
+                  "Price": 8.5,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "19",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 20,
+                  "ProductCode": "P020",
+                  "ProductName": "Batterie externe",
+                  "Price": 25,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "20",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 21,
+                  "ProductCode": "P021",
+                  "ProductName": "Pâte thermique",
+                  "Price": 6.75,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "21",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 22,
+                  "ProductCode": "P022",
+                  "ProductName": "Adaptateur USB‑C",
+                  "Price": 14.9,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "22",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 23,
+                  "ProductCode": "P023",
+                  "ProductName": "Hub USB",
+                  "Price": 17,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "23",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 24,
+                  "ProductCode": "P024",
+                  "ProductName": "Carte graphique",
+                  "Price": 650,
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "24",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 25,
+                  "ProductCode": "P025",
+                  "ProductName": "Alimentation 650 W",
+                  "Price": 75,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "25",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 26,
+                  "ProductCode": "P026",
+                  "ProductName": "Boîtier PC",
+                  "Price": 65,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "26",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 27,
+                  "ProductCode": "P027",
+                  "ProductName": "Écran tactile",
+                  "Price": 399,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "27",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 28,
+                  "ProductCode": "P028",
+                  "ProductName": "Scanner A4",
+                  "Price": 120,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "28",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 29,
+                  "ProductCode": "P029",
+                  "ProductName": "Projecteur",
+                  "Price": 540,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "29",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 30,
+                  "ProductCode": "P030",
+                  "ProductName": "Produit sans nom",
+                  "Price": "",
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "30",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "limit-above-int64",
+      "rows": ["R4", "R5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_limit=99999999999999999999",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Products",
+              "table": "Products",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 30
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 1,
+                  "ProductCode": "P001",
+                  "ProductName": "Écran 27\"",
+                  "Price": 199.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 2,
+                  "ProductCode": "P002",
+                  "ProductName": "Clavier AZERTY",
+                  "Price": 29.9,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 3,
+                  "ProductCode": "P003",
+                  "ProductName": "Souris sans fil",
+                  "Price": 19.5,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "3",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 4,
+                  "ProductCode": "P004",
+                  "ProductName": "Câble HDMI 2 m",
+                  "Price": 4.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "4",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 5,
+                  "ProductCode": "P005",
+                  "ProductName": "Imprimante laser",
+                  "Price": 349,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "5",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 6,
+                  "ProductCode": "P006",
+                  "ProductName": "Disque SSD 1 To",
+                  "Price": 89.99,
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "6",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 7,
+                  "ProductCode": "P007",
+                  "ProductName": "Mémoire 16 Go",
+                  "Price": 59.95,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "7",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 8,
+                  "ProductCode": "P008",
+                  "ProductName": "Onduleur 1500 VA",
+                  "Price": 420,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "8",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 9,
+                  "ProductCode": "P009",
+                  "ProductName": "Switch 24 ports",
+                  "Price": 129,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "9",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 10,
+                  "ProductCode": "P010",
+                  "ProductName": "Routeur Wi‑Fi",
+                  "Price": 79,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "10",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 11,
+                  "ProductCode": "P011",
+                  "ProductName": "Lecteur code-barres",
+                  "Price": 149.5,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "11",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 12,
+                  "ProductCode": "P012",
+                  "ProductName": "Tablette 10\"",
+                  "Price": 299,
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "12",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 13,
+                  "ProductCode": "P013",
+                  "ProductName": "Station d'accueil",
+                  "Price": 189,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "13",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 14,
+                  "ProductCode": "P014",
+                  "ProductName": "Webcam HD",
+                  "Price": 49.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "14",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 15,
+                  "ProductCode": "P015",
+                  "ProductName": "Casque audio",
+                  "Price": 39,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "15",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 16,
+                  "ProductCode": "P016",
+                  "ProductName": "Prise réseau",
+                  "Price": 2.5,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "16",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 17,
+                  "ProductCode": "P017",
+                  "ProductName": "Baie 42U",
+                  "Price": 899,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "17",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 18,
+                  "ProductCode": "P018",
+                  "ProductName": "Ventilateur",
+                  "Price": 12.99,
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "18",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 19,
+                  "ProductCode": "P019",
+                  "ProductName": "Lampe LED",
+                  "Price": 8.5,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "19",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 20,
+                  "ProductCode": "P020",
+                  "ProductName": "Batterie externe",
+                  "Price": 25,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "20",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 21,
+                  "ProductCode": "P021",
+                  "ProductName": "Pâte thermique",
+                  "Price": 6.75,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "21",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 22,
+                  "ProductCode": "P022",
+                  "ProductName": "Adaptateur USB‑C",
+                  "Price": 14.9,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "22",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 23,
+                  "ProductCode": "P023",
+                  "ProductName": "Hub USB",
+                  "Price": 17,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "23",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 24,
+                  "ProductCode": "P024",
+                  "ProductName": "Carte graphique",
+                  "Price": 650,
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "24",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 25,
+                  "ProductCode": "P025",
+                  "ProductName": "Alimentation 650 W",
+                  "Price": 75,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "25",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 26,
+                  "ProductCode": "P026",
+                  "ProductName": "Boîtier PC",
+                  "Price": 65,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "26",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 27,
+                  "ProductCode": "P027",
+                  "ProductName": "Écran tactile",
+                  "Price": 399,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "27",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 28,
+                  "ProductCode": "P028",
+                  "ProductName": "Scanner A4",
+                  "Price": 120,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "28",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 29,
+                  "ProductCode": "P029",
+                  "ProductName": "Projecteur",
+                  "Price": 540,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "29",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 30,
+                  "ProductCode": "P030",
+                  "ProductName": "Produit sans nom",
+                  "Price": "",
+                  "Active": 0
+                },
+                "portalData": {},
+                "recordId": "30",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "offset-huge-1e18-plus-1",
+      "rows": ["R11"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_offset=1000000000000000001",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "empty-layout-fields",
+      "rows": ["FD1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Empty/records?_limit=2",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Empty",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 2
+            },
+            "data": [
+              {
+                "fieldData": {},
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              },
+              {
+                "fieldData": {},
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "base-table-occurrence-layout",
+      "rows": ["R14"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Duplicate/records?_limit=2",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Duplicate",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 2
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Name": "Alpha Industries"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 2,
+                  "Name": "Zoë Ångström & Fils"
+                },
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "missing-layout",
+      "rows": ["R2", "EC8"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/NoSuchLayout/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "105",
+              "message": "Layout is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "noaccess-layout",
+      "rows": ["LN6", "R23"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_NoAccess/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "105",
+              "message": "Layout is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

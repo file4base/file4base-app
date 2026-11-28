@@ -189,7 +189,16 @@ A transfer moves records between two solutions, so the step is deliberately unfo
 - the variable naming the transfer **holds nothing**;
 - the step is pointed the **wrong way** for the definition it names;
 - the transfer reaches **another solution** and this session is not signed in to it. The message names the solution. A definition carries no credential, so authority comes from a session of each end;
-- the transfer ran and was **refused**: nothing was written, and the message carries the counts and the first rejected rows, each with its row number, the two fields and the value.
+- the transfer ran and was **refused**: nothing was written, and the message carries the counts and the first rejections, each with its row number, the two fields and the value.
+
+### Records skipped due to errors (`#231`)
+
+Under `on_rejected: "skip"` — the policy of every transfer created for a migrated FileMaker step — a run imports what FileMaker's Import Records would and skips the rest: a value the destination field cannot hold or its validation refuses is left out of its record, and a record failing *not empty* or a validation by calculation is not written (see [`importing_and_exporting_records.md`](importing_and_exporting_records.md)). The records written are kept and **the script goes on**, as in FileMaker:
+
+- when records were skipped, the step sets `Get(LastError)` to **729**, *Errors occurred during import; records could not be imported* (FileMaker Pro help, *FileMaker error codes*). Values left out of records that were imported set no error: FileMaker's documentation names no code for them;
+- without `Set Error Capture [On]`, the user is shown the import summary — the counts and the first rejections — as FileMaker shows its Import Summary. With it, nothing is shown and the script reads the error and the variables below.
+
+`on_rejected: "abort"` stays the all-or-nothing option: any rejection refuses the run, and the script stops.
 
 ### What a script can read afterwards
 
@@ -200,7 +209,7 @@ A committed run leaves its counts in global variables, so the steps after it can
 | `$$transferAdded` | Records created in the destination. |
 | `$$transferUpdated` | Destination records a match key found and updated. |
 | `$$transferSkipped` | Records passed over for want of a match. |
-| `$$transferRejected` | Rows the destination could not hold. Non-zero only under `on_rejected: "skip"`, since `abort` stops the script. |
+| `$$transferRejected` | Records skipped and values left out, each counted once. Non-zero only under `on_rejected: "skip"`, since `abort` stops the script. |
 | `$$transferCommitted` | `1` when the destination transaction was committed. |
 
 ---

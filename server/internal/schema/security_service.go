@@ -206,6 +206,42 @@ func (s *Service) Authenticate(ctx context.Context, username, password string, t
 	}, nil
 }
 
+// StoredSuperOwner reads the stored super-owner flag of an account. Unlike
+// GetUser, it never falls back to a query without the column, so an
+// authorization check built on it fails closed.
+func (s *Service) StoredSuperOwner(ctx context.Context, id string) (bool, error) {
+	q := `SELECT COALESCE(super_owner, FALSE) FROM sys_users WHERE id = $1`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT COALESCE(super_owner, FALSE) FROM sys_users WHERE id = ?`
+	}
+	var flag bool
+	err := s.driver.DB().QueryRowContext(ctx, q, id).Scan(&flag)
+	return flag, err
+}
+
+// VerifyUserPassword checks password against the stored hash of the account
+// with this id. It returns ErrInvalidCredentials when the password does not
+// match or the account does not exist, and spends a bcrypt comparison either
+// way.
+func (s *Service) VerifyUserPassword(ctx context.Context, id, password string) error {
+	q := `SELECT password_hash FROM sys_users WHERE id = $1`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT password_hash FROM sys_users WHERE id = ?`
+	}
+	var hash string
+	if err := s.driver.DB().QueryRowContext(ctx, q, id).Scan(&hash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			burnPasswordCheck(password)
+			return ErrInvalidCredentials
+		}
+		return err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
+		return ErrInvalidCredentials
+	}
+	return nil
+}
+
 // CountUsers returns the number of accounts registered in sys_users.
 func (s *Service) CountUsers(ctx context.Context) (int, error) {
 	var count int
@@ -249,6 +285,26 @@ func (s *Service) GetUser(ctx context.Context, id string) (*UserMetadata, error)
 		}
 	}
 	return &u, nil
+}
+
+// RolesWithAccounts returns the roles at least one account holds, whatever
+// its state: those an fmrest grant from a file would open the Data API to.
+// A row it cannot read is an error, never a role without accounts.
+func (s *Service) RolesWithAccounts(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.driver.DB().QueryContext(ctx, `SELECT DISTINCT role FROM sys_users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	roles := map[string]bool{}
+	for rows.Next() {
+		var role string
+		if err := rows.Scan(&role); err != nil {
+			return nil, err
+		}
+		roles[role] = true
+	}
+	return roles, rows.Err()
 }
 
 // countActiveOwners returns how many active owner accounts exist that can
@@ -300,8 +356,11 @@ func (s *Service) TablePermissionFor(ctx context.Context, userID, tableName stri
 		return nil, nil
 	}
 	if err != nil {
-		// If the table does not exist yet on an older catalog before migration, treat as no explicit row.
-		return nil, nil
+		// A permission that cannot be read is not "no explicit permission":
+		// that would fall back to the layout-derived default, which is
+		// read-write. EnsureSystemTables creates the table, so this is a
+		// real failure and access is refused.
+		return nil, fmt.Errorf("failed reading table permission: %w", err)
 	}
 	return &p, nil
 }
@@ -311,7 +370,11 @@ func (s *Service) TablePermissionFor(ctx context.Context, userID, tableName stri
 // it takes precedence; otherwise access is derived from the most permissive
 // layout built on the table (defaulting to read_write).
 func (s *Service) TableAccess(ctx context.Context, userID, tableName string) (string, error) {
-	if tp, err := s.TablePermissionFor(ctx, userID, tableName); err == nil && tp != nil {
+	tp, err := s.TablePermissionFor(ctx, userID, tableName)
+	if err != nil {
+		return AccessNone, err
+	}
+	if tp != nil {
 		if !isValidAccessLevel(tp.AccessLevel) {
 			return AccessNone, nil
 		}
@@ -616,10 +679,15 @@ func (s *Service) GetUserPermissions(ctx context.Context, userID string) ([]User
 	perms := make([]UserLayoutPermission, 0)
 	for rows.Next() {
 		var p UserLayoutPermission
+		// A permission that cannot be read is not a missing one: that would
+		// read as the read_write default.
 		if err := rows.Scan(&p.ID, &p.UserID, &p.LayoutID, &p.LayoutName, &p.AccessLevel); err != nil {
-			continue
+			return nil, fmt.Errorf("failed reading user permissions: %w", err)
 		}
 		perms = append(perms, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed reading user permissions: %w", err)
 	}
 	return perms, nil
 }

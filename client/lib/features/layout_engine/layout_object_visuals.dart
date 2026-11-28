@@ -50,6 +50,17 @@ String? layoutFieldUnreadableNotice(FieldBindingModel? binding) {
   return null;
 }
 
+/// Whether [obj] is a text or a button, whose conditions read as Self the
+/// text it shows (FileMaker's Self is "the content of the object").
+bool layoutObjectShowsText(LayoutObjectModel obj) =>
+    obj.type == 'label' || obj.type == 'button' || obj.type == 'popover_button';
+
+/// The text Self reads in the conditions of [obj], a text or a button: the
+/// text it shows, as written. Null, Self unknown, when it merges a field,
+/// so shows another text on each record.
+String? layoutTextSelf(LayoutObjectModel obj) =>
+    !layoutObjectShowsText(obj) || obj.text.contains('{{') ? null : obj.text;
+
 /// Whether a calculation's answer, as text, is true the way FileMaker reads
 /// a condition: a number other than zero.
 bool isLayoutConditionTrue(String text) {
@@ -58,6 +69,39 @@ bool isLayoutConditionTrue(String text) {
   if (t == 'true') return true;
   final n = num.tryParse(t.replaceAll(',', '.'));
   return n != null && n != 0;
+}
+
+/// [base] with what the conditional formats that apply ([look], from
+/// [LayoutObjectStyle.conditionalLook]) give the text: its colour, bold,
+/// italic and underline. [base] itself when none applies.
+TextStyle conditionalTextStyle(TextStyle base, ConditionalFormatRule? look) {
+  if (look == null) return base;
+  final decoration = base.decoration;
+  return base.copyWith(
+    color: parseLayoutColor(look.textColor) ?? base.color,
+    fontWeight: look.bold ? FontWeight.bold : base.fontWeight,
+    fontStyle: look.italic ? FontStyle.italic : base.fontStyle,
+    decoration: !look.underline
+        ? decoration
+        : decoration == null || decoration == TextDecoration.none
+            ? TextDecoration.underline
+            : TextDecoration.combine([decoration, TextDecoration.underline]),
+  );
+}
+
+/// [child], drawn its own way, with the conditional formats that apply
+/// ([look]): their fill behind it, and their text over any text of it that
+/// sets no colour, weight or style of its own. [child] itself when none
+/// applies.
+Widget withConditionalLook(ConditionalFormatRule? look, Widget child, {double radius = 0}) {
+  if (look == null) return child;
+  final fill = parseLayoutColor(look.fillColor);
+  final text = DefaultTextStyle.merge(style: conditionalTextStyle(const TextStyle(), look), child: child);
+  if (fill == null) return text;
+  return DecoratedBox(
+    decoration: BoxDecoration(color: fill, borderRadius: radius > 0 ? BorderRadius.circular(radius) : null),
+    child: text,
+  );
 }
 
 /// Normalizes a color typed by the user (`fff`, `#1e88e5`) to `#RRGGBB`, or

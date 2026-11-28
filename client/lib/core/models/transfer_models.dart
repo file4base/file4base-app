@@ -60,6 +60,11 @@ abstract final class TransferMode {
   /// The destination record whose match fields hold the same values is
   /// updated. This is the mode that makes a transfer replayable.
   static const updateMatching = 'update_matching';
+
+  /// FileMaker's "Replace field contents in found set, in order": the n-th
+  /// source record replaces the n-th record of the destination found set
+  /// (#191). It matches on nothing.
+  static const replaceFoundSet = 'replace_found_set';
 }
 
 /// What happens to a source record that matches no destination record.
@@ -93,6 +98,9 @@ class TransferDefinitionModel {
     this.onRejected = TransferRejected.abort,
     this.dateOrder = 'iso',
     this.hasFoundSet = false,
+    this.performAutoEnter = false,
+    this.autoEnterFields = const [],
+    this.matchByName = false,
   });
 
   factory TransferDefinitionModel.fromJson(Map<String, dynamic> json) {
@@ -115,6 +123,11 @@ class TransferDefinitionModel {
       onRejected: json['on_rejected'] as String? ?? TransferRejected.abort,
       dateOrder: json['date_order'] as String? ?? 'iso',
       hasFoundSet: foundSet is List && foundSet.isNotEmpty,
+      performAutoEnter: json['perform_auto_enter'] as bool? ?? false,
+      autoEnterFields: ((json['auto_enter_fields'] as List<dynamic>?) ?? const [])
+          .map((item) => item.toString())
+          .toList(),
+      matchByName: json['match_by_name'] as bool? ?? false,
     );
   }
 
@@ -132,6 +145,20 @@ class TransferDefinitionModel {
   /// Whether the transfer sends a found set rather than the whole table.
   final bool hasFoundSet;
 
+  /// Whether the destination fields' auto-enter options are performed, on
+  /// [autoEnterFields] only when it names any.
+  final bool performAutoEnter;
+  final List<String> autoEnterFields;
+
+  /// Whether each destination field is paired, at every run, with the
+  /// source field of the same name, as FileMaker's "matching names" import
+  /// order does (#191).
+  final bool matchByName;
+
+  /// Whether a run works on the destination's found set: replacing it in
+  /// order, or updating the matching records it holds.
+  bool get usesDestinationFoundSet => mode != TransferMode.add;
+
   /// The other solution this transfer reaches, or an empty string when both
   /// ends are the solution holding the definition.
   ///
@@ -146,12 +173,18 @@ class TransferDefinitionModel {
   /// One line for a script step or a dialog, e.g.
   /// "Send answers: answers → results_db.project_answers (update matching on code)".
   String describe() {
-    final keys = matchFields.isEmpty ? '' : ' (update matching on ${matchFields.join(', ')})';
-    return '$name: ${source.label} → ${destination.label}$keys';
+    final keys = mode == TransferMode.replaceFoundSet
+        ? ' (replace the found set, in order)'
+        : matchFields.isEmpty
+            ? ''
+            : ' (update matching on ${matchFields.join(', ')})';
+    final byName = matchByName ? ' (fields paired by name)' : '';
+    return '$name: ${source.label} → ${destination.label}$keys$byName';
   }
 }
 
-/// One source value the destination field would not hold.
+/// A source value the destination field would not hold, or a record the
+/// destination's validation skipped (#231).
 class TransferRejectionModel {
   const TransferRejectionModel({
     required this.row,
@@ -159,6 +192,8 @@ class TransferRejectionModel {
     required this.destinationField,
     required this.value,
     required this.reason,
+    this.rule = '',
+    this.recordSkipped = false,
   });
 
   factory TransferRejectionModel.fromJson(Map<String, dynamic> json) => TransferRejectionModel(
@@ -167,6 +202,9 @@ class TransferRejectionModel {
         destinationField: json['destination_field'] as String? ?? '',
         value: json['value'] as String? ?? '',
         reason: json['reason'] as String? ?? '',
+        rule: json['rule'] as String? ?? '',
+        // A server before #231 skipped every row it rejected.
+        recordSkipped: json['record_skipped'] as bool? ?? true,
       );
 
   /// The 1-based position of the record in the source found set.
@@ -176,7 +214,20 @@ class TransferRejectionModel {
   final String value;
   final String reason;
 
-  String describe() => 'row $row: $sourceField → $destinationField, "$value" $reason';
+  /// `type` for a value the field's type cannot hold, otherwise the
+  /// validation rule broken.
+  final String rule;
+
+  /// Whether the whole record was left out, not only the value.
+  final bool recordSkipped;
+
+  String describe() {
+    final fields = sourceField.isEmpty || sourceField == destinationField
+        ? destinationField
+        : '$sourceField → $destinationField';
+    final quoted = value.isEmpty ? '' : ' "$value"';
+    return 'row $row: $fields$quoted, ${recordSkipped ? 'record skipped' : 'value left out'}: $reason';
+  }
 }
 
 /// What one run of a transfer did.
@@ -193,9 +244,13 @@ class TransferRunReport {
     this.added = 0,
     this.updated = 0,
     this.skipped = 0,
+    this.skippedErrors = 0,
+    this.fieldsSkipped = 0,
     this.rejected = const [],
     this.committed = false,
     this.error,
+    this.recordIds = const [],
+    this.unpaired = const [],
   });
 
   factory TransferRunReport.fromJson(Map<String, dynamic> json) => TransferRunReport(
@@ -210,11 +265,18 @@ class TransferRunReport {
         added: (json['added'] as num?)?.toInt() ?? 0,
         updated: (json['updated'] as num?)?.toInt() ?? 0,
         skipped: (json['skipped'] as num?)?.toInt() ?? 0,
+        // A server before #231 skipped every row it rejected.
+        skippedErrors: (json['skipped_errors'] as num?)?.toInt() ?? (json['rejected'] as List<dynamic>?)?.length ?? 0,
+        fieldsSkipped: (json['fields_skipped'] as num?)?.toInt() ?? 0,
         rejected: ((json['rejected'] as List<dynamic>?) ?? const [])
             .map((item) => TransferRejectionModel.fromJson(item as Map<String, dynamic>))
             .toList(),
         committed: json['committed'] as bool? ?? false,
         error: json['error'] as String?,
+        unpaired: ((json['unpaired'] as List<dynamic>?) ?? const []).map((item) => item.toString()).toList(),
+        recordIds: ((json['record_ids'] as List<dynamic>?) ?? const [])
+            .map((item) => item.toString())
+            .toList(),
       );
 
   final String transfer;
@@ -231,6 +293,11 @@ class TransferRunReport {
   final int added;
   final int updated;
   final int skipped;
+
+  /// Records skipped due to errors, and values left out of the records
+  /// written: the two counts of FileMaker's Import Summary (#231).
+  final int skippedErrors;
+  final int fieldsSkipped;
   final List<TransferRejectionModel> rejected;
 
   /// Whether the destination transaction was committed. A refused transfer
@@ -241,11 +308,36 @@ class TransferRunReport {
   /// Why the transfer was refused, when it was.
   final String? error;
 
+  /// The destination records the run added or updated, when the run asked
+  /// for them: the found set an Import Records step shows once done (#191).
+  final List<String> recordIds;
+
+  /// The destination fields of a transfer pairing by name that no source
+  /// field was named as on this run, and so were left out of it.
+  final List<String> unpaired;
+
   int get rejectedCount => rejected.length;
 
-  /// "2 added, 1 updated, 0 skipped, 1 rejected of 4 records".
-  String describeCounts() =>
-      '$added added, $updated updated, $skipped skipped, $rejectedCount rejected of $rows records';
+  /// "2 added, 1 updated, 0 skipped, 1 skipped due to errors, 1 value left
+  /// out of 4 records", and the warning on the fields a transfer pairing by
+  /// name left out.
+  String describeCounts() {
+    final counts = '$added added, $updated updated, $skipped skipped, $skippedErrors skipped due to errors, '
+        '$fieldsSkipped ${fieldsSkipped == 1 ? 'value' : 'values'} left out of $rows records';
+    final warning = unpairedWarning();
+    return warning.isEmpty ? counts : '$counts; $warning';
+  }
+
+  /// "Warning: no source field is named note or qty, so they were left out
+  /// of this run", or '' when nothing was left out.
+  String unpairedWarning() {
+    if (unpaired.isEmpty) return '';
+    final names = unpaired.length == 1
+        ? unpaired.first
+        : '${unpaired.sublist(0, unpaired.length - 1).join(', ')} or ${unpaired.last}';
+    return 'Warning: no source field is named $names, so ${unpaired.length == 1 ? 'it was' : 'they were'} '
+        'left out of this run';
+  }
 
   /// What to tell someone whose transfer was refused: the counts, the reason,
   /// and the first rejected rows, which are the ones they have to fix.
@@ -262,4 +354,355 @@ class TransferRunReport {
     }
     return parts.join('; ');
   }
+}
+
+/// A migrated Import Records step that imports from another FileMaker file
+/// and waits, disabled, for the transfer the migration review creates (#191).
+class ImportStepModel {
+  const ImportStepModel({
+    required this.stepId,
+    required this.scriptId,
+    required this.scriptName,
+    required this.stepIndex,
+    this.sourceFile = '',
+    this.targetTable = '',
+    this.method = '',
+    this.addRemaining = false,
+    this.autoEnterFields = const [],
+    this.mappings = const [],
+    this.suggestedDatabase = '',
+    this.suggestedBy = '',
+    this.problem = '',
+    this.enabledInFileMaker = false,
+    this.matchByName = false,
+    this.targetFromLayout = false,
+  });
+
+  factory ImportStepModel.fromJson(Map<String, dynamic> json) => ImportStepModel(
+        stepId: json['step_id'] as String? ?? '',
+        scriptId: json['script_id'] as String? ?? '',
+        scriptName: json['script_name'] as String? ?? '',
+        stepIndex: (json['step_index'] as num?)?.toInt() ?? 0,
+        sourceFile: json['source_file'] as String? ?? '',
+        targetTable: json['target_table'] as String? ?? '',
+        method: json['method'] as String? ?? '',
+        addRemaining: json['add_remaining'] as bool? ?? false,
+        autoEnterFields: ((json['auto_enter_fields'] as List<dynamic>?) ?? const [])
+            .map((item) => item.toString())
+            .toList(),
+        mappings: ((json['mappings'] as List<dynamic>?) ?? const [])
+            .map((item) => ImportStepMappingModel.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        suggestedDatabase: json['suggested_database'] as String? ?? '',
+        suggestedBy: json['suggested_by'] as String? ?? '',
+        problem: json['problem'] as String? ?? '',
+        enabledInFileMaker: json['enabled_in_filemaker'] as bool? ?? false,
+        matchByName: json['match_by_name'] as bool? ?? false,
+        targetFromLayout: json['target_from_layout'] as bool? ?? false,
+      );
+
+  final String stepId;
+  final String scriptId;
+  final String scriptName;
+
+  /// The step's 1-based place in its script.
+  final int stepIndex;
+
+  /// The FileMaker file it read, empty when its path is computed.
+  final String sourceFile;
+  final String targetTable;
+
+  /// FileMaker's method: `add`, `update` (matching records) or `replace`
+  /// (the found set, in order).
+  final String method;
+  final bool addRemaining;
+
+  /// The fields auto-enter is performed on; `*` is every field.
+  final List<String> autoEnterFields;
+  final List<ImportStepMappingModel> mappings;
+
+  /// The solution the source file most likely became, and why:
+  /// `this_file`, `file_reference` or `database_name`.
+  final String suggestedDatabase;
+  final String suggestedBy;
+
+  /// Why no transfer can be created for the step as it is.
+  final String problem;
+
+  /// Whether confirming its transfer enables the step: FileMaker had it
+  /// enabled.
+  final bool enabledInFileMaker;
+
+  /// Whether FileMaker pairs the step's fields by matching names each time
+  /// it runs, rather than by position; so does its transfer.
+  final bool matchByName;
+
+  /// Whether the step was saved without its target, its target table taken
+  /// from the Go to Layout before it. It is confirmed on its own.
+  final bool targetFromLayout;
+
+  /// Replacing overwrites the fields of records already there.
+  bool get isDestructive => method == 'replace';
+
+  /// "update matching on code, adding the others", for the review.
+  String describeMethod() {
+    switch (method) {
+      case 'update':
+        final keys = mappings.where((m) => m.match).map((m) => m.targetField).join(', ');
+        return 'update matching records on ${keys.isEmpty ? 'no field' : keys}'
+            '${addRemaining ? ', adding the others' : ''}';
+      case 'replace':
+        return 'replace the found set, in order${addRemaining ? ', adding the remaining records' : ''}';
+      default:
+        return 'add new records';
+    }
+  }
+}
+
+/// One target field a step writes or matches on, fed from a source position.
+class ImportStepMappingModel {
+  const ImportStepMappingModel({required this.position, required this.targetField, this.match = false});
+
+  factory ImportStepMappingModel.fromJson(Map<String, dynamic> json) => ImportStepMappingModel(
+        position: (json['position'] as num?)?.toInt() ?? 0,
+        targetField: json['target_field'] as String? ?? '',
+        match: json['match'] as bool? ?? false,
+      );
+
+  final int position;
+  final String targetField;
+  final bool match;
+}
+
+/// A table of the source solution weighed for a step.
+class ImportSourceCandidate {
+  const ImportSourceCandidate({
+    required this.table,
+    this.fields = 0,
+    this.typesMatched = 0,
+    this.namesMatched = 0,
+    this.positions = 0,
+    this.fits = false,
+    this.possible = false,
+    this.deletedPositions = 0,
+    this.pairs = const [],
+  });
+
+  factory ImportSourceCandidate.fromJson(Map<String, dynamic> json) => ImportSourceCandidate(
+        table: json['table'] as String? ?? '',
+        fields: (json['fields'] as num?)?.toInt() ?? 0,
+        typesMatched: (json['types_matched'] as num?)?.toInt() ?? 0,
+        namesMatched: (json['names_matched'] as num?)?.toInt() ?? 0,
+        positions: (json['positions'] as num?)?.toInt() ?? 0,
+        fits: json['fits'] as bool? ?? false,
+        possible: json['possible'] as bool? ?? false,
+        deletedPositions: (json['deleted_positions'] as num?)?.toInt() ?? 0,
+        pairs: ((json['pairs'] as List<dynamic>?) ?? const [])
+            .map((item) => ImportPositionPair.fromJson(item as Map<String, dynamic>))
+            .toList(),
+      );
+
+  final String table;
+  final int fields;
+  final int typesMatched;
+  final int namesMatched;
+  final int positions;
+
+  /// Whether the table's fields fit every position the step reads by type.
+  final bool fits;
+
+  /// Whether FileMaker could import from the table at all: a field at every
+  /// position, whatever its type, but container data and other fields.
+  final bool possible;
+
+  /// How many positions the step reads hold a field deleted since the
+  /// migration.
+  final int deletedPositions;
+
+  /// What each position the step reads would be with this table.
+  final List<ImportPositionPair> pairs;
+
+  /// "3/3 types, 2 names" for the picker.
+  String describe() => '$typesMatched/$positions types, $namesMatched names, $fields fields';
+
+  /// "1 code → code (match), 2 amount → total", the pairing a person
+  /// confirms with the table.
+  String describePairs() => pairs.map((p) => p.describe()).join(', ');
+}
+
+/// One source position a step reads, the field of the table it is, and the
+/// target field it goes to.
+class ImportPositionPair {
+  const ImportPositionPair({
+    required this.position,
+    this.sourceField = '',
+    this.targetField = '',
+    this.match = false,
+    this.deleted = false,
+    this.missing = false,
+    this.sourceType = '',
+    this.targetType = '',
+    this.incompatible = false,
+  });
+
+  factory ImportPositionPair.fromJson(Map<String, dynamic> json) => ImportPositionPair(
+        position: (json['position'] as num?)?.toInt() ?? 0,
+        sourceField: json['source_field'] as String? ?? '',
+        targetField: json['target_field'] as String? ?? '',
+        match: json['match'] as bool? ?? false,
+        deleted: json['deleted'] as bool? ?? false,
+        missing: json['missing'] as bool? ?? false,
+        sourceType: json['source_type'] as String? ?? '',
+        targetType: json['target_type'] as String? ?? '',
+        incompatible: json['incompatible'] as bool? ?? false,
+      );
+
+  final int position;
+  final String sourceField;
+  final String targetField;
+  final bool match;
+
+  /// The field at this position was deleted since the migration.
+  final bool deleted;
+
+  /// The table has no field at this position, or, for a step matching
+  /// names, none named as the target field.
+  final bool missing;
+
+  /// The two types, given when they differ: the value goes into a field of
+  /// another type, which a person has to accept.
+  final String sourceType;
+  final String targetType;
+
+  /// Container data and a field that is not a container, which FileMaker
+  /// does not import between.
+  final bool incompatible;
+
+  /// Whether the value goes into a field of another type.
+  bool get converted => sourceType.isNotEmpty || targetType.isNotEmpty;
+
+  /// "2 amount (TEXT) → total (NUMBER)" for a pair whose types differ; a
+  /// pair matched by name has no position.
+  String describe() {
+    final shown = converted && !deleted && !missing;
+    final source = deleted
+        ? '(deleted field)'
+        : missing
+            ? '(no field)'
+            : shown
+                ? '$sourceField ($sourceType)'
+                : sourceField;
+    final target = shown ? '$targetField ($targetType)' : targetField;
+    final at = position > 0 ? '$position ' : '';
+    return '$at$source → $target${match ? ' (match)' : ''}${incompatible ? ' (cannot be imported)' : ''}';
+  }
+}
+
+/// What a source solution says about one step: the inferred table, when one
+/// alone fits, and every table weighed.
+class ImportStepInference {
+  const ImportStepInference({
+    required this.stepId,
+    this.table = '',
+    this.confidence = '',
+    this.reason = '',
+    this.candidates = const [],
+    this.error = '',
+    this.tablesHidden = 0,
+    this.byName = false,
+  });
+
+  factory ImportStepInference.fromJson(Map<String, dynamic> json) => ImportStepInference(
+        stepId: json['step_id'] as String? ?? '',
+        table: json['table'] as String? ?? '',
+        confidence: json['confidence'] as String? ?? '',
+        reason: json['reason'] as String? ?? '',
+        candidates: ((json['candidates'] as List<dynamic>?) ?? const [])
+            .map((item) => ImportSourceCandidate.fromJson(item as Map<String, dynamic>))
+            .toList(),
+        error: json['error'] as String? ?? '',
+        tablesHidden: (json['tables_hidden'] as num?)?.toInt() ?? 0,
+        byName: json['by_name'] as bool? ?? false,
+      );
+
+  final String stepId;
+
+  /// The inferred source table, empty when none or several fit.
+  final String table;
+
+  /// `high`, `medium` or `low` when [table] is set. Low: no table fits
+  /// every position by type, and this is the only one FileMaker could
+  /// import from, some values going into fields of another type.
+  final String confidence;
+  final String reason;
+  final List<ImportSourceCandidate> candidates;
+  final String error;
+
+  /// How many tables of the source solution were not weighed, as the
+  /// account signed in to it may not export from them: the inference is
+  /// then unique among the others only.
+  final int tablesHidden;
+
+  /// Whether the step pairs its fields by matching names, and the tables
+  /// were weighed by name.
+  final bool byName;
+
+  bool get isInferred => table.isNotEmpty;
+
+  /// An inference a person confirms on its own, never in bulk.
+  bool get isLowConfidence => isInferred && confidence == 'low';
+
+  /// The candidate weighed for [name], if any.
+  ImportSourceCandidate? candidate(String? name) => candidates.where((c) => c.table == name).firstOrNull;
+}
+
+/// The inference of several steps against one source solution.
+class ImportStepsInferResult {
+  const ImportStepsInferResult({this.sourceDatabase = '', this.tables = const [], this.steps = const []});
+
+  factory ImportStepsInferResult.fromJson(Map<String, dynamic> json) => ImportStepsInferResult(
+        sourceDatabase: json['source_database'] as String? ?? '',
+        tables: ((json['tables'] as List<dynamic>?) ?? const []).map((item) => item.toString()).toList(),
+        steps: ((json['steps'] as List<dynamic>?) ?? const [])
+            .map((item) => ImportStepInference.fromJson(item as Map<String, dynamic>))
+            .toList(),
+      );
+
+  final String sourceDatabase;
+  final List<String> tables;
+  final List<ImportStepInference> steps;
+}
+
+/// The source a person confirmed for one step.
+class ImportStepChoice {
+  const ImportStepChoice({required this.stepId, required this.sourceDatabase, required this.sourceTable});
+
+  final String stepId;
+
+  /// The source solution; empty is this one.
+  final String sourceDatabase;
+  final String sourceTable;
+
+  Map<String, dynamic> toJson() => {
+        'step_id': stepId,
+        'source_database': sourceDatabase,
+        'source_table': sourceTable,
+      };
+}
+
+/// What confirming one step did: the transfer it created, or why not.
+class ImportStepOutcome {
+  const ImportStepOutcome({required this.stepId, this.transfer = '', this.error = ''});
+
+  factory ImportStepOutcome.fromJson(Map<String, dynamic> json) => ImportStepOutcome(
+        stepId: json['step_id'] as String? ?? '',
+        transfer: json['transfer'] as String? ?? '',
+        error: json['error'] as String? ?? '',
+      );
+
+  final String stepId;
+  final String transfer;
+  final String error;
+
+  bool get created => transfer.isNotEmpty && error.isEmpty;
 }

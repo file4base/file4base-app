@@ -132,6 +132,21 @@ func TestAPI_EvaluateExpression(t *testing.T) {
 	assert.Equal(t, "1", batch.Records[id][0].Text)
 	assert.Equal(t, "0", batch.Records[secondID][0].Text)
 	assert.Nil(t, batch.Records["gone"])
+
+	// A layout object's conditions read Self as the field it shows, given
+	// for each expression; an expression given none leaves Self unknown.
+	rec = h.do(http.MethodPost, "/api/v1/data/customers/evaluate", owner, map[string]interface{}{
+		"expressions": []string{"Self > 50", `Self = "durand"`, "Self > 50"},
+		"self":        []interface{}{map[string]string{"field": "fee_paid"}, map[string]string{"field": "last_name"}},
+		"record_ids":  []string{id, secondID},
+		"result_type": "Number",
+	}, &batch)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, batch.Records[id], 3)
+	assert.Equal(t, "Self > 50", batch.Records[id][0].Expression, "the expression is answered as given")
+	assert.Equal(t, []string{"1", "1"}, []string{batch.Records[id][0].Text, batch.Records[id][1].Text})
+	assert.Equal(t, []string{"0", "0"}, []string{batch.Records[secondID][0].Text, batch.Records[secondID][1].Text})
+	assert.NotEmpty(t, batch.Records[id][2].Error)
 	tooManyRecords := make([]string, 101)
 	for i := range tooManyRecords {
 		tooManyRecords[i] = id

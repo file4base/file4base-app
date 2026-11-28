@@ -27,7 +27,7 @@ import (
 // a real PostgreSQL server, exactly as cmd/server wires it.
 type apiHarness struct {
 	t        *testing.T
-	router   *chi.Mux
+	router   http.Handler
 	mgr      *dbal.MultiDatabaseManager
 	sessions *auth.Store
 }
@@ -40,14 +40,21 @@ func newAPIHarness(t *testing.T, opts api.Options) *apiHarness {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := mgr.Ping(ctx); err != nil {
-		t.Skip("PostgreSQL not available:", err)
+		testdb.Unavailable(t, "the test database is not available:", err)
 	}
 	t.Cleanup(func() { _ = mgr.Close() })
 
+	// A route before Mount, as the server registers its health routes.
 	r := chi.NewRouter()
+	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	sessions := auth.NewStore(time.Hour)
-	api.Mount(r, mgr, sessions, opts)
-	return &apiHarness{t: t, router: r, mgr: mgr, sessions: sessions}
+	// The operator's setup code, so that the tests can create the databases
+	// AdminDatabase and SuperOwnerSeed reserve (#236).
+	if opts.SetupCode == "" {
+		opts.SetupCode = testSetupCode
+	}
+	handler := api.Mount(r, mgr, sessions, opts)
+	return &apiHarness{t: t, router: handler, mgr: mgr, sessions: sessions}
 }
 
 // do performs a request and decodes a JSON object/array response into out (when non-nil).
@@ -76,9 +83,12 @@ func (h *apiHarness) do(method, target, token string, body interface{}, out inte
 	return rec
 }
 
+// testSetupCode is the setup code of the harness's server.
+const testSetupCode = "TEST-SETUP-CODE-0236"
+
 func (h *apiHarness) createDatabase(name, user, password string) {
 	h.t.Helper()
-	rec := h.do(http.MethodPost, "/api/v1/databases", "", map[string]string{"database": name, "user": user, "password": password}, nil)
+	rec := h.do(http.MethodPost, "/api/v1/databases", "", map[string]string{"database": name, "user": user, "password": password, "setup_code": testSetupCode}, nil)
 	require.Equal(h.t, http.StatusCreated, rec.Code, rec.Body.String())
 	h.t.Cleanup(func() { _ = h.mgr.DropDatabase(context.Background(), name) })
 }
@@ -495,7 +505,7 @@ func TestAPI_RolesAndLayoutPermissions(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, rec.Code, "someone else's account")
 
 		otherSession := h.login(db, "uma", "user-secret")
-		rec = h.do(http.MethodPut, "/api/v1/security/users/"+plainUser.ID, user, map[string]string{"role": "user", "password": "user-secret-2"}, nil)
+		rec = h.do(http.MethodPut, "/api/v1/security/users/"+plainUser.ID, user, map[string]string{"role": "user", "password": "user-secret-2", "current_password": "user-secret"}, nil)
 		assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 		rec = h.do(http.MethodGet, "/api/v1/schemas/tables", user, nil, nil)
@@ -1106,7 +1116,7 @@ func TestAPI_SessionsFromBeforeAnAccountChangeAreRejected(t *testing.T) {
 	id := newUser("selfie", "user")
 	current := h.login(db, "selfie", "selfie-secret")
 	other := h.login(db, "selfie", "selfie-secret")
-	rec := h.do(http.MethodPut, "/api/v1/security/users/"+id, current, map[string]string{"password": "selfie-new-secret"}, nil)
+	rec := h.do(http.MethodPut, "/api/v1/security/users/"+id, current, map[string]string{"password": "selfie-new-secret", "current_password": "selfie-secret"}, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.True(t, usable(current), "the session used for the change stays valid")
 	assert.False(t, usable(other), "other sessions of the account are closed")

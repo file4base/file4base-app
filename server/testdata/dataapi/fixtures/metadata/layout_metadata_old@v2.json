@@ -1,0 +1,657 @@
+{
+  "fixture": "metadata/layout_metadata_old@v2",
+  "scenario": "metadata/layout_metadata_old",
+  "group": "metadata",
+  "version": "v2",
+  "fresh": false,
+  "title": "Old metadata route (layouts/{layout}/metadata)",
+  "rows": ["OM1"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "api-customers",
+      "rows": ["OM1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/metadata",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "metaData": [
+              {
+                "name": "CustomerID",
+                "type": "normal",
+                "result": "number",
+                "global": "false",
+                "repetitions": 1,
+                "id": "1"
+              },
+              {
+                "name": "Code",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "2"
+              },
+              {
+                "name": "Name",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "3"
+              },
+              {
+                "name": "Name",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "3"
+              },
+              {
+                "name": "Email",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "4"
+              },
+              {
+                "name": "Status",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "valueList": "Statuses",
+                "repetitions": 1,
+                "id": "5"
+              },
+              {
+                "name": "Country",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "valueList": "Countries",
+                "repetitions": 1,
+                "id": "6"
+              },
+              {
+                "name": "Interests",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "valueList": "Interests",
+                "repetitions": 1,
+                "id": "7"
+              },
+              {
+                "name": "Pin",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "10"
+              },
+              {
+                "name": "Rating",
+                "type": "normal",
+                "result": "number",
+                "global": "false",
+                "valueList": "Ratings",
+                "repetitions": 1,
+                "id": "12"
+              },
+              {
+                "name": "Balance",
+                "type": "normal",
+                "result": "number",
+                "global": "false",
+                "repetitions": 1,
+                "id": "13"
+              },
+              {
+                "name": "LooseNumber",
+                "type": "normal",
+                "result": "number",
+                "global": "false",
+                "repetitions": 1,
+                "id": "14"
+              },
+              {
+                "name": "SignupDate",
+                "type": "normal",
+                "result": "date",
+                "global": "false",
+                "repetitions": 1,
+                "id": "15"
+              },
+              {
+                "name": "PreferredTime",
+                "type": "normal",
+                "result": "time",
+                "global": "false",
+                "repetitions": 1,
+                "id": "16"
+              },
+              {
+                "name": "Duration",
+                "type": "normal",
+                "result": "time",
+                "global": "false",
+                "repetitions": 1,
+                "id": "17"
+              },
+              {
+                "name": "LastContact",
+                "type": "normal",
+                "result": "timeStamp",
+                "global": "false",
+                "repetitions": 1,
+                "id": "18"
+              },
+              {
+                "name": "Photo",
+                "type": "normal",
+                "result": "container",
+                "global": "false",
+                "repetitions": 1,
+                "id": "19"
+              },
+              {
+                "name": "Tags(1)",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 3,
+                "id": "20_1"
+              },
+              {
+                "name": "Tags(2)",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 3,
+                "id": "20_2"
+              },
+              {
+                "name": "Tags(3)",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 3,
+                "id": "20_3"
+              },
+              {
+                "name": "Scores(1)",
+                "type": "normal",
+                "result": "number",
+                "global": "false",
+                "repetitions": 2,
+                "id": "21_1"
+              },
+              {
+                "name": "Scores(2)",
+                "type": "normal",
+                "result": "number",
+                "global": "false",
+                "repetitions": 2,
+                "id": "21_2"
+              },
+              {
+                "name": "CreatedAt",
+                "type": "normal",
+                "result": "timeStamp",
+                "global": "false",
+                "repetitions": 1,
+                "id": "22"
+              },
+              {
+                "name": "ModifiedAt",
+                "type": "normal",
+                "result": "timeStamp",
+                "global": "false",
+                "repetitions": 1,
+                "id": "23"
+              },
+              {
+                "name": "CreatedBy",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "24"
+              },
+              {
+                "name": "ModifiedBy",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "25"
+              },
+              {
+                "name": "Source",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "26"
+              },
+              {
+                "name": "cDisplayName",
+                "type": "calculation",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "27"
+              },
+              {
+                "name": "cNameUpper",
+                "type": "calculation",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "32"
+              },
+              {
+                "name": "cBalanceRounded",
+                "type": "calculation",
+                "result": "number",
+                "global": "false",
+                "repetitions": 1,
+                "id": "28"
+              },
+              {
+                "name": "cSignupPlus30",
+                "type": "calculation",
+                "result": "date",
+                "global": "false",
+                "repetitions": 1,
+                "id": "29"
+              },
+              {
+                "name": "cDurationPlusHour",
+                "type": "calculation",
+                "result": "time",
+                "global": "false",
+                "repetitions": 1,
+                "id": "30"
+              },
+              {
+                "name": "cContactStamp",
+                "type": "calculation",
+                "result": "timeStamp",
+                "global": "false",
+                "repetitions": 1,
+                "id": "31"
+              },
+              {
+                "name": "cPhotoCopy",
+                "type": "calculation",
+                "result": "container",
+                "global": "false",
+                "repetitions": 1,
+                "id": "33"
+              },
+              {
+                "name": "cOrderCount",
+                "type": "calculation",
+                "result": "number",
+                "global": "false",
+                "repetitions": 1,
+                "id": "34"
+              },
+              {
+                "name": "cOrdersTotal",
+                "type": "calculation",
+                "result": "number",
+                "global": "false",
+                "repetitions": 1,
+                "id": "35"
+              },
+              {
+                "name": "cDivByZero",
+                "type": "calculation",
+                "result": "number",
+                "global": "false",
+                "repetitions": 1,
+                "id": "36"
+              },
+              {
+                "name": "cRepeatCalc(1)",
+                "type": "calculation",
+                "result": "text",
+                "global": "false",
+                "repetitions": 3,
+                "id": "37_1"
+              },
+              {
+                "name": "cRepeatCalc(2)",
+                "type": "calculation",
+                "result": "text",
+                "global": "false",
+                "repetitions": 3,
+                "id": "37_2"
+              },
+              {
+                "name": "cRepeatCalc(3)",
+                "type": "calculation",
+                "result": "text",
+                "global": "false",
+                "repetitions": 3,
+                "id": "37_3"
+              },
+              {
+                "name": "cGlobalEcho",
+                "type": "calculation",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "38"
+              },
+              {
+                "name": "sCount",
+                "type": "summary",
+                "result": "number",
+                "global": "false",
+                "repetitions": 1,
+                "id": "39"
+              },
+              {
+                "name": "sTotalBalance",
+                "type": "summary",
+                "result": "number",
+                "global": "false",
+                "repetitions": 1,
+                "id": "40"
+              },
+              {
+                "name": "sAvgRating",
+                "type": "summary",
+                "result": "number",
+                "global": "false",
+                "repetitions": 1,
+                "id": "41"
+              },
+              {
+                "name": "gText",
+                "type": "normal",
+                "result": "text",
+                "global": "true",
+                "repetitions": 1,
+                "id": "42"
+              },
+              {
+                "name": "gNumber",
+                "type": "normal",
+                "result": "number",
+                "global": "true",
+                "repetitions": 1,
+                "id": "43"
+              },
+              {
+                "name": "gDate",
+                "type": "normal",
+                "result": "date",
+                "global": "true",
+                "repetitions": 1,
+                "id": "44"
+              },
+              {
+                "name": "gTime",
+                "type": "normal",
+                "result": "time",
+                "global": "true",
+                "repetitions": 1,
+                "id": "45"
+              },
+              {
+                "name": "gTimestamp",
+                "type": "normal",
+                "result": "timeStamp",
+                "global": "true",
+                "repetitions": 1,
+                "id": "46"
+              },
+              {
+                "name": "gContainer",
+                "type": "normal",
+                "result": "container",
+                "global": "true",
+                "repetitions": 1,
+                "id": "47"
+              },
+              {
+                "name": "gRepeat(1)",
+                "type": "normal",
+                "result": "text",
+                "global": "true",
+                "repetitions": 3,
+                "id": "48_1"
+              },
+              {
+                "name": "gRepeat(2)",
+                "type": "normal",
+                "result": "text",
+                "global": "true",
+                "repetitions": 3,
+                "id": "48_2"
+              },
+              {
+                "name": "gRepeat(3)",
+                "type": "normal",
+                "result": "text",
+                "global": "true",
+                "repetitions": 3,
+                "id": "48_3"
+              },
+              {
+                "name": "Customer_Contacts::FirstName",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "3"
+              },
+              {
+                "name": "Customer_Orders::OrderNo",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "3"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "api-customers-portals",
+      "rows": ["OM1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/metadata",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "metaData": [
+              {
+                "name": "CustomerID",
+                "type": "normal",
+                "result": "number",
+                "global": "false",
+                "repetitions": 1,
+                "id": "1"
+              },
+              {
+                "name": "Code",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "2"
+              },
+              {
+                "name": "Name",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "3"
+              },
+              {
+                "name": "Country",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "6"
+              },
+              {
+                "name": "FavoriteContact",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "valueList": "CustomerContactNames",
+                "repetitions": 1,
+                "id": "11"
+              },
+              {
+                "name": "Notes",
+                "type": "normal",
+                "result": "text",
+                "global": "false",
+                "repetitions": 1,
+                "id": "8"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "missing-layout",
+      "rows": ["OM1", "EC8"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/NoSuchLayout/metadata",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "105",
+              "message": "Layout is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -101,6 +101,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
       {'name': 'IsEmpty', 'syntax': 'IsEmpty( field )', 'desc': 'Returns 1 (true) if the field is empty.'},
       {'name': 'IsValid', 'syntax': 'IsValid( field )', 'desc': 'Returns 1 if the field contains a valid value.'},
       {'name': 'Case', 'syntax': 'Case( test1 ; result1 ; [test2 ; result2] ; default )', 'desc': 'Evaluates multiple conditions in sequence.'},
+      {'name': 'ExecuteSQL', 'syntax': 'ExecuteSQL( sqlQuery ; fieldSeparator ; rowSeparator { ; arguments... } )', 'desc': 'Runs a SELECT query over the table occurrences, on the server, and returns the rows as text; "?" on an error. Unstored calculations and scripts only.'},
     ],
     'Text': [
       {'name': 'Length', 'syntax': 'Length( text )', 'desc': 'Returns the length in characters.'},

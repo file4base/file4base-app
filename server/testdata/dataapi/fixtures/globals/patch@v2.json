@@ -1,0 +1,1096 @@
+{
+  "fixture": "globals/patch@v2",
+  "scenario": "globals/patch",
+  "group": "globals",
+  "version": "v2",
+  "fresh": false,
+  "title": "PATCH globals: qualified names, types, repetitions, errors, per-session values",
+  "rows": ["GL1", "GL2", "GL3", "GL4", "GL5", "GL6", "GL7", "FD17"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login-rw2",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw2",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login-ro",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_ro}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "ro",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "set-text",
+      "rows": ["GL1", "GL2", "GL7"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"globalFields\":{\"Customers::gText\":\"session value\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-after-set",
+      "rows": ["GL4", "FD17"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001",
+                  "Name": "Alpha Industries",
+                  "Email": "contact1@example.test",
+                  "Status": "Inactive",
+                  "Country": "Deutschland",
+                  "Interests": "Hardware",
+                  "Pin": "0037",
+                  "Rating": 2,
+                  "Balance": 0,
+                  "LooseNumber": "abc",
+                  "SignupDate": "01/01/0001",
+                  "PreferredTime": "00:00:00",
+                  "Duration": "25:00:00",
+                  "LastContact": "01/01/1904 00:00:01",
+                  "Photo": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "Tags(1)": "tag1a",
+                  "Tags(2)": "",
+                  "Tags(3)": "",
+                  "Scores(1)": 1,
+                  "Scores(2)": -1.5,
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "11/26/2026 13:06:28",
+                  "CreatedBy": "Admin",
+                  "ModifiedBy": "Admin",
+                  "Source": "reference-build",
+                  "cDisplayName": "C001 – Alpha Industries",
+                  "cNameUpper": "ALPHA INDUSTRIES",
+                  "cBalanceRounded": 0,
+                  "cSignupPlus30": "01/31/0001",
+                  "cDurationPlusHour": "26:00:00",
+                  "cContactStamp": "01/01/0001 00:00:00",
+                  "cPhotoCopy": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "cOrderCount": 1,
+                  "cOrdersTotal": -50,
+                  "cDivByZero": "?",
+                  "cRepeatCalc(1)": "tag1a#1",
+                  "cRepeatCalc(2)": "",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "session value",
+                  "sCount": 30,
+                  "sTotalBalance": 123456789014222222112222189879.0459368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "session value",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "Zoë",
+                  "Customer_Orders::OrderNo": "SO-0001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "other-session-sees-saved-value",
+      "rows": ["GL4", "GL5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw2}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001",
+                  "Name": "Alpha Industries",
+                  "Email": "contact1@example.test",
+                  "Status": "Inactive",
+                  "Country": "Deutschland",
+                  "Interests": "Hardware",
+                  "Pin": "0037",
+                  "Rating": 2,
+                  "Balance": 0,
+                  "LooseNumber": "abc",
+                  "SignupDate": "01/01/0001",
+                  "PreferredTime": "00:00:00",
+                  "Duration": "25:00:00",
+                  "LastContact": "01/01/1904 00:00:01",
+                  "Photo": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "Tags(1)": "tag1a",
+                  "Tags(2)": "",
+                  "Tags(3)": "",
+                  "Scores(1)": 1,
+                  "Scores(2)": -1.5,
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "11/26/2026 13:06:28",
+                  "CreatedBy": "Admin",
+                  "ModifiedBy": "Admin",
+                  "Source": "reference-build",
+                  "cDisplayName": "C001 – Alpha Industries",
+                  "cNameUpper": "ALPHA INDUSTRIES",
+                  "cBalanceRounded": 0,
+                  "cSignupPlus30": "01/31/0001",
+                  "cDurationPlusHour": "26:00:00",
+                  "cContactStamp": "01/01/0001 00:00:00",
+                  "cPhotoCopy": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "cOrderCount": 1,
+                  "cOrdersTotal": -50,
+                  "cDivByZero": "?",
+                  "cRepeatCalc(1)": "tag1a#1",
+                  "cRepeatCalc(2)": "",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "Global text – é ü 日本",
+                  "sCount": 30,
+                  "sTotalBalance": 123456789014222222112222189879.0459368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "Global text – é ü 日本",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "Zoë",
+                  "Customer_Orders::OrderNo": "SO-0001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "set-all-types",
+      "rows": ["GL2", "GL6"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"globalFields\":{\"Customers::gNumber\":\"42.50\",\"Customers::gDate\":\"01/02/2025\",\"Customers::gTime\":\"13:14:15\",\"Customers::gTimestamp\":\"03/04/2025 05:06:07\",\"Customers::gRepeat(2)\":\"second\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-all-types",
+      "rows": ["GL4", "GL6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001",
+                  "Name": "Alpha Industries",
+                  "Email": "contact1@example.test",
+                  "Status": "Inactive",
+                  "Country": "Deutschland",
+                  "Interests": "Hardware",
+                  "Pin": "0037",
+                  "Rating": 2,
+                  "Balance": 0,
+                  "LooseNumber": "abc",
+                  "SignupDate": "01/01/0001",
+                  "PreferredTime": "00:00:00",
+                  "Duration": "25:00:00",
+                  "LastContact": "01/01/1904 00:00:01",
+                  "Photo": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "Tags(1)": "tag1a",
+                  "Tags(2)": "",
+                  "Tags(3)": "",
+                  "Scores(1)": 1,
+                  "Scores(2)": -1.5,
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "11/26/2026 13:06:28",
+                  "CreatedBy": "Admin",
+                  "ModifiedBy": "Admin",
+                  "Source": "reference-build",
+                  "cDisplayName": "C001 – Alpha Industries",
+                  "cNameUpper": "ALPHA INDUSTRIES",
+                  "cBalanceRounded": 0,
+                  "cSignupPlus30": "01/31/0001",
+                  "cDurationPlusHour": "26:00:00",
+                  "cContactStamp": "01/01/0001 00:00:00",
+                  "cPhotoCopy": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "cOrderCount": 1,
+                  "cOrdersTotal": -50,
+                  "cDivByZero": "?",
+                  "cRepeatCalc(1)": "tag1a#1",
+                  "cRepeatCalc(2)": "",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "session value",
+                  "sCount": 30,
+                  "sTotalBalance": 123456789014222222112222189879.0459368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "session value",
+                  "gNumber": 42.50,
+                  "gDate": "01/02/2025",
+                  "gTime": "13:14:15",
+                  "gTimestamp": "03/04/2025 05:06:07",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "second",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "Zoë",
+                  "Customer_Orders::OrderNo": "SO-0001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "set-number-json",
+      "rows": ["GL2"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"globalFields\":{\"Customers::gNumber\":7}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "unqualified-name",
+      "rows": ["GL3", "EC6"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"globalFields\":{\"gText\":\"x\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "413",
+              "message": "Specified field has inappropriate field type"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "non-global-field",
+      "rows": ["GL3"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"globalFields\":{\"Customers::Name\":\"x\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "413",
+              "message": "Specified field has inappropriate field type"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "unknown-field",
+      "rows": ["GL3", "EC6"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"globalFields\":{\"Customers::NoSuchField\":\"x\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "102",
+              "message": "Field is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "other-occurrence",
+      "rows": ["GL2"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"globalFields\":{\"Order_Customer::gText\":\"via other occurrence\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "invalid-date",
+      "rows": ["GL2", "EC17"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"globalFields\":{\"Customers::gDate\":\"not a date\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "500",
+              "message": "Date value does not meet validation entry options"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "container-global",
+      "rows": ["GL2", "C17"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"globalFields\":{\"Customers::gContainer\":\"x\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "repetition-out-of-range",
+      "rows": ["GL6"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"globalFields\":{\"Customers::gRepeat(4)\":\"x\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "111",
+              "message": "Field repetition is invalid"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "empty-global-fields",
+      "rows": ["GL1"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"globalFields\":{}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "102",
+              "message": "Field is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "missing-global-fields",
+      "rows": ["GL1", "EC22"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "globalFields is missing",
+              "code": "10"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "post-method",
+      "rows": ["X18"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"globalFields\":{\"Customers::gText\":\"x\"}}"
+      },
+      "response": {
+        "status": 405,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Resource doesn't support the specified HTTP verb",
+              "code": "1704"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "read-only-account",
+      "rows": ["GL1", "AC1"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/globals",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"globalFields\":{\"Customers::gText\":\"ro value\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "201",
+              "message": "Field cannot be modified"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "read-only-reads-own-value",
+      "rows": ["GL4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001",
+                  "Name": "Alpha Industries",
+                  "Email": "contact1@example.test",
+                  "Status": "Inactive",
+                  "Country": "Deutschland",
+                  "Interests": "Hardware",
+                  "Pin": "0037",
+                  "Rating": 2,
+                  "Balance": 0,
+                  "LooseNumber": "abc",
+                  "SignupDate": "01/01/0001",
+                  "PreferredTime": "00:00:00",
+                  "Duration": "25:00:00",
+                  "LastContact": "01/01/1904 00:00:01",
+                  "Photo": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "Tags(1)": "tag1a",
+                  "Tags(2)": "",
+                  "Tags(3)": "",
+                  "Scores(1)": 1,
+                  "Scores(2)": -1.5,
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "11/26/2026 13:06:28",
+                  "CreatedBy": "Admin",
+                  "ModifiedBy": "Admin",
+                  "Source": "reference-build",
+                  "cDisplayName": "C001 – Alpha Industries",
+                  "cNameUpper": "ALPHA INDUSTRIES",
+                  "cBalanceRounded": 0,
+                  "cSignupPlus30": "01/31/0001",
+                  "cDurationPlusHour": "26:00:00",
+                  "cContactStamp": "01/01/0001 00:00:00",
+                  "cPhotoCopy": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "cOrderCount": 1,
+                  "cOrdersTotal": -50,
+                  "cDivByZero": "?",
+                  "cRepeatCalc(1)": "tag1a#1",
+                  "cRepeatCalc(2)": "",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "Global text – é ü 日本",
+                  "sCount": 30,
+                  "sTotalBalance": 123456789014222222112222189879.0459368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "Global text – é ü 日本",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "Zoë",
+                  "Customer_Orders::OrderNo": "SO-0001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "calc-sees-global",
+      "rows": ["GL4", "FD15"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=1&_offset=2",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 2,
+                  "Code": "C002",
+                  "Name": "Zoë Ångström & Fils",
+                  "Email": "contact2@example.test",
+                  "Status": "Prospect",
+                  "Country": "España",
+                  "Interests": "Software",
+                  "Pin": "0074",
+                  "Rating": 3,
+                  "Balance": 1,
+                  "LooseNumber": "12abc",
+                  "SignupDate": "10/14/1066",
+                  "PreferredTime": "00:00:01",
+                  "Duration": "100:00:00",
+                  "LastContact": "12/31/2024 12:34:56",
+                  "Photo": "https://<host>/Streaming/MainDB/<container-token>.gif?RCType=EmbeddedRCFileProcessor",
+                  "Tags(1)": "tag2a",
+                  "Tags(2)": "tag2b",
+                  "Tags(3)": "",
+                  "Scores(1)": 2,
+                  "Scores(2)": -3.0,
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "11/26/2026 13:06:28",
+                  "CreatedBy": "Admin",
+                  "ModifiedBy": "Admin",
+                  "Source": "reference-build",
+                  "cDisplayName": "C002 – Zoë Ångström & Fils",
+                  "cNameUpper": "ZOË ÅNGSTRÖM & FILS",
+                  "cBalanceRounded": 1,
+                  "cSignupPlus30": "11/13/1066",
+                  "cDurationPlusHour": "101:00:00",
+                  "cContactStamp": "10/14/1066 00:00:01",
+                  "cPhotoCopy": "https://<host>/Streaming/MainDB/<container-token>.gif?RCType=EmbeddedRCFileProcessor",
+                  "cOrderCount": 2,
+                  "cOrdersTotal": 99999999.99,
+                  "cDivByZero": "?",
+                  "cRepeatCalc(1)": "tag2a#1",
+                  "cRepeatCalc(2)": "tag2b#2",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "via other occurrence",
+                  "sCount": 30,
+                  "sTotalBalance": 123456789014222222112222189879.0459368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "via other occurrence",
+                  "gNumber": 7,
+                  "gDate": "01/02/2025",
+                  "gTime": "13:14:15",
+                  "gTimestamp": "03/04/2025 05:06:07",
+                  "gContainer": "x",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "second",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "Ελένη",
+                  "Customer_Orders::OrderNo": "SO-0002"
+                },
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-rw2",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:rw2}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-ro",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:ro}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

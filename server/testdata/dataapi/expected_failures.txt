@@ -1,0 +1,86 @@
+# Where each fixture File4Base does not pass yet first fails. See README.md:
+# failing earlier or differently fails the test, and so does passing.
+#
+#   migration@ENGINE ISSUE         the reference file does not migrate on ENGINE,
+#                                  for the known cause tracked by ISSUE
+#   FIXTURE STEP KIND [ENGINE]     FIXTURE first fails at STEP, with a KIND difference
+#
+# The /fmi/data skeleton serves sessions, productInfo and databases (P1),
+# and the layout and script menus and layout descriptions (P3); every other
+# endpoint answers code 3, so its fixtures stop at their first step that
+# needs it. A layout description has no valueLists yet: layout_metadata
+# stops at the first layout with value lists, and TestDataAPIConformanceLayoutContract
+# checks the rest of every description.
+
+containers/upload_download@v1 upload-png status
+containers/upload_download@v2 upload-png status
+containers/upload_download@vLatest upload-png status
+find/operators_number_date@v1 number-equal status
+find/operators_number_date@v2 number-equal status
+find/operators_number_date@vLatest number-equal status
+find/operators_text@v1 word-start status
+find/operators_text@v2 word-start status
+find/operators_text@vLatest word-start status
+find/params@v1 sort-in-body status
+find/params@v2 sort-in-body status
+find/params@vLatest sort-in-body status
+find/requests@v1 two-finds-or status
+find/requests@v2 two-finds-or status
+find/requests@vLatest two-finds-or status
+find/scripts@v1 script-after-find status
+find/scripts@v2 script-after-find status
+find/scripts@vLatest script-after-find status
+globals/patch@v1 set-text status
+globals/patch@v2 set-text status
+globals/patch@vLatest set-text status
+locking/record_lock@v1 edit-while-uploading background.status
+locking/record_lock@v2 edit-while-uploading background.status
+locking/record_lock@vLatest edit-while-uploading background.status
+metadata/layout_metadata@v1 api-customers body
+metadata/layout_metadata@v2 api-customers body
+metadata/layout_metadata@vLatest api-customers body
+privileges/access@v1 ro-create body
+privileges/access@v2 ro-create body
+privileges/access@vLatest ro-create body
+records/get_by_id@v1 record-1 status
+records/get_by_id@v2 record-1 status
+records/get_by_id@vLatest record-1 status
+records/portals@v1 all-portals-limit-3 status
+records/portals@v2 all-portals-limit-3 status
+records/portals@vLatest all-portals-limit-3 status
+records/range_paging@v1 default-products status
+records/range_paging@v2 default-products status
+records/range_paging@vLatest default-products status
+records/range_sort@v1 sort-name-ascend status
+records/range_sort@v2 sort-name-ascend status
+records/range_sort@vLatest sort-name-ascend status
+records/value_contract@v1 customers-dateformats-default status
+records/value_contract@v2 customers-dateformats-default status
+records/value_contract@vLatest customers-dateformats-default status
+routing/envelope_and_routes@v1 find-limit-as-string status
+routing/envelope_and_routes@v2 find-limit-as-string status
+routing/envelope_and_routes@vLatest find-limit-as-string status
+scripts/execute@v1 success status
+scripts/execute@v2 success status
+scripts/execute@vLatest success status
+scripts/on_reads@v1 script status
+scripts/on_reads@v2 script status
+scripts/on_reads@vLatest script status
+sessions/login_variants@v1 account-without-fmrest status
+sessions/login_variants@v2 account-without-fmrest status
+sessions/login_variants@vLatest account-without-fmrest status
+writes/create@v1 create-minimal status
+writes/create@v2 create-minimal status
+writes/create@vLatest create-minimal status
+writes/delete@v1 lines-of-order-60-before status
+writes/delete@v2 lines-of-order-60-before status
+writes/delete@vLatest lines-of-order-60-before status
+writes/duplicate@v1 duplicate-contact status
+writes/duplicate@v2 duplicate-contact status
+writes/duplicate@vLatest duplicate-contact status
+writes/edit@v1 edit-simple status
+writes/edit@v2 edit-simple status
+writes/edit@vLatest edit-simple status
+writes/validation@v1 range-rating-9 body
+writes/validation@v2 range-rating-9 body
+writes/validation@vLatest range-rating-9 body

@@ -1,0 +1,4296 @@
+{
+  "fixture": "metadata/layout_metadata@v2",
+  "scenario": "metadata/layout_metadata",
+  "group": "metadata",
+  "version": "v2",
+  "fresh": false,
+  "title": "Layout metadata: field types, display types, repetitions, related fields, portals, value lists, access",
+  "rows": ["M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10", "M11", "M12", "M13", "M14", "M15", "M16", "M18", "X11", "EC8"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "api-customers",
+      "rows": ["M1", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10", "M11", "M14"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "fieldMetaData": [
+              {
+                "name": "CustomerID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Code",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 8,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Name",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Name",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Email",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Status",
+                "type": "normal",
+                "displayType": "radioButtons",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "valueList": "Statuses",
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Country",
+                "type": "normal",
+                "displayType": "popupMenu",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "valueList": "Countries",
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Interests",
+                "type": "normal",
+                "displayType": "checkBox",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "valueList": "Interests",
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Pin",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Rating",
+                "type": "normal",
+                "displayType": "popupList",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": true,
+                "timeOfDay": false,
+                "valueList": "Ratings",
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Balance",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "LooseNumber",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "SignupDate",
+                "type": "normal",
+                "displayType": "calendar",
+                "result": "date",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": true,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "PreferredTime",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "time",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Duration",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "time",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "LastContact",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "timeStamp",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Photo",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "container",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Tags",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 3,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 3
+              },
+              {
+                "name": "Scores",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 4,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 2
+              },
+              {
+                "name": "CreatedAt",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "timeStamp",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "ModifiedAt",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "timeStamp",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "CreatedBy",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "ModifiedBy",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Source",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cDisplayName",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cNameUpper",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cBalanceRounded",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cSignupPlus30",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "date",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cDurationPlusHour",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "time",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cContactStamp",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "timeStamp",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cPhotoCopy",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "container",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cOrderCount",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cOrdersTotal",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cDivByZero",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cRepeatCalc",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 3,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 3
+              },
+              {
+                "name": "cGlobalEcho",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "sCount",
+                "type": "summary",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "sTotalBalance",
+                "type": "summary",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "sAvgRating",
+                "type": "summary",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gText",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gNumber",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gDate",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "date",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gTime",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "time",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gTimestamp",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "timeStamp",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gContainer",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "container",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gRepeat",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 3,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 3
+              },
+              {
+                "name": "Customer_Contacts::FirstName",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Customer_Orders::OrderNo",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              }
+            ],
+            "portalMetaData": {},
+            "valueLists": [
+              {
+                "name": "Statuses",
+                "type": "customList",
+                "values": [
+                  {
+                    "displayValue": "Active",
+                    "value": "Active"
+                  },
+                  {
+                    "displayValue": "Inactive",
+                    "value": "Inactive"
+                  },
+                  {
+                    "displayValue": "Prospect",
+                    "value": "Prospect"
+                  },
+                  {
+                    "displayValue": "Archivé",
+                    "value": "Archivé"
+                  }
+                ]
+              },
+              {
+                "name": "Countries",
+                "type": "customList",
+                "values": [
+                  {
+                    "displayValue": "France",
+                    "value": "France"
+                  },
+                  {
+                    "displayValue": "Deutschland",
+                    "value": "Deutschland"
+                  },
+                  {
+                    "displayValue": "España",
+                    "value": "España"
+                  },
+                  {
+                    "displayValue": "Österreich",
+                    "value": "Österreich"
+                  },
+                  {
+                    "displayValue": "Côte d'Ivoire",
+                    "value": "Côte d'Ivoire"
+                  },
+                  {
+                    "displayValue": "日本",
+                    "value": "日本"
+                  },
+                  {
+                    "displayValue": "Ελλάδα",
+                    "value": "Ελλάδα"
+                  },
+                  {
+                    "displayValue": "Россия",
+                    "value": "Россия"
+                  },
+                  {
+                    "displayValue": "United States",
+                    "value": "United States"
+                  },
+                  {
+                    "displayValue": "Brasil",
+                    "value": "Brasil"
+                  }
+                ]
+              },
+              {
+                "name": "Interests",
+                "type": "customList",
+                "values": [
+                  {
+                    "displayValue": "Hardware",
+                    "value": "Hardware"
+                  },
+                  {
+                    "displayValue": "Software",
+                    "value": "Software"
+                  },
+                  {
+                    "displayValue": "Services",
+                    "value": "Services"
+                  },
+                  {
+                    "displayValue": "Formation",
+                    "value": "Formation"
+                  },
+                  {
+                    "displayValue": "Maintenance",
+                    "value": "Maintenance"
+                  }
+                ]
+              },
+              {
+                "name": "Ratings",
+                "type": "customList",
+                "values": [
+                  {
+                    "displayValue": "1",
+                    "value": "1"
+                  },
+                  {
+                    "displayValue": "2",
+                    "value": "2"
+                  },
+                  {
+                    "displayValue": "3",
+                    "value": "3"
+                  },
+                  {
+                    "displayValue": "4",
+                    "value": "4"
+                  },
+                  {
+                    "displayValue": "5",
+                    "value": "5"
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "api-customers-portals",
+      "rows": ["M12", "M13", "M15"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "fieldMetaData": [
+              {
+                "name": "CustomerID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Code",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 8,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Name",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Country",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "FavoriteContact",
+                "type": "normal",
+                "displayType": "popupMenu",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "valueList": "CustomerContactNames",
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Notes",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              }
+            ],
+            "portalMetaData": {
+              "Customer_Contacts": [
+                {
+                  "name": "Customer_Contacts::ContactID",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": true,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Contacts::FirstName",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Contacts::LastName",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Contacts::Role",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                }
+              ],
+              "OrderLinesPortal": [
+                {
+                  "name": "Customer_Order_Lines::LineID",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": true,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Order_Lines::OrderID",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Order_Lines::ProductCode",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Order_Lines::Qty",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Order_Lines::LineTotal",
+                  "type": "calculation",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                }
+              ],
+              "OrdersPortal": [
+                {
+                  "name": "Customer_Orders::OrderID",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": true,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::OrderNo",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::OrderDate",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "date",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::Amount",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::Status",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::Paid",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                }
+              ],
+              "PaidOrdersPortal": [
+                {
+                  "name": "Customer_Orders::OrderID",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": true,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::OrderNo",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::Amount",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                }
+              ],
+              "SameCountryPortal": [
+                {
+                  "name": "Customers_SameCountry::CustomerID",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": true,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customers_SameCountry::Name",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customers_SameCountry::Country",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                }
+              ]
+            },
+            "valueLists": [
+              {
+                "name": "CustomerContactNames",
+                "type": "",
+                "values": []
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "api-customers-portals-record-1",
+      "rows": ["M15"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals?recordId=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "fieldMetaData": [
+              {
+                "name": "CustomerID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Code",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 8,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Name",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Country",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "FavoriteContact",
+                "type": "normal",
+                "displayType": "popupMenu",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "valueList": "CustomerContactNames",
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Notes",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              }
+            ],
+            "portalMetaData": {
+              "Customer_Contacts": [
+                {
+                  "name": "Customer_Contacts::ContactID",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": true,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Contacts::FirstName",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Contacts::LastName",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Contacts::Role",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                }
+              ],
+              "OrderLinesPortal": [
+                {
+                  "name": "Customer_Order_Lines::LineID",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": true,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Order_Lines::OrderID",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Order_Lines::ProductCode",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Order_Lines::Qty",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Order_Lines::LineTotal",
+                  "type": "calculation",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                }
+              ],
+              "OrdersPortal": [
+                {
+                  "name": "Customer_Orders::OrderID",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": true,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::OrderNo",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::OrderDate",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "date",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::Amount",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::Status",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::Paid",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                }
+              ],
+              "PaidOrdersPortal": [
+                {
+                  "name": "Customer_Orders::OrderID",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": true,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::OrderNo",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customer_Orders::Amount",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                }
+              ],
+              "SameCountryPortal": [
+                {
+                  "name": "Customers_SameCountry::CustomerID",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": true,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customers_SameCountry::Name",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Customers_SameCountry::Country",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                }
+              ]
+            },
+            "valueLists": [
+              {
+                "name": "CustomerContactNames",
+                "type": "byField",
+                "values": [
+                  {
+                    "displayValue": "Zoë Παπαδοπούλου",
+                    "value": "Zoë Παπαδοπούλου"
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "api-customers-portals-record-missing",
+      "rows": ["M15", "EC5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals?recordId=9999",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "api-orders",
+      "rows": ["M13", "M16"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Orders",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "fieldMetaData": [
+              {
+                "name": "OrderID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "CustomerID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "OrderNo",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "OrderDate",
+                "type": "normal",
+                "displayType": "calendar",
+                "result": "date",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Amount",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Status",
+                "type": "normal",
+                "displayType": "popupMenu",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "valueList": "OrderStatuses",
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Paid",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Comment",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "FeaturedProduct",
+                "type": "normal",
+                "displayType": "popupMenu",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "valueList": "ProductNames_ByCode",
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "CreatedAt",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "timeStamp",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "ModifiedAt",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "timeStamp",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cLineCount",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cLineTotal",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cCustomerName",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "sOrderCount",
+                "type": "summary",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "sAmountTotal",
+                "type": "summary",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Order_Customer::Name",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Order_Customer::Code",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 8,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              }
+            ],
+            "portalMetaData": {
+              "LinesPortal": [
+                {
+                  "name": "Order_Lines::LineID",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": true,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": true,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Order_Lines::ProductCode",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Order_Lines::Description",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "text",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Order_Lines::Qty",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Order_Lines::UnitPrice",
+                  "type": "normal",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                },
+                {
+                  "name": "Order_Lines::LineTotal",
+                  "type": "calculation",
+                  "displayType": "editText",
+                  "result": "number",
+                  "global": false,
+                  "autoEnter": false,
+                  "fourDigitYear": false,
+                  "maxRepeat": 1,
+                  "maxCharacters": 0,
+                  "notEmpty": false,
+                  "numeric": false,
+                  "timeOfDay": false,
+                  "repetitionStart": 1,
+                  "repetitionEnd": 1
+                }
+              ]
+            },
+            "valueLists": [
+              {
+                "name": "OrderStatuses",
+                "type": "customList",
+                "values": [
+                  {
+                    "displayValue": "Draft",
+                    "value": "Draft"
+                  },
+                  {
+                    "displayValue": "Confirmed",
+                    "value": "Confirmed"
+                  },
+                  {
+                    "displayValue": "Shipped",
+                    "value": "Shipped"
+                  },
+                  {
+                    "displayValue": "Cancelled",
+                    "value": "Cancelled"
+                  }
+                ]
+              },
+              {
+                "name": "ProductNames_ByCode",
+                "type": "byField",
+                "values": [
+                  {
+                    "displayValue": "Adaptateur USB‑C",
+                    "value": "P022"
+                  },
+                  {
+                    "displayValue": "Alimentation 650 W",
+                    "value": "P025"
+                  },
+                  {
+                    "displayValue": "Baie 42U",
+                    "value": "P017"
+                  },
+                  {
+                    "displayValue": "Batterie externe",
+                    "value": "P020"
+                  },
+                  {
+                    "displayValue": "Boîtier PC",
+                    "value": "P026"
+                  },
+                  {
+                    "displayValue": "Câble HDMI 2 m",
+                    "value": "P004"
+                  },
+                  {
+                    "displayValue": "Carte graphique",
+                    "value": "P024"
+                  },
+                  {
+                    "displayValue": "Casque audio",
+                    "value": "P015"
+                  },
+                  {
+                    "displayValue": "Clavier AZERTY",
+                    "value": "P002"
+                  },
+                  {
+                    "displayValue": "Disque SSD 1 To",
+                    "value": "P006"
+                  },
+                  {
+                    "displayValue": "Écran 27\"",
+                    "value": "P001"
+                  },
+                  {
+                    "displayValue": "Écran tactile",
+                    "value": "P027"
+                  },
+                  {
+                    "displayValue": "Hub USB",
+                    "value": "P023"
+                  },
+                  {
+                    "displayValue": "Imprimante laser",
+                    "value": "P005"
+                  },
+                  {
+                    "displayValue": "Lampe LED",
+                    "value": "P019"
+                  },
+                  {
+                    "displayValue": "Lecteur code-barres",
+                    "value": "P011"
+                  },
+                  {
+                    "displayValue": "Mémoire 16 Go",
+                    "value": "P007"
+                  },
+                  {
+                    "displayValue": "Onduleur 1500 VA",
+                    "value": "P008"
+                  },
+                  {
+                    "displayValue": "Pâte thermique",
+                    "value": "P021"
+                  },
+                  {
+                    "displayValue": "Prise réseau",
+                    "value": "P016"
+                  },
+                  {
+                    "displayValue": "Produit sans nom",
+                    "value": "P030"
+                  },
+                  {
+                    "displayValue": "Projecteur",
+                    "value": "P029"
+                  },
+                  {
+                    "displayValue": "Routeur Wi‑Fi",
+                    "value": "P010"
+                  },
+                  {
+                    "displayValue": "Scanner A4",
+                    "value": "P028"
+                  },
+                  {
+                    "displayValue": "Souris sans fil",
+                    "value": "P003"
+                  },
+                  {
+                    "displayValue": "Station d'accueil",
+                    "value": "P013"
+                  },
+                  {
+                    "displayValue": "Switch 24 ports",
+                    "value": "P009"
+                  },
+                  {
+                    "displayValue": "Tablette 10\"",
+                    "value": "P012"
+                  },
+                  {
+                    "displayValue": "Ventilateur",
+                    "value": "P018"
+                  },
+                  {
+                    "displayValue": "Webcam HD",
+                    "value": "P014"
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "api-orderlines",
+      "rows": ["M16"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_OrderLines",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "fieldMetaData": [
+              {
+                "name": "LineID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "OrderID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "ProductCode",
+                "type": "normal",
+                "displayType": "popupList",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "valueList": "ProductCodes",
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Description",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Qty",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "UnitPrice",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Discount",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": true,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "LineTotal",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "sLineTotal",
+                "type": "summary",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Line_Order::OrderNo",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Line_Order::OrderDate",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "date",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Line_Order_Customer::Name",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Line_Product::ProductName",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              }
+            ],
+            "portalMetaData": {},
+            "valueLists": [
+              {
+                "name": "ProductCodes",
+                "type": "byField",
+                "values": [
+                  {
+                    "displayValue": "P001 Écran 27\"",
+                    "value": "P001"
+                  },
+                  {
+                    "displayValue": "P002 Clavier AZERTY",
+                    "value": "P002"
+                  },
+                  {
+                    "displayValue": "P003 Souris sans fil",
+                    "value": "P003"
+                  },
+                  {
+                    "displayValue": "P004 Câble HDMI 2 m",
+                    "value": "P004"
+                  },
+                  {
+                    "displayValue": "P005 Imprimante laser",
+                    "value": "P005"
+                  },
+                  {
+                    "displayValue": "P006 Disque SSD 1 To",
+                    "value": "P006"
+                  },
+                  {
+                    "displayValue": "P007 Mémoire 16 Go",
+                    "value": "P007"
+                  },
+                  {
+                    "displayValue": "P008 Onduleur 1500 VA",
+                    "value": "P008"
+                  },
+                  {
+                    "displayValue": "P009 Switch 24 ports",
+                    "value": "P009"
+                  },
+                  {
+                    "displayValue": "P010 Routeur Wi‑Fi",
+                    "value": "P010"
+                  },
+                  {
+                    "displayValue": "P011 Lecteur code-barres",
+                    "value": "P011"
+                  },
+                  {
+                    "displayValue": "P012 Tablette 10\"",
+                    "value": "P012"
+                  },
+                  {
+                    "displayValue": "P013 Station d'accueil",
+                    "value": "P013"
+                  },
+                  {
+                    "displayValue": "P014 Webcam HD",
+                    "value": "P014"
+                  },
+                  {
+                    "displayValue": "P015 Casque audio",
+                    "value": "P015"
+                  },
+                  {
+                    "displayValue": "P016 Prise réseau",
+                    "value": "P016"
+                  },
+                  {
+                    "displayValue": "P017 Baie 42U",
+                    "value": "P017"
+                  },
+                  {
+                    "displayValue": "P018 Ventilateur",
+                    "value": "P018"
+                  },
+                  {
+                    "displayValue": "P019 Lampe LED",
+                    "value": "P019"
+                  },
+                  {
+                    "displayValue": "P020 Batterie externe",
+                    "value": "P020"
+                  },
+                  {
+                    "displayValue": "P021 Pâte thermique",
+                    "value": "P021"
+                  },
+                  {
+                    "displayValue": "P022 Adaptateur USB‑C",
+                    "value": "P022"
+                  },
+                  {
+                    "displayValue": "P023 Hub USB",
+                    "value": "P023"
+                  },
+                  {
+                    "displayValue": "P024 Carte graphique",
+                    "value": "P024"
+                  },
+                  {
+                    "displayValue": "P025 Alimentation 650 W",
+                    "value": "P025"
+                  },
+                  {
+                    "displayValue": "P026 Boîtier PC",
+                    "value": "P026"
+                  },
+                  {
+                    "displayValue": "P027 Écran tactile",
+                    "value": "P027"
+                  },
+                  {
+                    "displayValue": "P028 Scanner A4",
+                    "value": "P028"
+                  },
+                  {
+                    "displayValue": "P029 Projecteur",
+                    "value": "P029"
+                  },
+                  {
+                    "displayValue": "P030 Produit sans nom",
+                    "value": "P030"
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "api-contacts",
+      "rows": ["M6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Contacts",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "fieldMetaData": [
+              {
+                "name": "ContactID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "CustomerID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "FirstName",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "LastName",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Role",
+                "type": "normal",
+                "displayType": "radioButtons",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "valueList": "ContactRoles",
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Phone",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "IsPrimary",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Birthday",
+                "type": "normal",
+                "displayType": "calendar",
+                "result": "date",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cFullName",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Contact_Customer::Name",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              }
+            ],
+            "portalMetaData": {},
+            "valueLists": [
+              {
+                "name": "ContactRoles",
+                "type": "customList",
+                "values": [
+                  {
+                    "displayValue": "Billing",
+                    "value": "Billing"
+                  },
+                  {
+                    "displayValue": "Technical",
+                    "value": "Technical"
+                  },
+                  {
+                    "displayValue": "Sales",
+                    "value": "Sales"
+                  },
+                  {
+                    "displayValue": "Management",
+                    "value": "Management"
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "api-customers-restricted",
+      "rows": ["M18"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Customers_Restricted",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "fieldMetaData": [
+              {
+                "name": "CustomerID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Code",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 8,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Name",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "<No Access>",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Rating",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": true,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              }
+            ],
+            "portalMetaData": {}
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "api-empty",
+      "rows": ["M3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Empty",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "fieldMetaData": [],
+            "portalMetaData": {}
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "api-duplicate-name",
+      "rows": ["X11"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_Duplicate",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "fieldMetaData": [
+              {
+                "name": "CustomerID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Name",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              }
+            ],
+            "portalMetaData": {}
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "api-noaccess",
+      "rows": ["M2", "LN6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API_NoAccess",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "105",
+              "message": "Layout is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "missing-layout",
+      "rows": ["M2", "EC8"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/NoSuchLayout",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "105",
+              "message": "Layout is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "layout-case-variant",
+      "rows": ["M2"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/api_customers_nested",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "fieldMetaData": [
+              {
+                "name": "CustomerID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Code",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 8,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              }
+            ],
+            "portalMetaData": {}
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "folder-name-as-layout",
+      "rows": ["M2", "LN3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/API",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "105",
+              "message": "Layout is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "base-layout-customers",
+      "rows": ["M3", "M7", "M8", "M11"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts/Customers",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "fieldMetaData": [
+              {
+                "name": "CustomerID",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Code",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 8,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Name",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": true,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Email",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Status",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Country",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Interests",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Notes",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "<No Access>",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Pin",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "FavoriteContact",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Rating",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": true,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Balance",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "LooseNumber",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "SignupDate",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "date",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": true,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "PreferredTime",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "time",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Duration",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "time",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "LastContact",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "timeStamp",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Photo",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "container",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Tags",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 3,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 3
+              },
+              {
+                "name": "Scores",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 4,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 4
+              },
+              {
+                "name": "CreatedAt",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "timeStamp",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "ModifiedAt",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "timeStamp",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "CreatedBy",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "ModifiedBy",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "Source",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": true,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cDisplayName",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cBalanceRounded",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cSignupPlus30",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "date",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cDurationPlusHour",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "time",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cContactStamp",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "timeStamp",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cNameUpper",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cPhotoCopy",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "container",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cOrderCount",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cOrdersTotal",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cDivByZero",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "cRepeatCalc",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 3,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 3
+              },
+              {
+                "name": "cGlobalEcho",
+                "type": "calculation",
+                "displayType": "editText",
+                "result": "text",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "sCount",
+                "type": "summary",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "sTotalBalance",
+                "type": "summary",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "sAvgRating",
+                "type": "summary",
+                "displayType": "editText",
+                "result": "number",
+                "global": false,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gText",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gNumber",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "number",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gDate",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "date",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gTime",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "time",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gTimestamp",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "timeStamp",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gContainer",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "container",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 1,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 1
+              },
+              {
+                "name": "gRepeat",
+                "type": "normal",
+                "displayType": "editText",
+                "result": "text",
+                "global": true,
+                "autoEnter": false,
+                "fourDigitYear": false,
+                "maxRepeat": 3,
+                "maxCharacters": 0,
+                "notEmpty": false,
+                "numeric": false,
+                "timeOfDay": false,
+                "repetitionStart": 1,
+                "repetitionEnd": 3
+              }
+            ],
+            "portalMetaData": {}
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

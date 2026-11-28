@@ -1,0 +1,1991 @@
+{
+  "fixture": "writes/create@v1",
+  "scenario": "writes/create",
+  "group": "writes",
+  "version": "v1",
+  "fresh": true,
+  "title": "Create: minimal and empty records, value parsing, repetitions, related and portal data, options, field errors",
+  "rows": ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10", "C11", "C12", "C13", "C15", "C16", "C17", "C18", "C19"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-minimal",
+      "rows": ["C1", "C2", "C13"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N001\",\"Name\":\"New customer\"}}"
+      },
+      "capture": [
+        {
+          "var": "n1",
+          "from": "body",
+          "path": ["response", "recordId"]
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "31",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-created",
+      "rows": ["C19", "FD5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/{{var:n1}}",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 31,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 31,
+                  "Code": "N001",
+                  "Name": "New customer",
+                  "Email": "",
+                  "Status": "",
+                  "Country": "",
+                  "Interests": "",
+                  "Pin": "",
+                  "Rating": "",
+                  "Balance": "",
+                  "LooseNumber": "",
+                  "SignupDate": "",
+                  "PreferredTime": "",
+                  "Duration": "",
+                  "LastContact": "",
+                  "Photo": "",
+                  "Tags(1)": "",
+                  "Tags(2)": "",
+                  "Tags(3)": "",
+                  "Scores(1)": "",
+                  "Scores(2)": "",
+                  "CreatedAt": "<now>",
+                  "ModifiedAt": "<now>",
+                  "CreatedBy": "api_rw",
+                  "ModifiedBy": "api_rw",
+                  "Source": "reference-build",
+                  "cDisplayName": "N001 – New customer",
+                  "cNameUpper": "NEW CUSTOMER",
+                  "cBalanceRounded": "",
+                  "cSignupPlus30": "",
+                  "cDurationPlusHour": "",
+                  "cContactStamp": "",
+                  "cPhotoCopy": "",
+                  "cOrderCount": "",
+                  "cOrdersTotal": "",
+                  "cDivByZero": "",
+                  "cRepeatCalc(1)": "",
+                  "cRepeatCalc(2)": "",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "Global text – é ü 日本",
+                  "sCount": 31,
+                  "sTotalBalance": 123456789014222222112222189879.0459368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "Global text – é ü 日本",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "",
+                  "Customer_Orders::OrderNo": ""
+                },
+                "portalData": {},
+                "recordId": "31",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-empty-fielddata-products",
+      "rows": ["C2", "C19"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Products/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "509",
+              "message": "Field requires a valid value"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-empty-fielddata-contacts",
+      "rows": ["C2", "C19"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Contacts/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "509",
+              "message": "Field requires a valid value"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-empty-fielddata-customers",
+      "rows": ["C2", "C19"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "509",
+              "message": "Field requires a valid value"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-fielddata-missing",
+      "rows": ["C2", "EC22"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Missing required property: fieldData",
+              "code": "10"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-fielddata-not-object",
+      "rows": ["C2"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":\"Code=N002\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "'fieldData': Expected type object but found type string",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-typed-values",
+      "rows": ["C5", "C6", "C7", "C8"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N003\",\"Name\":\"Typed\",\"Balance\":\"12.3400\",\"LooseNumber\":\"abc 12\",\"SignupDate\":\"02/29/2024\",\"PreferredTime\":\"7:05\",\"Duration\":\"-25:30:00\",\"LastContact\":\"12/31/2025 23:59:59.25\",\"Tags(2)\":\"second tag\",\"Scores(1)\":5,\"Scores(4)\":\"4.5\",\"Rating\":3}}"
+      },
+      "capture": [
+        {
+          "var": "n3",
+          "from": "body",
+          "path": ["response", "recordId"]
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "33",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-typed",
+      "rows": ["C5", "C6", "C7", "FD6", "FD7"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/{{var:n3}}",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 32,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 33,
+                  "Code": "N003",
+                  "Name": "Typed",
+                  "Email": "",
+                  "Status": "",
+                  "Country": "",
+                  "Interests": "",
+                  "Pin": "",
+                  "Rating": 3,
+                  "Balance": 12.3400,
+                  "LooseNumber": "abc 12",
+                  "SignupDate": "02/29/2024",
+                  "PreferredTime": "07:05:00",
+                  "Duration": "-25:30:00",
+                  "LastContact": "12/31/2025 23:59:59.25",
+                  "Photo": "",
+                  "Tags(1)": "",
+                  "Tags(2)": "second tag",
+                  "Tags(3)": "",
+                  "Scores(1)": 5,
+                  "Scores(2)": "",
+                  "CreatedAt": "<now>",
+                  "ModifiedAt": "<now>",
+                  "CreatedBy": "api_rw",
+                  "ModifiedBy": "api_rw",
+                  "Source": "reference-build",
+                  "cDisplayName": "N003 – Typed",
+                  "cNameUpper": "TYPED",
+                  "cBalanceRounded": 12.34,
+                  "cSignupPlus30": "03/30/2024",
+                  "cDurationPlusHour": "-24:30:00",
+                  "cContactStamp": "02/29/2024 07:05:00",
+                  "cPhotoCopy": "",
+                  "cOrderCount": "",
+                  "cOrdersTotal": "",
+                  "cDivByZero": "?",
+                  "cRepeatCalc(1)": "",
+                  "cRepeatCalc(2)": "second tag#2",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "Global text – é ü 日本",
+                  "sCount": 32,
+                  "sTotalBalance": 123456789014222222112222189891.3859368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "Global text – é ü 日本",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "",
+                  "Customer_Orders::OrderNo": ""
+                },
+                "portalData": {},
+                "recordId": "33",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-number-json-types",
+      "rows": ["C7", "FD6"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N004\",\"Name\":\"Json number\",\"Balance\":1e-07,\"Rating\":4.0,\"Scores(1)\":12345678901234567890}}"
+      },
+      "capture": [
+        {
+          "var": "n4",
+          "from": "body",
+          "path": ["response", "recordId"]
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "34",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-number-json-types",
+      "rows": ["FD6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/{{var:n4}}?layout.response=API_Customers_Restricted",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Restricted",
+              "table": "Customers",
+              "totalRecordCount": 33,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 34,
+                  "Code": "N004",
+                  "Name": "Json number",
+                  "SecretNote": "<No Access>",
+                  "Rating": 4
+                },
+                "portalData": {},
+                "recordId": "34",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-iso-dates-dateformats-2",
+      "rows": ["C6", "C18"],
+      "note": "ISO date only, with dateformats 2.",
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N005\",\"Name\":\"Iso\",\"SignupDate\":\"2024-02-29\"},\"dateformats\":2}"
+      },
+      "capture": [
+        {
+          "var": "n5",
+          "from": "body",
+          "path": ["response", "recordId"]
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "35",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-iso",
+      "rows": ["C18"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/{{var:n5}}?dateformats=2",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 34,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 35,
+                  "Code": "N005",
+                  "Name": "Iso",
+                  "Email": "",
+                  "Status": "",
+                  "Country": "",
+                  "Interests": "",
+                  "Pin": "",
+                  "Rating": "",
+                  "Balance": "",
+                  "LooseNumber": "",
+                  "SignupDate": "2024-02-29",
+                  "PreferredTime": "",
+                  "Duration": "",
+                  "LastContact": "",
+                  "Photo": "",
+                  "Tags(1)": "",
+                  "Tags(2)": "",
+                  "Tags(3)": "",
+                  "Scores(1)": "",
+                  "Scores(2)": "",
+                  "CreatedAt": "<now>",
+                  "ModifiedAt": "<now>",
+                  "CreatedBy": "api_rw",
+                  "ModifiedBy": "api_rw",
+                  "Source": "reference-build",
+                  "cDisplayName": "N005 – Iso",
+                  "cNameUpper": "ISO",
+                  "cBalanceRounded": "",
+                  "cSignupPlus30": "2024-03-30",
+                  "cDurationPlusHour": "",
+                  "cContactStamp": "",
+                  "cPhotoCopy": "",
+                  "cOrderCount": "",
+                  "cOrdersTotal": "",
+                  "cDivByZero": "",
+                  "cRepeatCalc(1)": "",
+                  "cRepeatCalc(2)": "",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "Global text – é ü 日本",
+                  "sCount": 34,
+                  "sTotalBalance": 123456789014222222112222189891.3859369645897932783396433832795028841971693993751,
+                  "sAvgRating": 3.037037037037037,
+                  "gText": "Global text – é ü 日本",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "2024-02-29",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "1999-12-31T23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "",
+                  "Customer_Orders::OrderNo": ""
+                },
+                "portalData": {},
+                "recordId": "35",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-iso-timestamp-space-dateformats-2",
+      "rows": ["C6", "C18"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N012\",\"Name\":\"Iso ts\",\"LastContact\":\"2025-12-31 23:59:59\"},\"dateformats\":2}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "36",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-iso-timestamp-t-dateformats-2",
+      "rows": ["C6", "C18"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N013\",\"Name\":\"Iso ts\",\"LastContact\":\"2025-12-31T23:59:59\"},\"dateformats\":2}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "500",
+              "message": "Date value does not meet validation entry options"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-iso-date-default-format",
+      "rows": ["C6", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N006\",\"Name\":\"Iso default\",\"SignupDate\":\"2024-02-29\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "500",
+              "message": "Date value does not meet validation entry options"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-invalid-date",
+      "rows": ["C6", "C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N007\",\"Name\":\"Bad date\",\"SignupDate\":\"13/45/2024\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "500",
+              "message": "Date value does not meet validation entry options"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-invalid-time",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N008\",\"Name\":\"Bad time\",\"PreferredTime\":\"25:61:00\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "40",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-two-digit-year",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N009\",\"Name\":\"Two digit\",\"SignupDate\":\"1/1/24\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "500",
+              "message": "Date value does not meet validation entry options"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-empty-string-empties",
+      "rows": ["C8"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N010\",\"Name\":\"Empties\",\"Balance\":\"\",\"SignupDate\":\"\",\"Source\":\"\"}}"
+      },
+      "capture": [
+        {
+          "var": "n10",
+          "from": "body",
+          "path": ["response", "recordId"]
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "42",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-empties",
+      "rows": ["C8", "FD5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/{{var:n10}}?layout.response=API_Customers_Restricted",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Restricted",
+              "table": "Customers",
+              "totalRecordCount": 37,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 42,
+                  "Code": "N010",
+                  "Name": "Empties",
+                  "SecretNote": "<No Access>",
+                  "Rating": ""
+                },
+                "portalData": {},
+                "recordId": "42",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-null-value",
+      "rows": ["C8"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N011\",\"Name\":null}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "1708",
+              "message": "Parameter value is invalid"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-field-not-on-layout",
+      "rows": ["C3", "EC6"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N012\",\"Name\":\"x\",\"SecretNote\":\"hidden\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "504",
+              "message": "Value in field is not unique, as required in validation entry options"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-unknown-field",
+      "rows": ["C3", "EC6"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N013\",\"Name\":\"x\",\"NoSuchField\":\"x\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "102",
+              "message": "Field is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-calc-field",
+      "rows": ["C15", "EC10"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N014\",\"Name\":\"x\",\"cDisplayName\":\"x\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "201",
+              "message": "Field cannot be modified"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-summary-field",
+      "rows": ["C15", "EC10"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N015\",\"Name\":\"x\",\"sCount\":\"1\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "201",
+              "message": "Field cannot be modified"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-global-field",
+      "rows": ["C16"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N016\",\"Name\":\"x\",\"gText\":\"from create\"}}"
+      },
+      "capture": [
+        {
+          "var": "n16",
+          "from": "body",
+          "path": ["response", "recordId"]
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "48",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-global-after-create",
+      "rows": ["C16", "GL4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/{{var:n16}}",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 38,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 48,
+                  "Code": "N016",
+                  "Name": "x",
+                  "Email": "",
+                  "Status": "",
+                  "Country": "",
+                  "Interests": "",
+                  "Pin": "",
+                  "Rating": "",
+                  "Balance": "",
+                  "LooseNumber": "",
+                  "SignupDate": "",
+                  "PreferredTime": "",
+                  "Duration": "",
+                  "LastContact": "",
+                  "Photo": "",
+                  "Tags(1)": "",
+                  "Tags(2)": "",
+                  "Tags(3)": "",
+                  "Scores(1)": "",
+                  "Scores(2)": "",
+                  "CreatedAt": "<now>",
+                  "ModifiedAt": "<now>",
+                  "CreatedBy": "api_rw",
+                  "ModifiedBy": "api_rw",
+                  "Source": "reference-build",
+                  "cDisplayName": "N016 – x",
+                  "cNameUpper": "X",
+                  "cBalanceRounded": "",
+                  "cSignupPlus30": "",
+                  "cDurationPlusHour": "",
+                  "cContactStamp": "",
+                  "cPhotoCopy": "",
+                  "cOrderCount": "",
+                  "cOrdersTotal": "",
+                  "cDivByZero": "",
+                  "cRepeatCalc(1)": "",
+                  "cRepeatCalc(2)": "",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "from create",
+                  "sCount": 38,
+                  "sTotalBalance": 123456789014222222112222189891.3859369645897932783396433832795028841971693993751,
+                  "sAvgRating": 3.037037037037037,
+                  "gText": "from create",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "",
+                  "Customer_Orders::OrderNo": ""
+                },
+                "portalData": {},
+                "recordId": "48",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-container-field",
+      "rows": ["C17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N017\",\"Name\":\"x\",\"Photo\":\"data\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "49",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-auto-enter-prohibited",
+      "rows": ["C10"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N018\",\"Name\":\"x\",\"CreatedBy\":\"someone\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "201",
+              "message": "Field cannot be modified"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-repetition-beyond-shown",
+      "rows": ["C5"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N019\",\"Name\":\"x\",\"Scores(3)\":\"3\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "51",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-repetition-beyond-definition",
+      "rows": ["C5"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N020\",\"Name\":\"x\",\"Tags(4)\":\"x\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "111",
+              "message": "Field repetition is invalid"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-repetition-zero",
+      "rows": ["C5"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N021\",\"Name\":\"x\",\"Tags(0)\":\"x\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "111",
+              "message": "Field repetition is invalid"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-related-field",
+      "rows": ["C4"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N022\",\"Name\":\"Related\",\"Customer_Contacts::FirstName\":\"Created via parent\"}}"
+      },
+      "capture": [
+        {
+          "var": "n22",
+          "from": "body",
+          "path": ["response", "recordId"]
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "54",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-related-created",
+      "rows": ["C4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/{{var:n22}}",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Portals",
+              "table": "Customers",
+              "totalRecordCount": 41,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 54,
+                  "Code": "N022",
+                  "Name": "Related",
+                  "Country": "",
+                  "FavoriteContact": "",
+                  "Notes": ""
+                },
+                "portalData": {
+                  "OrdersPortal": [],
+                  "PaidOrdersPortal": [],
+                  "Customer_Contacts": [
+                    {
+                      "recordId": "32",
+                      "Customer_Contacts::ContactID": 32,
+                      "Customer_Contacts::FirstName": "Created via parent",
+                      "Customer_Contacts::LastName": "",
+                      "Customer_Contacts::Role": "",
+                      "modId": "0"
+                    }
+                  ],
+                  "OrderLinesPortal": [],
+                  "SameCountryPortal": []
+                },
+                "recordId": "54",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "OrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  },
+                  {
+                    "portalObjectName": "PaidOrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  },
+                  {
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Contacts",
+                    "foundCount": 1,
+                    "returnedCount": 1
+                  },
+                  {
+                    "portalObjectName": "OrderLinesPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Order_Lines",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  },
+                  {
+                    "portalObjectName": "SameCountryPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customers_SameCountry",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-with-portal-data",
+      "rows": ["C11"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N023\",\"Name\":\"Portal parent\"},\"portalData\":{\"OrdersPortal\":[{\"Customer_Orders::OrderNo\":\"SO-N023-1\",\"Customer_Orders::Amount\":\"10\"},{\"Customer_Orders::OrderNo\":\"SO-N023-2\"}]}}"
+      },
+      "capture": [
+        {
+          "var": "n23",
+          "from": "body",
+          "path": ["response", "recordId"]
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "55",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-portal-created",
+      "rows": ["C11", "PD2"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/{{var:n23}}",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Portals",
+              "table": "Customers",
+              "totalRecordCount": 42,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 55,
+                  "Code": "N023",
+                  "Name": "Portal parent",
+                  "Country": "",
+                  "FavoriteContact": "",
+                  "Notes": ""
+                },
+                "portalData": {
+                  "OrdersPortal": [
+                    {
+                      "recordId": "61",
+                      "Customer_Orders::OrderID": 61,
+                      "Customer_Orders::OrderNo": "SO-N023-1",
+                      "Customer_Orders::OrderDate": "",
+                      "Customer_Orders::Amount": 10,
+                      "Customer_Orders::Status": "",
+                      "Customer_Orders::Paid": "",
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "62",
+                      "Customer_Orders::OrderID": 62,
+                      "Customer_Orders::OrderNo": "SO-N023-2",
+                      "Customer_Orders::OrderDate": "",
+                      "Customer_Orders::Amount": "",
+                      "Customer_Orders::Status": "",
+                      "Customer_Orders::Paid": "",
+                      "modId": "0"
+                    }
+                  ],
+                  "PaidOrdersPortal": [],
+                  "Customer_Contacts": [],
+                  "OrderLinesPortal": [],
+                  "SameCountryPortal": []
+                },
+                "recordId": "55",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "OrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 2,
+                    "returnedCount": 2
+                  },
+                  {
+                    "portalObjectName": "PaidOrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  },
+                  {
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Contacts",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  },
+                  {
+                    "portalObjectName": "OrderLinesPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Order_Lines",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  },
+                  {
+                    "portalObjectName": "SameCountryPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customers_SameCountry",
+                    "foundCount": 0,
+                    "returnedCount": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-options-entrymode-script",
+      "rows": ["C9"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N024\",\"Name\":\"x\",\"CreatedBy\":\"script entry\"},\"options\":{\"entrymode\":\"script\",\"prohibitmode\":\"script\"}}"
+      },
+      "capture": [
+        {
+          "var": "n24",
+          "from": "body",
+          "path": ["response", "recordId"]
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "56",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-entrymode",
+      "rows": ["C9", "C10"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/{{var:n24}}?layout.response=API_Customers",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 43,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 56,
+                  "Code": "N024",
+                  "Name": "x",
+                  "Email": "",
+                  "Status": "",
+                  "Country": "",
+                  "Interests": "",
+                  "Pin": "",
+                  "Rating": "",
+                  "Balance": "",
+                  "LooseNumber": "",
+                  "SignupDate": "",
+                  "PreferredTime": "",
+                  "Duration": "",
+                  "LastContact": "",
+                  "Photo": "",
+                  "Tags(1)": "",
+                  "Tags(2)": "",
+                  "Tags(3)": "",
+                  "Scores(1)": "",
+                  "Scores(2)": "",
+                  "CreatedAt": "<now>",
+                  "ModifiedAt": "<now>",
+                  "CreatedBy": "script entry",
+                  "ModifiedBy": "api_rw",
+                  "Source": "reference-build",
+                  "cDisplayName": "N024 – x",
+                  "cNameUpper": "X",
+                  "cBalanceRounded": "",
+                  "cSignupPlus30": "",
+                  "cDurationPlusHour": "",
+                  "cContactStamp": "",
+                  "cPhotoCopy": "",
+                  "cOrderCount": "",
+                  "cOrdersTotal": "",
+                  "cDivByZero": "",
+                  "cRepeatCalc(1)": "",
+                  "cRepeatCalc(2)": "",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "from create",
+                  "sCount": 43,
+                  "sTotalBalance": 123456789014222222112222189891.3859369645897932783396433832795028841971693993751,
+                  "sAvgRating": 3.037037037037037,
+                  "gText": "from create",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "",
+                  "Customer_Orders::OrderNo": ""
+                },
+                "portalData": {},
+                "recordId": "56",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-options-invalid",
+      "rows": ["C9"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N025\",\"Name\":\"x\"},\"options\":{\"entrymode\":\"robot\"}}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "'options': No enum match for: robot",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-with-script",
+      "rows": ["C12"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N026\",\"Name\":\"x\"},\"script\":\"API_ReturnContext\",\"script.param\":\"create\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "API_Customers\rCustomers\r44\r44\rapi_rw\rDataAPI_ReadWrite\rparam=create",
+            "scriptError": "0",
+            "recordId": "57",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-unknown-body-key",
+      "rows": ["X20"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"N027\",\"Name\":\"x\"},\"fieldDta\":{}}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Unknown parameter(s): fieldDta",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-missing-layout",
+      "rows": ["EC8"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/NoSuchLayout/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "105",
+              "message": "Layout is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "create-related-not-allowed",
+      "rows": ["C4"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_OrderLines/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"OrderID\":1,\"Line_Product::ProductName\":\"x\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

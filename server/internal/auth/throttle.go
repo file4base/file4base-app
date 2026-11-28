@@ -1,9 +1,20 @@
 package auth
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
+
+// LoginThrottleKey identifies who is trying to authenticate: the account
+// (database + username) and where from (client address). Keying on both
+// means one attacker cannot lock a victim out of their own account from
+// elsewhere, while still capping guesses per account and per source. Every
+// sign-in path keys the same way, so they share one counter per account.
+func LoginThrottleKey(database, username, clientIP string) string {
+	return strings.ToLower(strings.TrimSpace(database)) + "\x00" +
+		strings.ToLower(strings.TrimSpace(username)) + "\x00" + clientIP
+}
 
 // LoginThrottle slows down password guessing. It counts the failed attempts
 // against each key (a database + username + client address) and, once too

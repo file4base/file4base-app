@@ -22,13 +22,13 @@ func newCalcSolution(t *testing.T) (context.Context, *schema.Service, *data.Serv
 	t.Helper()
 	mgr, err := dbal.NewMultiDatabaseManager(testdb.Engine(), testdb.AdminDSN())
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 	}
 	t.Cleanup(func() { _ = mgr.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	t.Cleanup(cancel)
 	if err := mgr.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 	}
 	name := fmt.Sprintf("f4b_valcalc_%d", uniqueTestStamp())
 	require.NoError(t, mgr.CreateDatabase(ctx, name))

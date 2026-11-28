@@ -64,7 +64,8 @@ These are capability limits, stated so that an application depending on them is 
 - An external script stops at operations that depend on a record or window context.
 - Database global fields are still represented as stored columns; their FileMaker session behavior is unqualified. Script `$$` variables are separate and now scoped to each authenticated solution session.
 - A transfer schedule runs a transfer, not an arbitrary migrated server script.
-- Repeating fields collapse to one column; `ExecuteSQL`, `Let` and `While` are not executed.
+- Repeating fields collapse to one column; `Let` and `While` are not executed.
+- `ExecuteSQL` runs FileMaker's `SELECT` subset only (no `UNION`, subqueries, `CASE`, `CAST` or SQL functions beyond a few), and only where FileMaker computes it each time: unstored, auto-enter and validation calculations and scripts ([calculation_formulas.md](calculation_formulas.md#executesql)).
 
 ---
 

@@ -20,7 +20,7 @@ func TestRelationshipService_CRUD(t *testing.T) {
 		DSN:        dsn,
 	})
 	if err != nil {
-		t.Skip("PostgreSQL not available:", err)
+		testdb.Unavailable(t, "PostgreSQL not available:", err)
 		return
 	}
 	defer driver.Close()
@@ -29,7 +29,7 @@ func TestRelationshipService_CRUD(t *testing.T) {
 	defer cancel()
 
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("PostgreSQL ping failed:", err)
+		testdb.Unavailable(t, "PostgreSQL ping failed:", err)
 		return
 	}
 
@@ -166,7 +166,7 @@ func TestNewTablesDoNotShareAGraphPosition(t *testing.T) {
 		DSN:        testdb.DevDSN(),
 	})
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 		return
 	}
 	defer driver.Close()
@@ -175,7 +175,7 @@ func TestNewTablesDoNotShareAGraphPosition(t *testing.T) {
 	defer cancel()
 
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 		return
 	}
 

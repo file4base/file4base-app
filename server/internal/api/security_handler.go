@@ -82,6 +82,40 @@ func (h *SecurityHandler) isSeededSuperOwner(database, username string) bool {
 	return h.superOwnerSeed[superOwnerSeedKey(database, username)]
 }
 
+// errSuperOwnerTarget is the reason a caller that is not a super-owner gets
+// for an operation on a super-owner account.
+const errSuperOwnerTarget = "only a super-owner can manage a super-owner account"
+
+// isEffectiveSuperOwner reports whether an account of the database signs in as
+// a super-owner: its stored flag, the bootstrap seed, or ownership of the
+// server administration database, as Login computes it.
+func (h *SecurityHandler) isEffectiveSuperOwner(database string, u *schema.UserMetadata) bool {
+	return u.SuperOwner || h.isSeededSuperOwner(database, u.Username) || h.isAdminDatabaseOwner(database, u.Role)
+}
+
+// guardSuperOwnerTarget refuses (403) an operation on another account that is
+// a super-owner when the caller is not one: a database owner must not gain the
+// server-wide privilege by taking over such an account (#209). It reports
+// whether the operation may go on.
+func (h *SecurityHandler) guardSuperOwnerTarget(w http.ResponseWriter, r *http.Request, target *schema.UserMetadata) bool {
+	sess := currentSession(r)
+	if sess.SuperOwner || sess.UserID == target.ID {
+		return true
+	}
+	// GetUser may have read the account without its flag (legacy fallback),
+	// so the stored flag is read again, and an error refuses the operation.
+	stored, err := schemaService(r).StoredSuperOwner(r.Context(), target.ID)
+	if err != nil {
+		telemetry.WriteInternalError(w, r, fmt.Errorf("reading the super-owner flag: %w", err))
+		return false
+	}
+	if !stored && !h.isEffectiveSuperOwner(sess.Database, target) {
+		return true
+	}
+	writeForbidden(w, r, errSuperOwnerTarget)
+	return false
+}
+
 // DefaultLoginThrottle locks a database+username+client out for 15 minutes
 // after 10 failed password checks in a row (a 15-minute window forgets
 // earlier failures). FILE4BASE_LOGIN_MAX_ATTEMPTS=0 disables it.
@@ -101,14 +135,11 @@ func envInt(name string, def int) int {
 	return def
 }
 
-// loginThrottleKey identifies who is trying to authenticate: the account
-// (database + username) and where from (client address). Keying on both
-// means one attacker cannot lock a victim out of their own account from
-// elsewhere, while still capping guesses per account and per source.
+// loginThrottleKey is the throttle key of a sign-in attempt; see
+// auth.LoginThrottleKey.
 func loginThrottleKey(database, username string, r *http.Request, resolver *clientip.Resolver) string {
 	ip, _, _ := extractClientSessionMeta(r, resolver)
-	return strings.ToLower(strings.TrimSpace(database)) + "\x00" +
-		strings.ToLower(strings.TrimSpace(username)) + "\x00" + ip
+	return auth.LoginThrottleKey(database, username, ip)
 }
 
 // writeLockedOut refuses an attempt that is currently locked out.
@@ -452,6 +483,11 @@ func (h *SecurityHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		writeForbidden(w, r, "only an owner can create owner accounts")
 		return
 	}
+	// An account with a bootstrap super-owner name signs in as a super-owner.
+	if sess := currentSession(r); !sess.SuperOwner && h.isSeededSuperOwner(sess.Database, req.Username) {
+		writeForbidden(w, r, errSuperOwnerTarget)
+		return
+	}
 
 	svc := schemaService(r)
 	var user *schema.UserMetadata
@@ -474,8 +510,10 @@ func (h *SecurityHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 type UpdateUserRequest struct {
 	Password string `json:"password,omitempty"`
-	Role     string `json:"role"`
-	IsActive *bool  `json:"is_active,omitempty"`
+	// CurrentPassword is required when a user changes their own password.
+	CurrentPassword string `json:"current_password,omitempty"`
+	Role            string `json:"role"`
+	IsActive        *bool  `json:"is_active,omitempty"`
 }
 
 func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
@@ -498,10 +536,13 @@ func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		req.Role = target.Role
 	}
 	isSelf := sess.UserID == target.ID
+	if !h.guardSuperOwnerTarget(w, r, target) {
+		return
+	}
 
 	switch {
 	case sess.IsOwner():
-		// Owners manage every account.
+		// Owners manage every account but super-owners (guarded above).
 	case sess.IsAdmin():
 		// Admins manage admins and users, but can neither touch owner
 		// accounts nor promote anyone to owner.
@@ -517,6 +558,11 @@ func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		writeForbidden(w, r, "your role does not allow this operation")
+		return
+	}
+	// Changing your own password takes the current one, as FileMaker's Change
+	// Password does: a stolen session alone must not make a takeover permanent.
+	if isSelf && req.Password != "" && !h.checkCurrentPassword(w, r, svc, target, req.CurrentPassword) {
 		return
 	}
 
@@ -548,6 +594,36 @@ func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		"id":     id,
 		"status": "updated",
 	})
+}
+
+// checkCurrentPassword verifies the current password a user gives to change
+// their own. A wrong one counts against the sign-in throttle of the account,
+// so a session cannot be used to guess it. It writes the refusal and reports
+// whether the change may go on.
+func (h *SecurityHandler) checkCurrentPassword(w http.ResponseWriter, r *http.Request, svc *schema.Service, target *schema.UserMetadata, current string) bool {
+	if current == "" {
+		writeForbidden(w, r, "enter your current password to change it")
+		return false
+	}
+	key := loginThrottleKey(currentSession(r).Database, target.Username, r, h.clientIP)
+	if ok, retryAfter := h.throttle.Allow(key); !ok {
+		writeLockedOut(w, r, retryAfter)
+		return false
+	}
+	if err := svc.VerifyUserPassword(r.Context(), target.ID, current); err != nil {
+		if !errors.Is(err, schema.ErrInvalidCredentials) {
+			telemetry.WriteInternalError(w, r, err)
+			return false
+		}
+		if locked, retryAfter := h.throttle.Fail(key); locked {
+			writeLockedOut(w, r, retryAfter)
+			return false
+		}
+		writeForbidden(w, r, "the current password is incorrect")
+		return false
+	}
+	h.throttle.Succeed(key)
+	return true
 }
 
 type SetSuperOwnerRequest struct {
@@ -615,6 +691,9 @@ func (h *SecurityHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if target.ID == sess.UserID {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Deletion Error", "you cannot delete your own account")
+		return
+	}
+	if !h.guardSuperOwnerTarget(w, r, target) {
 		return
 	}
 	if target.Role == auth.RoleOwner && !sess.IsOwner() {
@@ -752,13 +831,28 @@ func (h *SecurityHandler) SetRolePrivileges(w http.ResponseWriter, r *http.Reque
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid Request", "the request body is not valid JSON")
 		return
 	}
-	if err := schemaService(r).SetRolePrivileges(r.Context(), req.Privileges); err != nil {
+	svc := schemaService(r)
+	// A client from before fmrest does not send it, which leaves it as is.
+	if err := svc.SetRolePrivileges(r.Context(), req.Privileges); err != nil {
 		if errors.Is(err, schema.ErrUnknownRole) {
 			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unknown Role", err.Error())
 			return
 		}
 		telemetry.WriteInternalError(w, r, err)
 		return
+	}
+	// A Data API session is checked for fmrest when it signs in only, so
+	// the sessions of a role that no longer holds it are closed now; all of
+	// them when what is stored cannot be read back.
+	stored, err := svc.ListRolePrivileges(r.Context())
+	for _, role := range schema.PrivilegeRoles() {
+		held := false
+		for _, p := range stored {
+			held = held || (err == nil && p.Role == role && p.FMRest)
+		}
+		if !held {
+			h.sessions.RevokeDataAPIRole(currentSession(r).Database, role)
+		}
 	}
 	h.GetRolePrivileges(w, r)
 }
@@ -772,6 +866,9 @@ func (h *SecurityHandler) canManageUserMFA(w http.ResponseWriter, r *http.Reques
 		return nil, false
 	}
 	isSelf := sess.UserID == target.ID
+	if !h.guardSuperOwnerTarget(w, r, target) {
+		return nil, false
+	}
 	switch {
 	case sess.IsOwner():
 		return target, true
@@ -824,10 +921,13 @@ func (h *SecurityHandler) EnableUserMFA(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	svc := schemaService(r)
-	if err := svc.EnableUserMFA(r.Context(), id, req.Code, req.Secret); err != nil {
+	if err := svc.EnableUserMFA(r.Context(), id, req.Secret, req.Code); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "MFA Verification Failed", err.Error())
 		return
 	}
+	// The Data API cannot ask for the second factor, so the account's Data
+	// API sessions end now, as its sign-in there is refused from now on.
+	h.sessions.RevokeDataAPIUser(currentSession(r).Database, id)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"id":          id,

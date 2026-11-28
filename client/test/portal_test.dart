@@ -2,6 +2,8 @@
 // Browse mode and look at what came out, and at what the client asked the
 // server for.
 
+import 'dart:async';
+
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
 import 'package:file4base_client/features/data_browser/related_records.dart';
@@ -144,16 +146,57 @@ class _RelatedApi extends ApiClient {
     children.removeWhere((c) => c['id'] == id);
   }
 
-  /// Filters asked about: table, expressions, occurrence. The filter is
-  /// true for cu-2 only.
+  /// Filters and conditions asked about: table, expressions, occurrence.
+  /// A filter is true for cu-2 only.
   final List<(String, List<String>, String?)> evaluations = [];
+
+  /// The records each request asked about, and the Self of its expressions.
+  final List<List<String>> evaluatedRecords = [];
+  final List<List<ConditionSelf?>?> evaluatedSelves = [];
+
+  /// The layout's record each request evaluated its records in.
+  final List<EvaluationContext?> evaluatedContexts = [];
+
+  /// Holds the answers back while set.
+  Completer<void>? hold;
 
   @override
   Future<Map<String, List<EvaluationModel>?>> evaluateForRecords(String table,
-      {required List<String> expressions, required List<String> recordIds, String? occurrence, String resultType = 'Text'}) async {
+      {required List<String> expressions,
+      required List<String> recordIds,
+      String? occurrence,
+      String resultType = 'Text',
+      List<ConditionSelf?>? self,
+      EvaluationContext? context}) async {
     evaluations.add((table, expressions, occurrence));
+    evaluatedRecords.add(recordIds);
+    evaluatedSelves.add(self);
+    evaluatedContexts.add(context);
+    if (hold case final hold?) await hold.future;
+    // `Self = "…"`, as the server answers it: Self is the field given, of
+    // the record evaluated, or of its first related record.
+    String answer(String id, int i) {
+      final wanted = RegExp('"([^"]*)"').firstMatch(expressions[i])?.group(1);
+      final s = self == null || i >= self.length ? null : self[i];
+      if (expressions[i] == 'Broken') return '?';
+      // True in the second layout record only.
+      if (expressions[i] == 'InSecond') return context?.recordId == 'co-2' ? '1' : '0';
+      if (s == null) return id == 'cu-2' ? '1' : '0';
+      if (s.text != null) return s.text == wanted ? '1' : '0';
+      final record = s.occurrence == 'Customers'
+          ? children.first
+          : [...parents, ...children].firstWhere((r) => r['id'] == id, orElse: () => const {});
+      return record[s.field] == wanted ? '1' : '0';
+    }
+
     return {
-      for (final id in recordIds) id: [EvaluationModel(expression: expressions.first, text: id == 'cu-2' ? '1' : '0')],
+      for (final id in recordIds)
+        id: [
+          for (final (i, e) in expressions.indexed)
+            answer(id, i) == '?'
+                ? EvaluationModel(expression: e, error: 'cannot be evaluated')
+                : EvaluationModel(expression: e, text: answer(id, i)),
+        ],
     };
   }
 }
@@ -224,15 +267,17 @@ Future<_RelatedApi> _pump(
   LayoutDefinitionModel? layout,
   List<RelationshipModel> relationships = const [_relationship],
   List<Map<String, dynamic>>? children,
+  List<Map<String, dynamic>>? parents,
 }) async {
   tester.view.physicalSize = const Size(1600, 1000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
 
   final api = _RelatedApi(
-    parents: [
-      {'id': 'co-1', 'company': 'Nordic Vault', 'company_address': '12 Fjordveien'},
-    ],
+    parents: parents ??
+        [
+          {'id': 'co-1', 'company': 'Nordic Vault', 'company_address': '12 Fjordveien'},
+        ],
     children: children ??
         [
           {'id': 'cu-1', 'company': 'Nordic Vault', 'last_name': 'Soto'},
@@ -612,6 +657,8 @@ void main() {
     final (table, expressions, occurrence) = api.evaluations.single;
     expect((table, expressions.single, occurrence), ('customers', 'last_name = "Alvarez"', 'occ-customers'),
         reason: 'the filter is evaluated from the portal occurrence against the related records');
+    expect(api.evaluatedContexts.single, (occurrence: 'occ-companies', recordId: 'co-1'),
+        reason: "in the layout's record, which a field of the layout reads");
   });
 
   testWidgets('a portal several relationships away lists the records along its path', (tester) async {
@@ -678,7 +725,181 @@ void main() {
     expect(find.text('<company>'), findsNWidgets(2));
   });
 
-  testWidgets('a button in a portal row is drawn on each row and says it does not run yet', (tester) async {
+  group('conditional formats (#222)', () {
+    const red = Color(0xFFFF0000);
+    const rule = ConditionalFormatRule(operator: 'formula', value: 'Self = "Soto"', textColor: '#FF0000', fillColor: '#FFFF00');
+    LayoutDefinitionModel withRule(String objectId) {
+      final base = _layoutWithPortal(withRelatedField: true);
+      return base.copyWith(objects: [
+        for (final o in base.objects)
+          if (o.id == objectId) o.copyWith(style: o.style.copyWith(conditionalRules: const [rule])) else o,
+      ]);
+    }
+
+    testWidgets("a portal row is drawn by its own record, Self being the row's field", (tester) async {
+      final api = await _pump(tester, layout: withRule('fld_in_portal'));
+
+      final soto = tester.widget<TextField>(find.byKey(const ValueKey('portal-cell-cu-1-last_name')));
+      final alvarez = tester.widget<TextField>(find.byKey(const ValueKey('portal-cell-cu-2-last_name')));
+      expect(soto.style?.color, red);
+      expect(soto.decoration?.fillColor, const Color(0xFFFFFF00));
+      expect(alvarez.style?.color, isNot(red));
+      expect(alvarez.decoration?.filled, isNot(isTrue));
+
+      final (table, expressions, occurrence) = api.evaluations.single;
+      expect((table, expressions.single, occurrence), ('customers', 'Self = "Soto"', 'occ-customers'),
+          reason: "evaluated from the portal occurrence against the row's record, as FileMaker does");
+      expect([for (final s in api.evaluatedSelves.single!) s?.toJson()], [
+        {'field': 'last_name'},
+      ]);
+      expect(api.evaluatedRecords.single.toSet(), {'cu-1', 'cu-2'}, reason: 'each row shown, in one request');
+      expect(api.evaluatedContexts.single, (occurrence: 'occ-companies', recordId: 'co-1'),
+          reason: "each row in the layout's record");
+
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(api.evaluations, hasLength(1), reason: 'an unchanged row is not asked again');
+    });
+
+    testWidgets('a rule changed on a portal row is asked again, its old answer dropped', (tester) async {
+      final api = await _pump(tester, layout: withRule('fld_in_portal'));
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('portal-cell-cu-1-last_name'))).style?.color, red);
+
+      final base = withRule('fld_in_portal');
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: DataBrowserWidget(
+            table: _companies,
+            apiClient: api,
+            mode: OperationalMode.browse,
+            layout: base.copyWith(objects: [
+              for (final o in base.objects)
+                if (o.id == 'fld_in_portal')
+                  o.copyWith(
+                      style: o.style.copyWith(conditionalRules: const [
+                    ConditionalFormatRule(operator: 'formula', value: 'Self = "Alvarez"', textColor: '#FF0000'),
+                  ]))
+                else
+                  o,
+            ]),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(api.evaluations.last.$2, ['Self = "Alvarez"']);
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('portal-cell-cu-1-last_name'))).style?.color, isNot(red),
+          reason: 'the answer to the old rule does not hold for the new one');
+    });
+
+    testWidgets('a related field is drawn by its rule, Self being the related field', (tester) async {
+      final api = await _pump(tester, layout: withRule('fld_related'));
+
+      final shown = find.descendant(of: find.byKey(const ValueKey('related-field')), matching: find.text('Soto'));
+      expect(tester.widget<Text>(shown).style?.color, red);
+      final (table, expressions, _) = api.evaluations.single;
+      expect((table, expressions.single), ('companies', 'Self = "Soto"'),
+          reason: 'evaluated against the record shown, from the layout');
+      expect([for (final s in api.evaluatedSelves.single!) s?.toJson()], [
+        {'field': 'last_name', 'occurrence': 'Customers'},
+      ]);
+    });
+  });
+
+  group('conditions of the objects of a portal row', () {
+    LayoutDefinitionModel withRowObjects(List<LayoutObjectModel> extra, {String? hideField}) {
+      final base = _layoutWithPortal();
+      return base.copyWith(objects: [
+        for (final o in base.objects)
+          if (o.id == 'fld_in_portal' && hideField != null) o.copyWith(hideWhen: hideField) else o,
+        ...extra,
+      ]);
+    }
+
+    testWidgets("an object is hidden on the rows its condition is true for, evaluated on each row's record",
+        (tester) async {
+      final api = await _pump(tester, layout: withRowObjects(const [], hideField: 'Self = "Alvarez"'));
+
+      expect(find.byKey(const ValueKey('portal-cell-cu-1-last_name')), findsOneWidget);
+      expect(find.byKey(const ValueKey('portal-cell-cu-2-last_name')), findsNothing,
+          reason: "the row's own record is Alvarez");
+      expect(api.evaluations.map((e) => '${e.$1} ${e.$2} ${e.$3}').toList(), [
+        'customers [Self = "Alvarez"] occ-customers',
+      ], reason: "evaluated from the portal's occurrence, never against the layout's record");
+      expect([for (final s in api.evaluatedSelves.single!) s?.toJson()], [
+        {'field': 'last_name'},
+      ]);
+    });
+
+    testWidgets('a row seen in another layout record is hidden until its answer there is in', (tester) async {
+      final api = await _pump(tester, layout: withRowObjects(const [], hideField: 'InSecond'), parents: [
+        {'id': 'co-1', 'company': 'Nordic Vault'},
+        {'id': 'co-2', 'company': 'Nordic Vault'},
+      ]);
+      expect(find.byKey(const ValueKey('portal-cell-cu-1-last_name')), findsOneWidget);
+
+      api.hold = Completer<void>();
+      await tester.tap(find.byWidgetPredicate((w) => w is Tooltip && (w.message ?? '').startsWith('Next record')));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('portal-cell-cu-1-last_name')), findsNothing,
+          reason: "the first record's answer does not hold in the second");
+
+      api.hold!.complete();
+      await tester.pumpAndSettle();
+      expect(api.evaluatedContexts.last?.recordId, 'co-2');
+      expect(find.byKey(const ValueKey('portal-cell-cu-1-last_name')), findsNothing, reason: 'true in the second');
+    });
+
+    testWidgets('a row object whose hide condition cannot be evaluated is hidden, as in FileMaker', (tester) async {
+      await _pump(tester, layout: withRowObjects(const [], hideField: 'Broken'));
+
+      expect(find.byKey(const ValueKey('portal-cell-cu-1-last_name')), findsNothing);
+      expect(find.byKey(const ValueKey('portal-cell-cu-2-last_name')), findsNothing);
+    });
+
+    testWidgets("a merging text's rule that does not read Self is evaluated on each row", (tester) async {
+      const red = Color(0xFFFF0000);
+      // Without a Self, the fake answers true on cu-2 only.
+      const rule = ConditionalFormatRule(operator: 'formula', value: 'Customers::last_name = "Alvarez"', textColor: '#FF0000');
+      final api = await _pump(tester, layout: withRowObjects(const [
+        LayoutObjectModel(
+            id: 'lbl_merge', type: 'label', x: 260, y: 165, width: 80, height: 20, text: 'Name {{last_name}}',
+            style: LayoutObjectStyle(conditionalRules: [rule])),
+      ]));
+
+      final drawn = tester.widgetList<Text>(find.text('Name {{last_name}}')).map((t) => t.style?.color).toList();
+      expect(drawn, [isNot(red), red], reason: 'rows cu-1, then cu-2');
+      expect([for (final s in api.evaluatedSelves.single ?? const <ConditionSelf?>[null]) s?.toJson()], [null],
+          reason: 'its Self is unknown, as it shows another text on each row');
+    });
+
+    testWidgets('a text and a button of a row are drawn by their rules, Self being their text', (tester) async {
+      const red = Color(0xFFFF0000);
+      const rule = ConditionalFormatRule(operator: 'formula', value: 'Self = "Each"', textColor: '#FF0000');
+      const go = ConditionalFormatRule(operator: 'formula', value: 'Self = "Go"', textColor: '#FF0000');
+      final api = await _pump(tester, layout: withRowObjects(const [
+        LayoutObjectModel(
+            id: 'lbl_in_portal', type: 'label', x: 260, y: 165, width: 40, height: 20, text: 'Each',
+            style: LayoutObjectStyle(conditionalRules: [rule])),
+        LayoutObjectModel(
+            id: 'btn_in_portal', type: 'button', x: 300, y: 165, width: 60, height: 20, text: 'Go',
+            style: LayoutObjectStyle(conditionalRules: [go])),
+      ]));
+
+      for (final text in ['Each', 'Go']) {
+        final drawn = tester.widgetList<Text>(find.text(text)).toList();
+        expect(drawn, hasLength(2), reason: 'once per row');
+        expect(drawn.map((t) => t.style?.color).toSet(), {red});
+      }
+      expect([for (final s in api.evaluatedSelves.single!) s?.toJson()], [
+        {'text': 'Each'},
+        {'text': 'Go'},
+      ]);
+    });
+  });
+
+  testWidgets('a button in a portal row is drawn on each row and runs with its row active (#237)', (tester) async {
     final base = _layoutWithPortal();
     final layout = base.copyWith(objects: [
       ...base.objects,
@@ -696,8 +917,10 @@ void main() {
     await _pump(tester, layout: layout);
 
     expect(find.text('Open'), findsNWidgets(2), reason: 'once per related record');
-    await tester.tap(find.text('Open').first);
+    await tester.tap(find.text('Open').last);
     await tester.pumpAndSettle();
-    expect(find.text('A button in a portal row does not run yet.'), findsOneWidget);
+    expect(find.text('A button in a portal row does not run yet.'), findsNothing);
+    final state = tester.state<DataBrowserWidgetState>(find.byType(DataBrowserWidget));
+    expect(state.actionActivePortalRow()?.recordId, 'cu-2', reason: 'the row clicked is the active one');
   });
 }

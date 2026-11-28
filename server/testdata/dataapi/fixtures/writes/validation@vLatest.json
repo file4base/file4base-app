@@ -1,0 +1,521 @@
+{
+  "fixture": "writes/validation@vLatest",
+  "scenario": "writes/validation",
+  "group": "writes",
+  "version": "vLatest",
+  "fresh": true,
+  "title": "Validation failures and their codes on create and edit",
+  "rows": ["C14", "EC17"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "range-rating-9",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"V001\",\"Name\":\"v\",\"Rating\":9}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "503",
+              "message": "Value in field is not within the range specified in validation entry options"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "strict-numeric-rating-text",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"V002\",\"Name\":\"v\",\"Rating\":\"abc\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "502",
+              "message": "Number value does not meet validation entry options"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "unique-code",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"C001\",\"Name\":\"v\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "504",
+              "message": "Value in field is not unique, as required in validation entry options"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "not-empty-name",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"V004\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "509",
+              "message": "Field requires a valid value"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "not-empty-name-explicit-empty",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"V005\",\"Name\":\"\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "509",
+              "message": "Field requires a valid value"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "max-characters-code",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"TOOLONGCODE\",\"Name\":\"v\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "511",
+              "message": "Value in field exceeds maximum field size"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "calculation-email",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"V007\",\"Name\":\"v\",\"Email\":\"no-at-sign\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "507",
+              "message": "Value in field failed calculation test of validation entry option"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "value-list-status",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"V008\",\"Name\":\"v\",\"Status\":\"NotInList\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "506",
+              "message": "Value in field is not listed in the value list specified in validation entry option"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "four-digit-year",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"V009\",\"Name\":\"v\",\"SignupDate\":\"1/1/0024\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "39",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "range-discount-150",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_OrderLines/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"OrderID\":1,\"Discount\":150}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "503",
+              "message": "Value in field is not within the range specified in validation entry options"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "not-empty-orderid",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_OrderLines/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Qty\":1}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "509",
+              "message": "Field requires a valid value"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "unique-product-code",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Products/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"ProductCode\":\"P001\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "504",
+              "message": "Value in field is not unique, as required in validation entry options"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "several-violations",
+      "rows": ["C14", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Code\":\"TOOLONGCODE2\",\"Rating\":9,\"Email\":\"x\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "511",
+              "message": "Value in field exceeds maximum field size"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "edit-violation",
+      "rows": ["C14", "E11", "EC17"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Rating\":0}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "503",
+              "message": "Value in field is not within the range specified in validation entry options"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "count-after-violations",
+      "rows": ["C14"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=1&_offset=30&layout.response=API_Customers_Nested",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 31,
+              "foundCount": 31,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 30,
+                  "Code": "C030"
+                },
+                "portalData": {},
+                "recordId": "30",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -8,7 +8,7 @@ the server:
 | **Database** | the session: a sign-in binds the token to one database | `AuthMiddleware.Authenticate` |
 | **Account role** | `sys_users.role`: `owner`, `admin`, `user` | `RequireRole` / `RequireAdmin` / `RequireOwner` |
 | **Table and layout access** | `sys_user_permissions`: `read_write`, `read_only`, `none` per layout, from which the access level on a base table is derived | `schema.Service.TableAccess` / `LayoutAccess`, through `DataHandler.authorize` |
-| **Extended privileges** | `sys_privileges`: one capability switch per account role | `RequireCapability` |
+| **Extended privileges** | `sys_privileges`: one capability switch per account role | `RequireCapability`, and the Data API sign-in for `fmrest` |
 
 On top of these four, a **super-owner** (`sys_users.super_owner`) is a
 per-account, server-wide privilege: it grants full control of every Server Tool
@@ -22,12 +22,13 @@ decision, explained below.
 ## Extended privileges
 
 An extended privilege is an *action* the server performs on request, and can
-therefore refuse. There are two:
+therefore refuse. There are three:
 
 | Capability | Covers |
 | --- | --- |
 | `bulk_export` | `POST /api/v1/data/{table}/export`, `GET /api/v1/solutions/export-data` |
 | `bulk_import` | `POST /api/v1/data/{table}/import`, `POST /api/v1/data/{table}/import/preview`, `POST /api/v1/solutions/import-data` |
+| `fmrest` | Signing in to the FileMaker Data API, `POST /fmi/data/{version}/databases/{database}/sessions` (#208) |
 
 They are held per account role in `sys_privileges`:
 
@@ -36,15 +37,22 @@ CREATE TABLE sys_privileges (
     role        VARCHAR(32) PRIMARY KEY,   -- owner | admin | user
     bulk_export BOOLEAN NOT NULL DEFAULT TRUE,
     bulk_import BOOLEAN NOT NULL DEFAULT TRUE,
+    fmrest      BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at  TIMESTAMPTZ
 );
 ```
 
 Rules:
 
-- **A role with no row holds every privilege.** A database created before this
-  table existed is therefore not restricted by upgrading to a version that has
-  it: a restriction only ever appears because an owner asked for one.
+- **A role with no row holds every bulk privilege.** A database created before
+  this table existed is therefore not restricted by upgrading to a version that
+  has it: a restriction only ever appears because an owner asked for one.
+- **`fmrest` is held only once granted**, by a role with no row as by a row
+  stored before the column existed. The Data API is a second way in; no account
+  gains it by an upgrade. The operator must also serve the database
+  (`FILE4BASE_DATA_API_DATABASES`), so access is opt-in per database and per
+  role. It is checked at sign-in and on every Data API call; withdrawing it in
+  Manage Security also ends the role's open Data API sessions at once.
 - **An owner always holds every privilege**, whatever is stored. An owner must
   not be able to lock themselves out of their own database, so the owner row is
   written fully granted and read as fully granted.
@@ -86,6 +94,15 @@ That is a different feature, with its own key management; it is not implemented,
 so nothing claims it. See
 [#39](https://github.com/file4base/file4base-app/issues/39) for the decision and
 what building it would need.
+
+`fmrest` is not that switch. The FileMaker Data API is a separate API at
+`/fmi/data`, with its own sign-in and its own session kind: a Data API token is
+never accepted by `/api/v1`, nor the reverse. Its method is bound at sign-in,
+so the server can refuse it. It restricts that API, not the client: an account
+without `fmrest` still signs in to `/api/v1` with the same credentials, as a
+FileMaker account without `fmrest` still opens the file with FileMaker Pro.
+FileMaker grants it per privilege set; File4Base per role, which is coarser
+([#213](https://github.com/file4base/file4base-app/issues/213)).
 
 ## Account state and sessions
 
@@ -163,6 +180,18 @@ the first solution of a new server.
   value at sign-in is `super_owner (stored) OR seeded OR owner of
   FILE4BASE_ADMIN_DATABASE`, and it is carried in the session
   (`auth.Session.SuperOwner`).
+- **Reserved bootstrap databases (#236).** Because the owners of the admin
+  database and the seeded accounts are super-owners, those databases' names are
+  reserved: while one does not exist, only a super-owner session, or a caller
+  giving the setup code, can create it (`POST /api/v1/databases`,
+  `POST /api/v1/solutions/migrate/apply`); clone requires a super-owner. The
+  setup code is 80 random bits drawn at startup and printed in the server log
+  while a reserved database is missing (or at the first refused attempt), or
+  `FILE4BASE_SETUP_CODE` (at least 16 characters, never logged); it is compared
+  in constant time and never stored. Reading the server log is the operator's
+  proof, so a fresh install bootstraps without a restart, even with public
+  database creation disabled. A seeded database created with the code must get
+  a seeded account as first owner, so that the super-owner account can exist.
 - **Delegation.** A super-owner grants or revokes the privilege on other
   **owner** accounts with `PUT /api/v1/security/users/{id}/super-owner`
   (`RequireSuperOwner`). The target must be an owner, and a super-owner cannot

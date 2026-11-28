@@ -58,27 +58,39 @@ func (s *Service) ListScripts(ctx context.Context) ([]ScriptMetadata, error) {
 		scripts = append(scripts, scr)
 	}
 
-	// Fetch all steps in a single query
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed reading scripts: %w", err)
+	}
+	_ = rows.Close()
+
+	// Fetch all steps in a single query. A step that cannot be read is an
+	// error: a script listed without it would be backed up and restored
+	// without it (#203).
 	stepRows, err := db.QueryContext(ctx, `SELECT id, script_id, sequence_idx, step_type, params, is_enabled, parent_step_id FROM sys_script_steps ORDER BY script_id, sequence_idx ASC`)
-	if err == nil {
-		defer stepRows.Close()
-		stepsMap := make(map[string][]ScriptStepMetadata)
-		for stepRows.Next() {
-			var st ScriptStepMetadata
-			var paramsRaw string
-			var parentStepID sql.NullString
-			if err := stepRows.Scan(&st.ID, &st.ScriptID, &st.SequenceIdx, &st.StepType, &paramsRaw, &st.IsEnabled, &parentStepID); err == nil {
-				st.Params = json.RawMessage(paramsRaw)
-				if parentStepID.Valid {
-					st.ParentStepID = &parentStepID.String
-				}
-				stepsMap[st.ScriptID] = append(stepsMap[st.ScriptID], st)
-			}
+	if err != nil {
+		return nil, fmt.Errorf("failed querying script steps: %w", err)
+	}
+	defer stepRows.Close()
+	stepsMap := make(map[string][]ScriptStepMetadata)
+	for stepRows.Next() {
+		var st ScriptStepMetadata
+		var paramsRaw string
+		var parentStepID sql.NullString
+		if err := stepRows.Scan(&st.ID, &st.ScriptID, &st.SequenceIdx, &st.StepType, &paramsRaw, &st.IsEnabled, &parentStepID); err != nil {
+			return nil, fmt.Errorf("failed scanning script step: %w", err)
 		}
-		for i := range scripts {
-			if stList, ok := stepsMap[scripts[i].ID]; ok {
-				scripts[i].Steps = stList
-			}
+		st.Params = json.RawMessage(paramsRaw)
+		if parentStepID.Valid {
+			st.ParentStepID = &parentStepID.String
+		}
+		stepsMap[st.ScriptID] = append(stepsMap[st.ScriptID], st)
+	}
+	if err := stepRows.Err(); err != nil {
+		return nil, fmt.Errorf("failed reading script steps: %w", err)
+	}
+	for i := range scripts {
+		if stList, ok := stepsMap[scripts[i].ID]; ok {
+			scripts[i].Steps = stList
 		}
 	}
 

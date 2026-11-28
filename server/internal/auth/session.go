@@ -26,6 +26,31 @@ const (
 // DefaultSessionTTL is the idle lifetime of a session when none is configured.
 const DefaultSessionTTL = 12 * time.Hour
 
+// DefaultDataAPISessionTTL is the idle lifetime of a FileMaker Data API
+// session when none is configured: FileMaker Server's own 15 minutes.
+const DefaultDataAPISessionTTL = 15 * time.Minute
+
+// Kind is what a session was opened for. It is fixed at sign-in, and each
+// route group accepts only its own kind: a Data API token carries no
+// /api/v1 rights, and a client token is refused on /fmi/data.
+type Kind uint8
+
+const (
+	// KindClient is a session of the File4Base clients and the /api/v1 API.
+	KindClient Kind = iota
+	// KindDataAPI is a FileMaker Data API session (#208), opened by
+	// POST /fmi/data/{version}/databases/{database}/sessions.
+	KindDataAPI
+)
+
+// String names the kind as Server Tools lists it.
+func (k Kind) String() string {
+	if k == KindDataAPI {
+		return "data_api"
+	}
+	return "client"
+}
+
 // Session describes an authenticated caller.
 type Session struct {
 	UserID   string
@@ -59,6 +84,13 @@ type Session struct {
 	// Linked marks a session opened in a solution of another session's
 	// group, rather than by a sign-in of its own.
 	Linked bool
+	// Kind is what the session was opened for; see Kind.
+	Kind Kind
+	// DataAPIName is the database name a Data API sign-in used, exactly as
+	// the client sent it. FileMaker matches the name case-insensitively at
+	// sign-in, then only accepts the token on requests that name the
+	// database the same way.
+	DataAPIName string
 }
 
 // IsOwner reports whether the session belongs to a database owner.
@@ -77,22 +109,56 @@ func (s Session) IsAdmin() bool { return s.Role == RoleOwner || s.Role == RoleAd
 // store does not reveal usable bearer tokens. Sessions do not survive a
 // server restart; clients simply sign in again.
 type Store struct {
-	mu       sync.Mutex
-	sessions map[string]*Session
-	ttl      time.Duration
-	now      func() time.Time
+	mu         sync.Mutex
+	sessions   map[string]*Session
+	ttl        time.Duration
+	dataAPITTL time.Duration
+	now        func() time.Time
 }
 
-// NewStore creates a session store. A non-positive ttl selects DefaultSessionTTL.
+// NewStore creates a session store. A non-positive ttl selects
+// DefaultSessionTTL; Data API sessions idle out after
+// DefaultDataAPISessionTTL unless SetDataAPITTL says otherwise.
 func NewStore(ttl time.Duration) *Store {
 	if ttl <= 0 {
 		ttl = DefaultSessionTTL
 	}
 	return &Store{
-		sessions: make(map[string]*Session),
-		ttl:      ttl,
-		now:      time.Now,
+		sessions:   make(map[string]*Session),
+		ttl:        ttl,
+		dataAPITTL: DefaultDataAPISessionTTL,
+		now:        time.Now,
 	}
+}
+
+// SetDataAPITTL sets the idle lifetime of the Data API sessions opened from
+// now on. A non-positive ttl selects DefaultDataAPISessionTTL.
+func (s *Store) SetDataAPITTL(ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = DefaultDataAPISessionTTL
+	}
+	s.mu.Lock()
+	s.dataAPITTL = ttl
+	s.mu.Unlock()
+}
+
+// SetClock replaces the clock that decides when sessions expire. Tests use
+// it to move time forward instead of waiting; nil restores the wall clock.
+func (s *Store) SetClock(now func() time.Time) {
+	if now == nil {
+		now = time.Now
+	}
+	s.mu.Lock()
+	s.now = now
+	s.mu.Unlock()
+}
+
+// ttlLocked is the idle lifetime of a session of the given kind.
+func (s *Store) ttlLocked(kind Kind) time.Duration {
+	if kind == KindDataAPI {
+		return s.dataAPITTL
+	}
+	return s.ttl
 }
 
 func digest(token string) string {
@@ -122,13 +188,55 @@ func (s *Store) Create(userID, username, role, database, stamp string, superOwne
 	now := s.now()
 	s.pruneLocked(now)
 
-	sess := s.newSessionLocked(now, userID, username, role, database, stamp, superOwner)
+	sess := s.newSessionLocked(now, KindClient, userID, username, role, database, stamp, superOwner)
 	sess.Group = digest(token)
 	s.sessions[digest(token)] = sess
 	return token, *sess, nil
 }
 
-func (s *Store) newSessionLocked(now time.Time, userID, username, role, database, stamp string, superOwner bool) *Session {
+// CreateDataAPI registers a FileMaker Data API session (#208) for an
+// account of one database and returns its bearer token. name is the
+// database name the sign-in used, exactly as sent. The session idles out
+// after the Data API lifetime, carries no super-owner privilege, and is
+// never part of a session group: Get, Member and Root do not see it.
+func (s *Store) CreateDataAPI(userID, username, role, database, name, stamp string) (string, Session, error) {
+	token, err := newToken()
+	if err != nil {
+		return "", Session{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := s.now()
+	s.pruneLocked(now)
+
+	// No Group: nothing links to a Data API session, and a group root would
+	// cost a scan of the store whenever one is deleted.
+	sess := s.newSessionLocked(now, KindDataAPI, userID, username, role, database, stamp, false)
+	sess.DataAPIName = name
+	s.sessions[digest(token)] = sess
+	return token, *sess, nil
+}
+
+// RevokeDataAPI ends a live Data API session signed in under name, in one
+// step: of two sign-outs of the same token, only one succeeds.
+func (s *Store) RevokeDataAPI(token, name string) bool {
+	if token == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := digest(token)
+	sess, ok := s.sessions[key]
+	if !ok || sess.Kind != KindDataAPI || !s.now().Before(sess.ExpiresAt) || sess.DataAPIName != name {
+		return false
+	}
+	s.deleteLocked(key)
+	return true
+}
+
+func (s *Store) newSessionLocked(now time.Time, kind Kind, userID, username, role, database, stamp string, superOwner bool) *Session {
 	return &Session{
 		UserID:        userID,
 		Username:      username,
@@ -136,9 +244,10 @@ func (s *Store) newSessionLocked(now time.Time, userID, username, role, database
 		Database:      database,
 		SuperOwner:    superOwner,
 		Stamp:         stamp,
+		Kind:          kind,
 		CreatedAt:     now,
 		LastSeenAt:    now,
-		ExpiresAt:     now.Add(s.ttl),
+		ExpiresAt:     now.Add(s.ttlLocked(kind)),
 		RequestsCount: 1,
 	}
 }
@@ -168,7 +277,7 @@ func (s *Store) Link(group, userID, username, role, database, stamp string, supe
 	s.pruneLocked(now)
 
 	root, ok := s.sessions[group]
-	if !ok || root.Group != group {
+	if !ok || root.Group != group || root.Kind != KindClient {
 		return "", Session{}, ErrGroupClosed
 	}
 	if root.Database == database {
@@ -179,7 +288,7 @@ func (s *Store) Link(group, userID, username, role, database, stamp string, supe
 			delete(s.sessions, key)
 		}
 	}
-	sess := s.newSessionLocked(now, userID, username, role, database, stamp, superOwner)
+	sess := s.newSessionLocked(now, KindClient, userID, username, role, database, stamp, superOwner)
 	sess.Group, sess.Linked = group, true
 	s.sessions[digest(token)] = sess
 	return token, *sess, nil
@@ -198,7 +307,7 @@ func (s *Store) Member(group, database string) (Session, bool) {
 
 	now := s.now()
 	for key, sess := range s.sessions {
-		if sess.Group != group || sess.Database != database || (!sess.Linked && key != group) {
+		if sess.Kind != KindClient || sess.Group != group || sess.Database != database || (!sess.Linked && key != group) {
 			continue
 		}
 		if !now.Before(sess.ExpiresAt) {
@@ -232,7 +341,7 @@ func (s *Store) Root(group string) (Session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[group]
-	if !ok || sess.Linked || !s.now().Before(sess.ExpiresAt) {
+	if !ok || sess.Linked || sess.Kind != KindClient || !s.now().Before(sess.ExpiresAt) {
 		return Session{}, false
 	}
 	return *sess, true
@@ -296,9 +405,10 @@ func (s *Store) TouchMeta(token, clientIP, webContainer, userAgent string) {
 	}
 }
 
-// Get returns the session for a token and extends its idle lifetime. A
-// linked session lives no longer than the sign-in of its group: once that
-// one has expired or been revoked, the linked token is refused and dropped.
+// Get returns the client session for a token and extends its idle
+// lifetime. A linked session lives no longer than the sign-in of its group:
+// once that one has expired or been revoked, the linked token is refused and
+// dropped. A Data API token is not a client session: Get refuses it.
 func (s *Store) Get(token string) (Session, bool) {
 	if token == "" {
 		return Session{}, false
@@ -309,7 +419,7 @@ func (s *Store) Get(token string) (Session, bool) {
 	defer s.mu.Unlock()
 
 	sess, ok := s.sessions[key]
-	if !ok {
+	if !ok || sess.Kind != KindClient {
 		return Session{}, false
 	}
 	now := s.now()
@@ -326,6 +436,34 @@ func (s *Store) Get(token string) (Session, bool) {
 	}
 	sess.LastSeenAt = now
 	sess.ExpiresAt = now.Add(s.ttl)
+	return *sess, true
+}
+
+// DataAPI returns the Data API session for a token. renew extends its idle
+// lifetime, as every Data API call does except validateSession, which only
+// looks. An expired session is dropped, never renewed.
+func (s *Store) DataAPI(token string, renew bool) (Session, bool) {
+	if token == "" {
+		return Session{}, false
+	}
+	key := digest(token)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	sess, ok := s.sessions[key]
+	if !ok || sess.Kind != KindDataAPI {
+		return Session{}, false
+	}
+	now := s.now()
+	if !now.Before(sess.ExpiresAt) {
+		s.deleteLocked(key)
+		return Session{}, false
+	}
+	if renew {
+		sess.LastSeenAt = now
+		sess.ExpiresAt = now.Add(s.dataAPITTL)
+	}
 	return *sess, true
 }
 
@@ -370,6 +508,30 @@ func (s *Store) RevokeUser(database, userID, exceptToken string) {
 	}
 }
 
+// RevokeDataAPIRole invalidates every Data API session of a role in a
+// database, for when the role loses access to the Data API.
+func (s *Store) RevokeDataAPIRole(database, role string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, sess := range s.sessions {
+		if sess.Kind == KindDataAPI && sess.Database == database && sess.Role == role {
+			s.deleteLocked(key)
+		}
+	}
+}
+
+// RevokeDataAPIUser invalidates every Data API session of a user in a
+// database, for when the account can no longer sign in there.
+func (s *Store) RevokeDataAPIUser(database, userID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, sess := range s.sessions {
+		if sess.Kind == KindDataAPI && sess.Database == database && sess.UserID == userID {
+			s.deleteLocked(key)
+		}
+	}
+}
+
 // RevokeDatabase invalidates every session bound to a database.
 func (s *Store) RevokeDatabase(database string) {
 	s.mu.Lock()
@@ -389,6 +551,7 @@ type SessionInfo struct {
 	Role          string `json:"role"`
 	Database      string `json:"database"`
 	SuperOwner    bool   `json:"super_owner"`
+	Kind          string `json:"kind"`
 	ClientIP      string `json:"client_ip"`
 	WebContainer  string `json:"web_container"`
 	UserAgent     string `json:"user_agent"`
@@ -422,6 +585,7 @@ func (s *Store) ListSessions(currentToken string) []SessionInfo {
 			Role:          sess.Role,
 			Database:      sess.Database,
 			SuperOwner:    sess.SuperOwner,
+			Kind:          sess.Kind.String(),
 			ClientIP:      sess.ClientIP,
 			WebContainer:  sess.WebContainer,
 			UserAgent:     sess.UserAgent,

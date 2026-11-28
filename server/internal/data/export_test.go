@@ -9,3 +9,11 @@ func SetMissingCreationOrderTTL(ttl time.Duration) (restore func()) {
 	missingCreationOrderTTL = ttl
 	return func() { missingCreationOrderTTL = old }
 }
+
+// SetBeforeUpdate runs f just before UpdateRow writes, until restore is
+// called.
+func SetBeforeUpdate(f func()) (restore func()) {
+	old := beforeUpdate
+	beforeUpdate = f
+	return func() { beforeUpdate = old }
+}

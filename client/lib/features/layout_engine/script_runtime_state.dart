@@ -244,7 +244,7 @@ abstract class ExtendedLayoutActionHost {
   Future<bool> actionGoToLayoutByNumber(int layoutNumber);
   Future<void> actionEnterFindModeEx({List<Map<String, dynamic>>? requests, bool restore = false});
   /// The number of records found; -1 when OnModeExit kept the window in
-  /// Find mode, and nothing was found.
+  /// Find mode, and nothing was found; -2 when the server refused the find.
   Future<int> actionPerformFindEx({List<Map<String, dynamic>>? requests, bool restore = false});
   Future<void> actionSortRecords({List<Map<String, dynamic>>? sortOrder, bool restore = false, bool dialog = true});
   Future<void> actionUnsortRecords();
@@ -256,12 +256,23 @@ abstract class ExtendedLayoutActionHost {
   Future<bool> actionGoToField(String field, {bool select = false});
   Future<void> actionGoToNextField();
   Future<bool> actionGoToObject(String objectName);
-  Future<bool> actionGoToRelatedRecord({
+  /// Go to Related Record: the records of the occurrence [relatedTable]
+  /// related to the record in hand ([matchFoundSet]: to every record of the
+  /// found set) on [layoutName] (none: the current layout), the record of
+  /// the active portal row of that occurrence current. Answers FileMaker's
+  /// error code: 0 once there, 101 without related records (the window
+  /// stays where it is), 105 for a layout not found, 3 for what does not
+  /// run here yet (see [goToRelatedRecordMessage]).
+  Future<int> actionGoToRelatedRecord({
     required String relatedTable,
     String? layoutName,
     bool showOnlyRelated = true,
     bool newWindow = false,
+    bool matchFoundSet = false,
   });
+
+  /// Why the last Go to Related Record did not run, for error 3.
+  String? get goToRelatedRecordMessage;
   /// Go to Portal Row: makes a row of the active portal (or of the first
   /// portal of the layout) the active one, keeping the active field when it
   /// is in that portal; [select] selects the whole row instead. Error 101
@@ -397,6 +408,10 @@ abstract class PortalRowHost {
   /// Get(ActiveFieldTableName): the table occurrence of the active field,
   /// or empty when no field is active.
   String get actionActiveFieldTableName;
+
+  /// Get(LayoutTableName): the table occurrence of the layout in the
+  /// current window; it stays the layout's while a portal row is active.
+  String get actionLayoutTableName;
 }
 
 /// A host that runs script triggers (#26): the action runner lets the

@@ -530,6 +530,11 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 				out["object_name"] = firstAttr(child, "value", "name")
 			}
 		case "Related", "TableOccurrenceReference":
+			if kind == "Related" && child == nil {
+				// Save as XML holds the whole step in it (#237).
+				decodeGoToRelatedRecord(parameter, out)
+				continue
+			}
 			if child != nil {
 				if name := firstAttr(child, "name", "Name"); name != "" {
 					out["related_table"] = name
@@ -589,6 +594,32 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 // DataSourceReference (Save a Copy as XML) or FileReference (Save as XML)
 // child. A reference without a name still says the script is another
 // file's: the step must not run a local script that shares its name.
+// decodeGoToRelatedRecord reads Go to Related Record's Related parameter
+// as Save as XML writes it: the occurrence to go to, the layout to show the
+// related records with (none: the current one), Show only related records
+// and Match all records in the current found set, and a new window. Its
+// absent options are off, as FileMaker leaves them.
+func decodeGoToRelatedRecord(parameter *xmlNode, out map[string]interface{}) {
+	if occ := findFirstChild(parameter, "TableOccurrenceReference"); occ != nil {
+		out["related_table"] = firstAttr(occ, "name", "Name")
+	}
+	if container := findFirstChild(parameter, "LayoutReferenceContainer"); container != nil {
+		if layout := findFirstChild(container, "LayoutReference"); layout != nil {
+			out["layout_name"] = firstAttr(layout, "name", "Name")
+			out["filemaker_layout_id"] = firstAttr(layout, "id", "ID")
+		}
+	}
+	options := findFirstChild(parameter, "Options")
+	showOnly, _ := xmlAttrBool(options, "ShowRelated")
+	out["show_only_related"] = showOnly
+	if matchAll, _ := xmlAttrBool(options, "matchFoundSet"); matchAll && showOnly {
+		out["match_found_set"] = true
+	}
+	if findFirstChild(parameter, "WindowReference") != nil {
+		out["new_window"] = true
+	}
+}
+
 func externalScriptFile(external *xmlNode) string {
 	if name := firstAttr(external, "name", "Name"); name != "" {
 		return name

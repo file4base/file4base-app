@@ -1,0 +1,1059 @@
+{
+  "fixture": "scripts/on_reads@v1",
+  "scenario": "scripts/on_reads",
+  "group": "scripts",
+  "version": "v1",
+  "fresh": false,
+  "title": "script, script.prerequest and script.presort on record reads",
+  "rows": ["R19", "R20", "R21", "R22", "G5", "GL4", "EC7"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "script",
+      "rows": ["R19", "R22"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=2&layout.response=API_Customers_Nested&script=API_Success",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "ok",
+            "scriptError": "0",
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 2
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 2,
+                  "Code": "C002"
+                },
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "script-param",
+      "rows": ["R19"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=1&layout.response=API_Customers_Nested&script=API_EchoParam&script.param=p%C3%A4ram",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "päram",
+            "scriptError": "0",
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "prerequest-presort-script",
+      "rows": ["R20", "R21", "R22"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=3&layout.response=API_Customers_Nested&script.prerequest=API_SetVar&script.prerequest.param=pre&script.presort=API_SortByNameDesc&script=API_ReadVar",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult.prerequest": "pre",
+            "scriptError.prerequest": "0",
+            "scriptResult.presort": "30",
+            "scriptError.presort": "0",
+            "scriptResult": "pre",
+            "scriptError": "0",
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 3
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 6,
+                  "Code": "C006"
+                },
+                "portalData": {},
+                "recordId": "6",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 23,
+                  "Code": "C023"
+                },
+                "portalData": {},
+                "recordId": "23",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 7,
+                  "Code": "C007"
+                },
+                "portalData": {},
+                "recordId": "7",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "presort-then-sort",
+      "rows": ["R21", "R6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=3&layout.response=API_Customers_Nested&script.presort=API_SortByNameDesc&_sort=%5B%7B%22fieldName%22%3A%22Code%22%7D%5D",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult.presort": "30",
+            "scriptError.presort": "0",
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 3
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 2,
+                  "Code": "C002"
+                },
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 3,
+                  "Code": "C003"
+                },
+                "portalData": {},
+                "recordId": "3",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "script-changes-found-set",
+      "rows": ["R19", "R13"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=100&layout.response=API_Customers_Nested&script=API_FindActive",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "6",
+            "scriptError": "0",
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 6,
+              "returnedCount": 6
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 4,
+                  "Code": "C004"
+                },
+                "portalData": {},
+                "recordId": "4",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 8,
+                  "Code": "C008"
+                },
+                "portalData": {},
+                "recordId": "8",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 12,
+                  "Code": "C012"
+                },
+                "portalData": {},
+                "recordId": "12",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 16,
+                  "Code": "C016"
+                },
+                "portalData": {},
+                "recordId": "16",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 20,
+                  "Code": "C020"
+                },
+                "portalData": {},
+                "recordId": "20",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 24,
+                  "Code": "C024"
+                },
+                "portalData": {},
+                "recordId": "24",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "prerequest-changes-found-set",
+      "rows": ["R20", "R13"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=100&layout.response=API_Customers_Nested&script.prerequest=API_FindActive",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult.prerequest": "6",
+            "scriptError.prerequest": "0",
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 6,
+              "returnedCount": 6
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 4,
+                  "Code": "C004"
+                },
+                "portalData": {},
+                "recordId": "4",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 8,
+                  "Code": "C008"
+                },
+                "portalData": {},
+                "recordId": "8",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 12,
+                  "Code": "C012"
+                },
+                "portalData": {},
+                "recordId": "12",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 16,
+                  "Code": "C016"
+                },
+                "portalData": {},
+                "recordId": "16",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 20,
+                  "Code": "C020"
+                },
+                "portalData": {},
+                "recordId": "20",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "CustomerID": 24,
+                  "Code": "C024"
+                },
+                "portalData": {},
+                "recordId": "24",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "script-error-no-records",
+      "rows": ["R22"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=1&layout.response=API_Customers_Nested&script=API_Error_NoRecords",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptError": "401",
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 0,
+              "returnedCount": 0
+            },
+            "data": []
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "script-error-exit-result",
+      "rows": ["R22"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=1&layout.response=API_Customers_Nested&script=API_Error_ExitResult",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "401",
+            "scriptError": "401",
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 0,
+              "returnedCount": 0
+            },
+            "data": []
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "prerequest-unsupported",
+      "rows": ["R20", "R22", "EC1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=1&layout.response=API_Customers_Nested&script.prerequest=API_Unsupported",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptError.prerequest": "3",
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "script-missing",
+      "rows": ["R19", "EC7"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=1&script=NoSuchScript",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "104",
+              "message": "script:'NoSuchScript' is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "prerequest-missing",
+      "rows": ["R20", "EC7"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=1&script.prerequest=NoSuchScript",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "104",
+              "message": "script.prerequest:'NoSuchScript' is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "presort-missing",
+      "rows": ["R21", "EC7"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=1&script.presort=NoSuchScript",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "104",
+              "message": "script.presort:'NoSuchScript' is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "script-empty-name",
+      "rows": ["R19"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=1&layout.response=API_Customers_Nested&script=",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "set-global-seen-in-response",
+      "rows": ["R19", "GL4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=1&script=API_SetGlobal&script.param=from-script",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "from-script",
+            "scriptError": "0",
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001",
+                  "Name": "Alpha Industries",
+                  "Email": "contact1@example.test",
+                  "Status": "Inactive",
+                  "Country": "Deutschland",
+                  "Interests": "Hardware",
+                  "Pin": "0037",
+                  "Rating": 2,
+                  "Balance": 0,
+                  "LooseNumber": "abc",
+                  "SignupDate": "01/01/0001",
+                  "PreferredTime": "00:00:00",
+                  "Duration": "25:00:00",
+                  "LastContact": "01/01/1904 00:00:01",
+                  "Photo": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "Tags(1)": "tag1a",
+                  "Tags(2)": "",
+                  "Tags(3)": "",
+                  "Scores(1)": 1,
+                  "Scores(2)": -1.5,
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "11/26/2026 13:06:28",
+                  "CreatedBy": "Admin",
+                  "ModifiedBy": "Admin",
+                  "Source": "reference-build",
+                  "cDisplayName": "C001 – Alpha Industries",
+                  "cNameUpper": "ALPHA INDUSTRIES",
+                  "cBalanceRounded": 0,
+                  "cSignupPlus30": "01/31/0001",
+                  "cDurationPlusHour": "26:00:00",
+                  "cContactStamp": "01/01/0001 00:00:00",
+                  "cPhotoCopy": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "cOrderCount": 1,
+                  "cOrdersTotal": -50,
+                  "cDivByZero": "?",
+                  "cRepeatCalc(1)": "tag1a#1",
+                  "cRepeatCalc(2)": "",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "from-script",
+                  "sCount": 30,
+                  "sTotalBalance": 123456789014222222112222189879.0459368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "from-script",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "Zoë",
+                  "Customer_Orders::OrderNo": "SO-0001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "global-after-script-next-request",
+      "rows": ["GL4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001",
+                  "Name": "Alpha Industries",
+                  "Email": "contact1@example.test",
+                  "Status": "Inactive",
+                  "Country": "Deutschland",
+                  "Interests": "Hardware",
+                  "Pin": "0037",
+                  "Rating": 2,
+                  "Balance": 0,
+                  "LooseNumber": "abc",
+                  "SignupDate": "01/01/0001",
+                  "PreferredTime": "00:00:00",
+                  "Duration": "25:00:00",
+                  "LastContact": "01/01/1904 00:00:01",
+                  "Photo": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "Tags(1)": "tag1a",
+                  "Tags(2)": "",
+                  "Tags(3)": "",
+                  "Scores(1)": 1,
+                  "Scores(2)": -1.5,
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "11/26/2026 13:06:28",
+                  "CreatedBy": "Admin",
+                  "ModifiedBy": "Admin",
+                  "Source": "reference-build",
+                  "cDisplayName": "C001 – Alpha Industries",
+                  "cNameUpper": "ALPHA INDUSTRIES",
+                  "cBalanceRounded": 0,
+                  "cSignupPlus30": "01/31/0001",
+                  "cDurationPlusHour": "26:00:00",
+                  "cContactStamp": "01/01/0001 00:00:00",
+                  "cPhotoCopy": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "cOrderCount": 1,
+                  "cOrdersTotal": -50,
+                  "cDivByZero": "?",
+                  "cRepeatCalc(1)": "tag1a#1",
+                  "cRepeatCalc(2)": "",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "from-script",
+                  "sCount": 30,
+                  "sTotalBalance": 123456789014222222112222189879.0459368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "from-script",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "Zoë",
+                  "Customer_Orders::OrderNo": "SO-0001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "script-on-get-by-id",
+      "rows": ["G5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/2?layout.response=API_Customers_Nested&script=API_ReturnContext",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "API_Customers\rCustomers\r30\r2\rapi_rw\rDataAPI_ReadWrite\rparam=",
+            "scriptError": "0",
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 2,
+                  "Code": "C002"
+                },
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "unicode-result",
+      "rows": ["R22"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records?_limit=1&layout.response=API_Customers_Nested&script=API_UnicodeResult",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "Zoë – 日本語 – Ελληνικά – עברית – 😀 – \"quoted\" – back\\slash",
+            "scriptError": "0",
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Nested",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 1,
+                  "Code": "C001"
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

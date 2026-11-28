@@ -458,7 +458,9 @@ func libraryOf(defs []calc.CustomFunction, name string) (*calc.Library, error) {
 // checkCalculationRings refuses a library under which calculation fields
 // would read each other in a ring: a function's formula may read a field
 // whose own formula calls the function, and no record of that table could
-// then be computed. writes are the formulas the change rewrites, read in
+// then be computed. It refuses one under which a stored calculation would
+// run a query with ExecuteSQL, through the functions it calls, as saving
+// that calculation is refused. writes are the formulas the change rewrites, read in
 // place of the stored ones.
 func (s *Service) checkCalculationRings(ctx context.Context, lib *calc.Library, writes []formulaWrite) error {
 	d := s.driver.Dialect()
@@ -483,6 +485,9 @@ func (s *Service) checkCalculationRings(ctx context.Context, lib *calc.Library, 
 		expr, err := calc.ParseWith(data.ReadStoredCalculation(raw).Formula, calc.Options{Library: lib})
 		if err != nil {
 			continue // broken already: reported when it is computed
+		}
+		if data.ReadStoredCalculation(raw).IsStored() && expr.RunsSQL() {
+			return storedQueryError(ErrInvalidCustomFunction, name)
 		}
 		if reads[table] == nil {
 			reads[table] = map[string][]string{}

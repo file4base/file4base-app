@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -88,10 +89,14 @@ func Middleware(serviceName, version string, clientIP func(*http.Request) string
 			ctx := ContextWithTrace(r.Context(), traceID, spanID)
 			r = r.WithContext(ctx)
 
-			// 2. Set Response Headers
-			traceparentHeader := fmt.Sprintf("00-%s-%s-01", traceID, spanID)
-			w.Header().Set("traceparent", traceparentHeader)
-			w.Header().Set("X-Trace-ID", traceID)
+			// 2. Set Response Headers. The FileMaker Data API answers with
+			// FileMaker Server's headers only, so its replies carry no trace
+			// headers; the trace is still logged.
+			if !isDataAPIPath(r.URL.Path) {
+				traceparentHeader := fmt.Sprintf("00-%s-%s-01", traceID, spanID)
+				w.Header().Set("traceparent", traceparentHeader)
+				w.Header().Set("X-Trace-ID", traceID)
+			}
 
 			// Security Headers (Defense-in-Depth)
 			w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -127,16 +132,17 @@ func Middleware(serviceName, version string, clientIP func(*http.Request) string
 				clientAddr = clientIP(r)
 			}
 
+			path := redactPath(r.URL.Path)
 			entry := LogEntry{
 				Timestamp:      time.Now().UTC().Format(time.RFC3339Nano),
 				Level:          level,
-				Message:        fmt.Sprintf("HTTP %s %s -> %d", r.Method, r.URL.Path, wrapped.statusCode),
+				Message:        fmt.Sprintf("HTTP %s %s -> %d", r.Method, path, wrapped.statusCode),
 				TraceID:        traceID,
 				SpanID:         spanID,
 				ServiceName:    serviceName,
 				ServiceVersion: version,
 				HTTPMethod:     r.Method,
-				HTTPPath:       r.URL.Path,
+				HTTPPath:       path,
 				HTTPStatusCode: wrapped.statusCode,
 				BytesWritten:   wrapped.bytesWritten,
 				DurationMs:     durationMs,
@@ -152,4 +158,27 @@ func Middleware(serviceName, version string, clientIP func(*http.Request) string
 			}
 		})
 	}
+}
+
+// isDataAPIPath reports whether path is served by the FileMaker Data API.
+func isDataAPIPath(path string) bool {
+	return path == "/fmi/data" || strings.HasPrefix(path, "/fmi/data/")
+}
+
+// redactPath keeps credentials out of the request log: a FileMaker Data API
+// sign-out carries its session token in the path, after "sessions". The
+// check ignores case so that a mistyped path is redacted too.
+func redactPath(path string) string {
+	// Leading slashes are trimmed for the check: //fmi/data/... is not
+	// routed, but its token must not be logged either.
+	if trimmed := strings.TrimLeft(path, "/"); len(trimmed) < 4 || !strings.EqualFold(trimmed[:4], "fmi/") {
+		return path
+	}
+	segs := strings.Split(path, "/")
+	for i, seg := range segs {
+		if strings.EqualFold(seg, "sessions") && strings.Trim(strings.Join(segs[i+1:], "/"), "/") != "" {
+			return strings.Join(segs[:i+1], "/") + "/[redacted]"
+		}
+	}
+	return path
 }
