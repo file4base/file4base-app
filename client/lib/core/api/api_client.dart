@@ -4163,6 +4163,11 @@ class ApiClient {
   /// to the Get functions only the client knows ([get], by selector, such as
   /// `ScriptParameter`), so the server evaluates what the client cannot with
   /// the solution's custom functions in one request.
+  ///
+  /// [occurrence] is the occurrence (id or name) the record is seen from, a
+  /// layout's; [portalRow] the active portal row on it (`occurrence` and
+  /// `record_id`), whose record a reference to the portal's occurrence then
+  /// reads, as FileMaker's scripts do while a portal row is active (#237).
   Future<List<EvaluationModel>> evaluateExpressions(
     String table, {
     required List<String> expressions,
@@ -4171,6 +4176,8 @@ class ApiClient {
     Map<String, String>? variables,
     Map<String, Object?>? get,
     Map<String, Object?>? values,
+    String? occurrence,
+    Map<String, String>? portalRow,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/data/$table/evaluate'),
@@ -4182,6 +4189,8 @@ class ApiClient {
         if (variables != null && variables.isNotEmpty) 'variables': variables,
         if (get != null && get.isNotEmpty) 'get': get,
         if (values != null && values.isNotEmpty) 'values': values,
+        if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
+        if (portalRow != null) 'portal_row': portalRow,
       }),
     );
     _checkResponse(response);

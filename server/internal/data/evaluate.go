@@ -69,6 +69,23 @@ type EvaluationEnv struct {
 	// in a Context must be such an occurrence when it is set, and one of
 	// this solution's tables when it is not (ErrOccurrenceElsewhere).
 	External bool
+	// PortalRow is, for a layout's record, the active portal row (see
+	// PortalRow); nil when no portal row is active. Not with a Context.
+	PortalRow *PortalRow
+}
+
+// PortalRow is the active row of a portal on a layout, by the portal's
+// occurrence (name or id) and the row's record id, that a script's
+// formulas are evaluated with, as FileMaker evaluates them while a portal
+// row is active: the layout's record stays the current record, and the
+// row is the current record of the portal's occurrence. A reference to a
+// field of that occurrence reads the row, one through it the records
+// related to the row; an aggregate of the occurrence (Count, Sum, List…)
+// reads every record related to the layout's record, and any other
+// occurrence is related to the layout's record.
+type PortalRow struct {
+	Occurrence string `json:"occurrence"`
+	RecordID   string `json:"record_id"`
 }
 
 // ContextRecord is the record of a layout, seen from its occurrence (by
@@ -295,7 +312,7 @@ func (s *Service) newEvaluator(
 	// One reader serves every expression and every record, so what one
 	// reads the others reuse.
 	reader := s.newRelatedReader()
-	scope, err := reader.evaluationScope(ctx, tableName, occurrence, in.Context, in.External)
+	scope, err := reader.evaluationScope(ctx, tableName, occurrence, in.Context, in.External, in.PortalRow)
 	if err != nil {
 		return nil, err
 	}
