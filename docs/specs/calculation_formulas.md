@@ -31,6 +31,13 @@ value the field then keeps as data; [Auto-Enter Field Options](auto_enter_option
 says when it is evaluated. There, and in unstored calculations,
 `Get ( AccountName )` and `Get ( UserName )` answer the account writing.
 
+`Get ( RecordID )` and `Get ( RecordModificationCount )` answer the record's
+[record ID and modification count](relationships_and_portals.md#record-id-and-modification-count)
+in a stored or unstored calculation, an auto-enter calculation and a
+validation formula alike. A record being created already has its record ID
+there, so a calculation stored with it, or a value auto-entered with it, reads
+it. A write reads the modification count the record had before it.
+
 ## Unstored calculations and related fields
 
 A calculation saved with `"stored": false` (Field Options: *Store the result*
@@ -108,12 +115,42 @@ solution import checks its formulas once all its fields and relationships
 exist, whatever order they are declared in. Keyed imports, like inserts and
 updates, never write an unstored calculation.
 
-An unstored calculation **cannot be found on, sorted by or summarized**: its
-value does not exist in the database. Such a request is refused with
-`422 Unstored Calculation`, rather than searched or sorted in memory. The
-exception is a portal, or any read of one record's related records: sorted
-by an unstored calculation, by the relationship or by the caller, it is
-sorted once its records are read, up to 10,000 of them (see
+An unstored calculation **can be found on, sorted by and summarized**, as in
+FileMaker, which computes it for every record it considers (#149). Its value
+is not in the database, so a find, sort or summary naming one:
+
+1. narrows the records with every criterion on a stored field, in the
+   database; an omitting request on an unstored calculation narrows nothing,
+   and an including one on it alone leaves every record a candidate;
+2. computes the calculation for those candidates, as the caller, in pages of
+   500, with the same evaluator as a read (`Sum ( Lines::Amount )`, `Get`
+   functions, globals);
+3. binds the values to the statement and runs the find, sort or summary
+   there, as on a stored field of the calculation's result type: the same
+   operators, ranges, `*`, `==`, omitting requests, text order, number and
+   date comparisons, empty values and paging.
+
+It is bounded: at most 50,000 candidates, 30 seconds of computing and 16 MiB
+of values (on MariaDB, under the server's `max_allowed_packet`), set by
+`FILE4BASE_UNSTORED_FIND_MAX_RECORDS`, `FILE4BASE_UNSTORED_FIND_TIMEOUT` and
+`FILE4BASE_UNSTORED_FIND_MAX_BYTES`. Past one, the request is refused with
+`422 Too Many Records to Compute`, naming the field and the number of records,
+rather than cut short: a criterion on a stored field narrows it. Computing
+costs what reading the records does: a calculation reading related records
+reads them a page at a time, each record's related records looked up by its
+match field. On PostgreSQL that wants the GIN index of
+`server/internal/data/multikey.go` on the related match field: 10,000
+companies of three customers each take about 3 seconds to find, sort or total
+by `Sum ( Customers::Fee )` with it, 50,000 about 11 seconds, and 10,000 about
+70 seconds without it. MariaDB has no index on lines, so it takes about 100
+seconds for 10,000 such companies, past the default time limit: narrow such a
+find by a stored field first. A criterion
+on a related table's unstored calculation (`Lines::Total` where `Total` is
+unstored) is still refused with `422 Unstored Calculation`.
+
+A portal, or any read of one record's related records, sorted by an unstored
+calculation, by the relationship or by the caller, is sorted once its records
+are read, up to 10,000 of them (see
 [relationships_and_portals.md](relationships_and_portals.md#sorting-by-an-unstored-calculation)).
 A relationship a calculation reads through still cannot sort by one.
 
@@ -269,6 +306,7 @@ and the families around them:
 | Family | Functions |
 | --- | --- |
 | Logical | `If`, `Case`, `Choose`, `Let`, `While`, `IsEmpty`, `IsValid`, `IsValidExpression`, `Evaluate`, `GetField`, `Get ( … )`, `GetNthRecord` (related fields) |
+| SQL | `ExecuteSQL`, `ExecuteSQLe` (see [ExecuteSQL](#executesql)) |
 | Fields | `GetNextSerialValue` (auto-enter and unstored calculations, the Data Viewer; see [Auto-Enter Field Options](auto_enter_options.md#6-scripts-and-functions)) |
 | Text | `Left`, `Right`, `Middle`, `Length`, `Position`, `PatternCount`, `Substitute`, `Replace`, `Filter`, `Trim`, `TrimAll`, `Upper`, `Lower`, `Proper`, `Exact`, `Quote`, `Char`, `Code`, `SerialIncrement`, `LeftWords`, `MiddleWords`, `RightWords`, `WordCount` |
 | Lists | `List`, `ValueCount`, `GetValue`, `LeftValues`, `MiddleValues`, `RightValues`, `FilterValues`, `UniqueValues`, `SortValues` |
@@ -292,6 +330,69 @@ edits them; script steps call them through the server (see
 [Custom Functions](custom_functions.md)).
 `TODAY()`, `NOW()`, `COALESCE` and `CONCAT` remain for formulas written in
 File4Base before.
+
+## ExecuteSQL
+
+`ExecuteSQL ( query ; fieldSeparator ; rowSeparator { ; arguments… } )` runs
+a query of FileMaker's SQL over the solution's **table occurrences**, on the
+server, as the account the formula is computed for, and answers the rows as
+text: each row's values joined by `fieldSeparator` (empty: a comma), the rows
+by `rowSeparator` (empty: a return). Nothing found is empty. A query that
+cannot be read or run answers `?`, as FileMaker does; `ExecuteSQLe` answers
+`? ERROR: ` and FileMaker's error, `FQL0007/(1:7): The column named "x" does
+not exist in any table in the column reference's scope.`, with the line and
+offset in the query.
+
+```
+ExecuteSQL ( "SELECT \"Last Name\", Salary FROM Staff WHERE Dept = ? ORDER BY 1" ; " | " ; "" ; dept )
+```
+
+- **Where it runs.** An unstored calculation, an auto-enter or validation
+  calculation, a script's formula (Set Variable, If, parameters…) and the Data
+  Viewer. A stored calculation calling it, itself or through a custom function,
+  is refused when saved, and so is a change to a custom function that would make
+  a stored calculation call it: its answer changes without its record changing, so it
+  must be unstored, as a calculation reading related fields. Elsewhere it
+  answers `?`.
+- **Access.** Each table a query names is read only if the account may read it,
+  as a related field is read: one it may not read answers `?` (`<No Access>` in
+  `ExecuteSQLe`), never its records. The relationships graph is not used: a
+  query joins as it says.
+- **What it reads.** `SELECT [DISTINCT]` of fields, constants, `*`, `t.*`,
+  `||` and `+ - * /` (`+` joins text with text, as `||`; beside a text field a
+  number or date field is refused), the aggregates `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` (with
+  `DISTINCT`, and `COUNT(*)`) and the functions `UPPER`, `LOWER`, `TRIM`,
+  `LTRIM`, `RTRIM`, `LENGTH`/`CHAR_LENGTH`, `ABS`, `COALESCE`; `FROM` table
+  occurrences with aliases, `[INNER] JOIN` and `LEFT [OUTER] JOIN … ON`;
+  `WHERE` with `= <> != < > <= >=`, `LIKE` (`%` and `_`), `IN ( … )`,
+  `BETWEEN`, `IS [NOT] NULL`, `AND`, `OR`, `NOT`; `GROUP BY`, `HAVING`,
+  `ORDER BY` (fields, aliases, ordinals, `ASC`/`DESC`), `OFFSET n ROWS` and
+  `FETCH FIRST n ROWS ONLY`; `?` arguments, bound with their type; `DATE '…'`,
+  `TIME '…'` and `TIMESTAMP '…'`. Names are found whatever their case, quoted
+  (`"Last Name"`) when they are not plain words; a field is the one FileMaker
+  named, or its column.
+- **As FileMaker answers.** Numbers, dates (`2026-01-05`), times
+  (`13:04:05`) and timestamps (`2026-01-05 13:04:05`) are written as SQL
+  writes them, whatever the file's locale. Text compares and sorts
+  case-sensitively, by code point; an empty field is `NULL`, and `NULL` sorts
+  first; a constant compared with a field is read as the field's type
+  (`Hired > '2026-01-01'`); a division by zero is empty.
+- **Refused**, with FileMaker's error: anything but one `SELECT` (`INSERT`,
+  `UPDATE`, `DELETE`, DDL, a second statement), `UNION`, subqueries, `RIGHT` and
+  `FULL OUTER JOIN` (FileMaker does not run them either), `CROSS`/`NATURAL`
+  joins, `CASE`, `CAST` and the other functions, `CURRENT_DATE` and the like,
+  ODBC `{d '…'}` literals, `LIKE … ESCAPE`, `LIMIT`, and arithmetic on dates
+  and times. Unstored calculations,
+  summary and container fields cannot be read; `*` leaves them out, with the
+  record's id. An occurrence of another solution's table is refused.
+- **Safety.** The query is parsed and translated into the database's own SQL
+  from the solution's names alone; every value of the query and every argument
+  is bound as a parameter, never written into the statement. A query answers at
+  most 10,000 rows and 16 MB of values (more is an error: ask for fewer with
+  `WHERE` or `FETCH FIRST`), runs at most 5 seconds, and has at most 10,000
+  words, values and signs, and expressions at most 400 operations deep
+  (`a + b + …` included). A transfer's destination computes its validation as
+  the destination's account.
 
 ## Validation
 
@@ -341,10 +442,9 @@ Roughly how many years a customer has been with you. Result type: Number.
 
 - **Aggregates across a found set.** That is a summary field:
   [#32](https://github.com/file4base/file4base-app/issues/32).
-- **Finding, sorting or summarizing by an unstored calculation** (FileMaker
-  does it by computing every record); store the result, or use the fields it
-  reads.
-- `ExecuteSQL`, JSON, cryptographic and plug-in functions, and container
+- **Finding on a related table's unstored calculation**, or on one with
+  more candidates than the limits above; narrow it with a stored field.
+- JSON, cryptographic and plug-in functions, and container
   functions other than `GetContainerAttribute` ( `filename`, `fileSize` ),
   are reported as unsupported.
 - **Finding or sorting by a Container calculation** works on the stored

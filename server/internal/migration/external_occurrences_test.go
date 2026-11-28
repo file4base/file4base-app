@@ -445,3 +445,75 @@ func TestNativeLayoutExternalRelatedFieldKeepsItsRelationship(t *testing.T) {
 		t.Fatalf("an external related field must keep its relationship: %s", def)
 	}
 }
+
+// A portal of another file's table keeps its filter: Browse mode evaluates
+// it on each row with the layout's record as context, so the layout's own
+// fields are written qualified, as the portal's are.
+func TestNativeLayoutExternalPortalKeepsItsFilter(t *testing.T) {
+	layout := `<Layout id="1" name="Order"><TableOccurrenceReference id="1" name="Orders"/>
+  <PartsList><Part type="Body"><Definition type="Body" kind="4" size="300" absolute="0"/><ObjectList>
+   <LayoutObject type="Portal"><UUID>00000000-0000-0000-0000-000000000070</UUID><Bounds top="10" left="20" bottom="200" right="300"/>
+    <Portal><TableOccurrenceReference id="2" name="Order Customers"/><Options index="1" show="3"/>
+     <Calculation><Text><![CDATA[Order Customers::Full Name <> "" and Order Customers::Region = Orders::Region and Order Customers::<Field Missing> <> ""]]></Text><ChunkList><Chunk type="FieldRef"><FieldReference id="1" name="Full Name"><TableOccurrenceReference id="2" name="Order Customers"/></FieldReference></Chunk><Chunk type="FieldRef"><FieldReference id="2" name="Region"><TableOccurrenceReference id="2" name="Order Customers"/></FieldReference></Chunk><Chunk type="FieldRef"><FieldReference id="2" name="Region"><TableOccurrenceReference id="1" name="Orders"/></FieldReference></Chunk><Chunk type="FieldRef"><FieldReference id="3" name=""><TableOccurrenceReference id="2" name="Order Customers"/></FieldReference></Chunk></ChunkList></Calculation>
+     <ObjectList/>
+    </Portal>
+   </LayoutObject>
+  </ObjectList></Part></PartsList></Layout>`
+	start := strings.Index(externalOrdersXML, "<LayoutCatalog>")
+	end := strings.Index(externalOrdersXML, "</LayoutCatalog>")
+	doc := externalOrdersXML[:start] + "<LayoutCatalog>" + layout + externalOrdersXML[end:]
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	encoded, _ := json.Marshal(res.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]interface{}
+	for _, raw := range def["objects"].([]interface{}) {
+		if o := raw.(map[string]interface{}); o["type"] == "portal" {
+			config = o["portal_config"].(map[string]interface{})
+		}
+	}
+	if config == nil {
+		t.Fatalf("no portal: %s", encoded)
+	}
+	// A field the export names by its id only is kept, by its id.
+	if config["filter"] != `${Order Customers}::full_name <> "" and ${Order Customers}::region = Orders::region and ${Order Customers}::${#3} <> ""` ||
+		config["filter_problem"] != nil {
+		t.Fatalf("portal: %v", config)
+	}
+}
+
+// A nameless reference is found wherever it is, past references that name
+// their field, even after a chunk whose reference the text does not show
+// without its field: only a replacement moves on through the text.
+func TestMarkNamelessFieldReferencesFindsEachOne(t *testing.T) {
+	ref := func(id, occurrence string) string {
+		return `<Chunk type="FieldRef"><FieldReference id="` + id + `" name=""><TableOccurrenceReference id="9" name="` +
+			occurrence + `"/></FieldReference></Chunk>`
+	}
+	for _, c := range []struct{ name, text, chunks, want string }{
+		{"past a named reference", `Lines::Qty + Lines::<Field Missing>`, ref("4", "Lines"),
+			`Lines::Qty + Lines::${` + namelessField("4") + `}`},
+		{"after a chunk the text names", `Lines::<Field Missing> & Notes::Text`, ref("5", "Notes") + ref("4", "Lines"),
+			`Lines::${` + namelessField("4") + `} & Notes::Text`},
+		{"each in turn", `Lines:: & Notes::<Field Missing>`, ref("4", "Lines") + ref("5", "Notes"),
+			`Lines::${` + namelessField("4") + `} & Notes::${` + namelessField("5") + `}`},
+	} {
+		root, err := parseXMLTree([]byte(`<Calculation><Text><![CDATA[` + c.text + `]]></Text><ChunkList>` + c.chunks +
+			`</ChunkList></Calculation>`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		node := root
+		if node.Name != "Calculation" {
+			node = findFirstChild(root, "Calculation")
+		}
+		if got := markNamelessFieldReferences(node, calculationText(node)); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}

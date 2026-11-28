@@ -168,7 +168,7 @@ func TestAnalyzeAndConvert_DDRAndFMPXMLResult(t *testing.T) {
 		t.Fatalf("expected 2 records parsed from FMPXMLRESULT, got %d", res.Report.Counts.RecordsReady)
 	}
 	if len(res.Report.Unsupported) == 0 {
-		t.Fatal("expected unsupported items (ExecuteSQL, Perform AppleScript) to be recorded")
+		t.Fatal("expected unsupported items (Perform AppleScript) to be recorded")
 	}
 	if len(res.Report.ManualActionRequired) == 0 {
 		t.Fatal("expected manual_action_required items (triggers, passwords, unsupported steps/calcs) to be recorded")
@@ -195,6 +195,7 @@ func TestAnalyzeAndConvert_HTMLDDRAndFractions(t *testing.T) {
 <tr><td><a name="1295FieldAnchor_"/>Photo</td><td>Normal, Binary</td><td></td></tr>
 <tr><td><a name="12913FieldAnchor_"/>Yield</td><td>Normal, Text</td><td></td></tr>
 <tr><td><a name="12914FieldAnchor_"/>Yield_calc</td><td>Calculated, Text</td><td>Unindexed, = If ( recipes::Yield &ne; &quot;&quot; ; &quot;Yield: &quot; &amp; recipes::Yield ; &quot;&quot; ) (Storage Options: Do not store)</td></tr>
+<tr><td><a name="12915FieldAnchor_"/>Recipe_count</td><td>Calculated, Number</td><td>Unindexed, = ExecuteSQL ( &quot;SELECT COUNT(*) FROM recipes&quot; ; &quot;&quot; ; &quot;&quot; )</td></tr>
 </table>
 <span class="subheader"><a name="133BaseTableAnchor_"/>recipe_ingredients</span>
 <table>
@@ -256,6 +257,22 @@ func TestAnalyzeAndConvert_HTMLDDRAndFractions(t *testing.T) {
 	}
 	if res.Report.Counts.Layouts != 1 {
 		t.Fatalf("expected 1 layout, got %d", res.Report.Counts.Layouts)
+	}
+	// A query reads other records: the report's route imports it as a
+	// stored column, as a calculation reading related fields.
+	found := false
+	for _, table := range res.Bundle.Tables {
+		for _, col := range table.Columns {
+			if col.DisplayName == "Recipe_count" {
+				found = true
+				if col.FieldType == "CALCULATION" {
+					t.Fatalf("an ExecuteSQL calculation of an HTML report must not import as a stored calculation")
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("Recipe_count was not imported")
 	}
 	if got := coerceDataValue("1/3", "NUMBER"); got != nil {
 		t.Fatalf("permissive source Number text must not become a rounded fraction, got %v", got)
@@ -583,6 +600,7 @@ func TestAnalyzeAndConvert_ConvertsRecordExportExactly(t *testing.T) {
 	if got := fmt.Sprint(rows[0]["amount"]); got != "9007199254740993" {
 		t.Fatalf("the number lost precision: %q", got)
 	}
+	delete(rows[1], schema.RecordIdentityKey) // its record ID, not a value
 	if len(rows[1]) != 0 {
 		t.Fatalf("the blank record carries no values of its own: %v", rows[1])
 	}

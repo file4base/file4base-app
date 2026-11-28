@@ -16,7 +16,7 @@ func TestFindWhereUnionsIncludingRequests(t *testing.T) {
 
 func TestFindWhereSubtractsOmittingRequests(t *testing.T) {
 	got := buildFindWhere([]string{"(year = 2011)"}, []string{"(month = 3)"})
-	want := "WHERE ((year = 2011)) AND NOT ((month = 3))"
+	want := "WHERE ((year = 2011)) AND ((month = 3)) IS NOT TRUE"
 	if got != want {
 		t.Fatalf("where = %q, want %q", got, want)
 	}
@@ -24,7 +24,7 @@ func TestFindWhereSubtractsOmittingRequests(t *testing.T) {
 
 func TestFindWhereWithOnlyOmittingRequestsStartsFromEveryRecord(t *testing.T) {
 	got := buildFindWhere(nil, []string{"(city = 'New York')"})
-	want := "WHERE NOT ((city = 'New York'))"
+	want := "WHERE ((city = 'New York')) IS NOT TRUE"
 	if got != want {
 		t.Fatalf("where = %q, want %q", got, want)
 	}
@@ -40,7 +40,7 @@ func TestFindWhereSubtractsTheUnionOfEveryOmittingRequest(t *testing.T) {
 	got := buildFindWhere([]string{"(a)"}, []string{"(b)", "(c)"})
 	// Not "NOT (b) AND NOT (c)" spelled out, but the same thing: a record is
 	// dropped when it matches any omitting request.
-	want := "WHERE ((a)) AND NOT ((b) OR (c))"
+	want := "WHERE ((a)) AND ((b) OR (c)) IS NOT TRUE"
 	if got != want {
 		t.Fatalf("where = %q, want %q", got, want)
 	}

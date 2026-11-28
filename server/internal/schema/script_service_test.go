@@ -24,13 +24,13 @@ func newScriptTestService(t *testing.T) (*schema.Service, func()) {
 		DSN:        testdb.DevDSN(),
 	})
 	if err != nil {
-		t.Skip("PostgreSQL not available:", err)
+		testdb.Unavailable(t, "PostgreSQL not available:", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := driver.Ping(ctx); err != nil {
 		_ = driver.Close()
-		t.Skip("PostgreSQL ping failed:", err)
+		testdb.Unavailable(t, "PostgreSQL ping failed:", err)
 	}
 	svc := schema.NewService(driver)
 	require.NoError(t, svc.EnsureSystemTables(ctx))
@@ -119,7 +119,7 @@ func TestScriptService_CRUD(t *testing.T) {
 		DSN:        dsn,
 	})
 	if err != nil {
-		t.Skip("PostgreSQL not available:", err)
+		testdb.Unavailable(t, "PostgreSQL not available:", err)
 		return
 	}
 	defer driver.Close()
@@ -128,7 +128,7 @@ func TestScriptService_CRUD(t *testing.T) {
 	defer cancel()
 
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("PostgreSQL ping failed:", err)
+		testdb.Unavailable(t, "PostgreSQL ping failed:", err)
 		return
 	}
 

@@ -56,11 +56,11 @@ func TestAPI_ImportFromAnExternalSource(t *testing.T) {
 	// Somebody else's table, in the database the suite itself runs against.
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 	}
 	defer driver.Close()
 	if err := driver.Ping(context.Background()); err != nil {
-		t.Skip("scratch database not available:", err)
+		testdb.Unavailable(t, "scratch database not available:", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

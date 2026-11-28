@@ -1267,6 +1267,40 @@ class FormulaCheckModel {
   final List<String> unknownFields;
 }
 
+/// What Self reads in a condition of a layout object: the field the object
+/// shows, of the record evaluated ([occurrence] null) or of a related
+/// occurrence, by name, in the repetition the object shows; or, for a text
+/// or a button, the [text] it shows, which is its Self in FileMaker.
+class ConditionSelf {
+  const ConditionSelf(this.field, {this.occurrence, this.repetition = 1}) : text = null;
+
+  /// The Self of a text or a button: the text it shows.
+  const ConditionSelf.text(String this.text)
+      : field = '',
+        occurrence = null,
+        repetition = 1;
+
+  final String field;
+  final String? occurrence;
+  final int repetition;
+  final String? text;
+
+  Map<String, dynamic> toJson() => text != null
+      ? {'text': text}
+      : {
+          'field': field,
+          if (occurrence != null && occurrence!.isNotEmpty) 'occurrence': occurrence,
+          if (repetition > 1) 'repetition': repetition,
+        };
+}
+
+/// The record of a layout a portal's rows are evaluated in: the layout's
+/// occurrence (its id or name) and the record's id. FileMaker evaluates a
+/// portal row's conditions and the portal's filter from the layout, with the
+/// row as the current record of the portal's occurrence: a field of the
+/// layout's occurrence reads this record, never one read back from the row.
+typedef EvaluationContext = ({String occurrence, String recordId});
+
 /// What one watched expression came to (#50): a value, or the reason it has
 /// none.
 class EvaluationModel {
@@ -1502,7 +1536,11 @@ class Capability {
   static const String bulkExport = 'bulk_export';
   static const String bulkImport = 'bulk_import';
 
-  static const List<String> all = [bulkExport, bulkImport];
+  /// Access through the FileMaker Data API at /fmi/data: FileMaker's fmrest
+  /// extended privilege. Owners hold it; other roles once an owner grants it.
+  static const String fmRest = 'fmrest';
+
+  static const List<String> all = [bulkExport, bulkImport, fmRest];
 
   /// The name shown in the interface for a capability.
   static String label(String capability) {
@@ -1511,6 +1549,8 @@ class Capability {
         return 'Bulk record export';
       case bulkImport:
         return 'Bulk record import';
+      case fmRest:
+        return 'Access via FileMaker Data API';
       default:
         return capability;
     }
@@ -1525,6 +1565,9 @@ class Capability {
       case bulkImport:
         return 'Bring records in from CSV, tab-separated text, Excel or XML, and '
             'read back a .f4data data file.';
+      case fmRest:
+        return 'Sign in to the FileMaker Data API at /fmi/data, when the server '
+            'serves it for this database. Off until granted.';
       default:
         return '';
     }
@@ -1538,6 +1581,7 @@ class RolePrivilegesModel {
     required this.role,
     this.bulkExport = true,
     this.bulkImport = true,
+    this.fmRest = false,
   });
 
   factory RolePrivilegesModel.fromJson(Map<String, dynamic> json) {
@@ -1545,11 +1589,15 @@ class RolePrivilegesModel {
       role: json['role'] as String? ?? '',
       bulkExport: json['bulk_export'] as bool? ?? true,
       bulkImport: json['bulk_import'] as bool? ?? true,
+      // A server from before fmrest reports nothing: no role but the owner
+      // may use a Data API it does not have.
+      fmRest: json['fmrest'] as bool? ?? json['role'] == 'owner',
     );
   }
   final String role;
   final bool bulkExport;
   final bool bulkImport;
+  final bool fmRest;
 
   bool allows(String capability) {
     switch (capability) {
@@ -1557,6 +1605,8 @@ class RolePrivilegesModel {
         return bulkExport;
       case Capability.bulkImport:
         return bulkImport;
+      case Capability.fmRest:
+        return fmRest;
       default:
         return false;
     }
@@ -1567,6 +1617,7 @@ class RolePrivilegesModel {
       role: role,
       bulkExport: capability == Capability.bulkExport ? allowed : bulkExport,
       bulkImport: capability == Capability.bulkImport ? allowed : bulkImport,
+      fmRest: capability == Capability.fmRest ? allowed : fmRest,
     );
   }
 
@@ -1574,6 +1625,7 @@ class RolePrivilegesModel {
         'role': role,
         'bulk_export': bulkExport,
         'bulk_import': bulkImport,
+        'fmrest': fmRest,
       };
 }
 
@@ -1854,6 +1906,9 @@ class ImportReportModel {
     this.skipped = 0,
     this.fields = const [],
     this.truncated = false,
+    this.skippedErrors = 0,
+    this.fieldsSkipped = 0,
+    this.problems = const [],
   });
 
   factory ImportReportModel.fromJson(Map<String, dynamic> json) => ImportReportModel(
@@ -1863,14 +1918,83 @@ class ImportReportModel {
         skipped: (json['skipped'] as num?)?.toInt() ?? 0,
         fields: [for (final f in (json['fields'] as List? ?? const [])) f as String],
         truncated: json['truncated'] as bool? ?? false,
+        skippedErrors: (json['skipped_errors'] as num?)?.toInt() ?? 0,
+        fieldsSkipped: (json['fields_skipped'] as num?)?.toInt() ?? 0,
+        problems: [
+          for (final p in (json['problems'] as List? ?? const []))
+            ImportProblemModel.fromJson(Map<String, dynamic>.from(p as Map)),
+        ],
       );
   final int rows;
   final int added;
   final int updated;
+
+  /// Rows passed over without an error: an update's rows matching nothing.
   final int skipped;
   final List<String> fields;
   final bool truncated;
+
+  /// Records skipped due to errors, and values left out of the records
+  /// imported: the two counts of FileMaker's Import Summary (#231).
+  final int skippedErrors;
+  final int fieldsSkipped;
+
+  /// Each record skipped and value left out, in row order.
+  final List<ImportProblemModel> problems;
 }
+
+/// A record an import skipped, or a value it left out, and why (#231).
+class ImportProblemModel {
+  const ImportProblemModel({
+    required this.row,
+    required this.field,
+    required this.rule,
+    this.value = '',
+    this.message = '',
+    this.recordSkipped = false,
+  });
+
+  factory ImportProblemModel.fromJson(Map<String, dynamic> json) => ImportProblemModel(
+        row: (json['row'] as num?)?.toInt() ?? 0,
+        field: json['field'] as String? ?? '',
+        rule: json['rule'] as String? ?? '',
+        value: json['value'] as String? ?? '',
+        message: json['message'] as String? ?? '',
+        recordSkipped: json['record_skipped'] as bool? ?? false,
+      );
+
+  /// The 1-based row of the source.
+  final int row;
+  final String field;
+
+  /// `type` for a value the field's type cannot hold, otherwise the
+  /// validation rule broken.
+  final String rule;
+
+  /// The text left out, as the source had it.
+  final String value;
+  final String message;
+
+  /// Whether the whole record was skipped, not only the value.
+  final bool recordSkipped;
+
+  /// The rule as the Import Summary names it.
+  String get ruleLabel => importRuleLabel(rule);
+}
+
+/// How the Import Summary names a rule an import skipped a record or a value
+/// for.
+String importRuleLabel(String rule) => switch (rule) {
+      'type' => 'wrong type',
+      'not_empty' => 'not empty',
+      'calculation' => 'validation calculation',
+      'strict_type' => 'strict data type',
+      'max_length' => 'maximum length',
+      'range' => 'range',
+      'unique' => 'unique',
+      'existing_value' => 'existing value',
+      _ => rule.replaceAll('_', ' '),
+    };
 
 /// Transparent HTTP client wrapper that negotiates AES-256-GCM envelope
 /// encryption (`Accept-Encryption: aes-256-gcm` / `X-File4Base-Encrypted`)
@@ -3225,7 +3349,10 @@ class ApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> createDatabase(String name, {String? user, String? password}) async {
+  /// Creates a database and its first owner. [setupCode] is the code the
+  /// server prints at startup, needed for a database reserved for its
+  /// administrators when the caller is not a super-owner (#236).
+  Future<Map<String, dynamic>> createDatabase(String name, {String? user, String? password, String? setupCode}) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/databases'),
       headers: _headers(contentType: 'application/json'),
@@ -3233,6 +3360,7 @@ class ApiClient {
         'database': name,
         if (user != null && user.isNotEmpty) 'user': user,
         if (password != null && password.isNotEmpty) 'password': password,
+        if (setupCode != null && setupCode.trim().isNotEmpty) 'setup_code': setupCode.trim(),
       }),
     );
     _checkResponse(response);
@@ -3915,9 +4043,12 @@ class ApiClient {
     return UserModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  /// Updates an account. [currentPassword] is required by the server when the
+  /// account is the caller's own and [password] changes it.
   Future<void> updateUser(
     String id, {
     required String role, String? password,
+    String? currentPassword,
     bool? isActive,
     String? database,
   }) async {
@@ -3927,6 +4058,9 @@ class ApiClient {
     }
     if (password != null && password.isNotEmpty) {
       body['password'] = password;
+      if (currentPassword != null && currentPassword.isNotEmpty) {
+        body['current_password'] = currentPassword;
+      }
     }
     if (isActive != null) {
       body['is_active'] = isActive;
@@ -4029,6 +4163,11 @@ class ApiClient {
   /// to the Get functions only the client knows ([get], by selector, such as
   /// `ScriptParameter`), so the server evaluates what the client cannot with
   /// the solution's custom functions in one request.
+  ///
+  /// [occurrence] is the occurrence (id or name) the record is seen from, a
+  /// layout's; [portalRow] the active portal row on it (`occurrence` and
+  /// `record_id`), whose record a reference to the portal's occurrence then
+  /// reads, as FileMaker's scripts do while a portal row is active (#237).
   Future<List<EvaluationModel>> evaluateExpressions(
     String table, {
     required List<String> expressions,
@@ -4037,6 +4176,8 @@ class ApiClient {
     Map<String, String>? variables,
     Map<String, Object?>? get,
     Map<String, Object?>? values,
+    String? occurrence,
+    Map<String, String>? portalRow,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/data/$table/evaluate'),
@@ -4048,6 +4189,8 @@ class ApiClient {
         if (variables != null && variables.isNotEmpty) 'variables': variables,
         if (get != null && get.isNotEmpty) 'get': get,
         if (values != null && values.isNotEmpty) 'values': values,
+        if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
+        if (portalRow != null) 'portal_row': portalRow,
       }),
     );
     _checkResponse(response);
@@ -4064,21 +4207,35 @@ class ApiClient {
   /// [table] seen from the occurrence [occurrence] (a layout's, by id or
   /// name): what a list whose layout hides objects by a calculation asks,
   /// in one request. A record not there any more has no answers.
+  ///
+  /// [self] gives, for the expression at the same index, the field Self
+  /// reads: the one a layout object shows, whose conditions FileMaker
+  /// evaluates with Self as the object's value. Null leaves Self unknown.
+  ///
+  /// [context] is, for the rows of a portal, the layout's record they are
+  /// evaluated in. On a client of an occurrence ([forOccurrence]) the
+  /// records are that occurrence's: another solution's are read there, as
+  /// the account this session holds there, and are only evaluated with a
+  /// context.
   Future<Map<String, List<EvaluationModel>?>> evaluateForRecords(
     String table, {
     required List<String> expressions,
     required List<String> recordIds,
     String? occurrence,
     String resultType = 'Text',
+    List<ConditionSelf?>? self,
+    EvaluationContext? context,
   }) async {
     final response = await _httpClient.post(
-      Uri.parse('$baseUrl/api/v1/data/$table/evaluate'),
+      Uri.parse('${_records(table)}/evaluate'),
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'expressions': expressions,
         'record_ids': recordIds,
         if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
         'result_type': resultType,
+        if (self != null && self.any((s) => s != null)) 'self': [for (final s in self) s?.toJson()],
+        if (context != null) 'context': {'occurrence': context.occurrence, 'record_id': context.recordId},
       }),
     );
     _checkResponse(response);
@@ -4513,14 +4670,26 @@ class ApiClient {
   /// that report is exactly what the caller needs in order to act. Only a
   /// request that never reached a verdict — no such transfer, no
   /// authorization — throws.
+  ///
+  /// [destinationFoundSet] is the found set of the destination table, in its
+  /// order, as the window running an Import Records step holds it (#191);
+  /// [returnRecordIds] asks for the records written.
   Future<TransferRunReport> runTransfer(
     String idOrName, {
     String? peerToken,
     String? database,
+    List<String>? destinationFoundSet,
+    bool returnRecordIds = false,
   }) async {
     final body = <String, dynamic>{};
     if (peerToken != null && peerToken.isNotEmpty) {
       body['peer_token'] = peerToken;
+    }
+    if (destinationFoundSet != null) {
+      body['destination_found_set'] = destinationFoundSet;
+    }
+    if (returnRecordIds) {
+      body['return_record_ids'] = true;
     }
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/transfers/${Uri.encodeComponent(idOrName)}/run'),
@@ -4535,6 +4704,60 @@ class ApiClient {
     }
     _checkResponse(response);
     throw ApiException.fromResponse(response);
+  }
+
+  /// The migrated Import Records steps that wait for a transfer (#191).
+  Future<List<ImportStepModel>> listImportSteps() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/transfers/import-steps'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((body['steps'] as List<dynamic>?) ?? const [])
+        .map((item) => ImportStepModel.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Which table of [sourceDatabase] (empty: this solution) each step read.
+  /// Another solution is read only with [peerToken], a session of its own.
+  Future<ImportStepsInferResult> inferImportSteps({
+    required String sourceDatabase,
+    required List<String> stepIds,
+    String? peerToken,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/transfers/import-steps/infer'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'source_database': sourceDatabase,
+        'step_ids': stepIds,
+        if (peerToken != null && peerToken.isNotEmpty) 'peer_token': peerToken,
+      }),
+    );
+    _checkResponse(response);
+    return ImportStepsInferResult.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Creates the transfer of each confirmed step and names it in the step.
+  /// [peerTokens] sign in to the other solutions, by database name.
+  Future<List<ImportStepOutcome>> confirmImportSteps(
+    List<ImportStepChoice> items, {
+    Map<String, String> peerTokens = const {},
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/transfers/import-steps/confirm'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'items': items.map((item) => item.toJson()).toList(),
+        if (peerTokens.isNotEmpty) 'peer_tokens': peerTokens,
+      }),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((body['steps'] as List<dynamic>?) ?? const [])
+        .map((item) => ImportStepOutcome.fromJson(item as Map<String, dynamic>))
+        .toList();
   }
 
   // ==========================================

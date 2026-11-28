@@ -906,6 +906,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 
 	// 6. Parse Accounts
 	accountsSection := sectionBetween(rawHTML, `name="valAccountsSectionAnchor_"`, `name="valPrivilegeSetsSectionAnchor_"`)
+	setsByRole := map[string][]string{}
 	if accountsSection != "" {
 		for _, tr := range reHTMLTableRow.FindAllStringSubmatch(accountsSection, -1) {
 			if !strings.Contains(tr[1], "AccountAnchor_") {
@@ -924,16 +925,24 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 					"privilegeSet": privSet,
 				},
 			}
-			acc, items := convertAccountNode(node)
+			// The report does not show what a privilege set grants, so no set
+			// of the user's is taken for a full-access one.
+			acc, items := convertAccountNode(node, nil)
 			for _, it := range items {
 				addReportItem(report, it)
 			}
 			if acc != nil {
 				bundle.Users = append(bundle.Users, *acc)
+				setsByRole[acc.Role] = appendUnique(setsByRole[acc.Role], privSet)
 			}
 		}
 	}
 	report.Counts.Accounts = len(bundle.Users)
+	// The extended privileges of the privilege sets are not read from a
+	// Database Design Report yet, so fmrest is not carried over from one.
+	for _, it := range fmrestUnknownItems(setsByRole) {
+		addReportItem(report, it)
+	}
 
 	// 7. Parse optional FMPXMLRESULT data files and/or binary .fmp12 records
 	tableRows := make(map[string][]map[string]interface{})

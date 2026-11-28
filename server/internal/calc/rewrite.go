@@ -50,10 +50,6 @@ func rewrite(expr *Expr, rename func(table, field string) (string, bool)) (out s
 		ends[t.pos] = t.end
 	}
 
-	type edit struct {
-		from, to int
-		text     string
-	}
 	var edits []edit
 	seen := map[int]bool{}
 	expr.walkOwn(func(n node) {
@@ -79,8 +75,17 @@ func rewrite(expr *Expr, rename func(table, field string) (string, bool)) (out s
 			}
 		}
 	}
-	sort.Slice(edits, func(i, j int) bool { return edits[i].from < edits[j].from })
+	return applyEdits(src, edits), unresolved, nil
+}
 
+// edit replaces the runes of a formula from from to to with text.
+type edit struct {
+	from, to int
+	text     string
+}
+
+func applyEdits(src string, edits []edit) string {
+	sort.Slice(edits, func(i, j int) bool { return edits[i].from < edits[j].from })
 	runes := []rune(src)
 	var b strings.Builder
 	at := 0
@@ -90,7 +95,41 @@ func rewrite(expr *Expr, rename func(table, field string) (string, bool)) (out s
 		at = e.to
 	}
 	b.WriteString(string(runes[at:]))
-	return b.String(), unresolved, nil
+	return b.String()
+}
+
+// ReplaceSelf returns the formula with each Self, the value of the field or
+// object the formula belongs to, written as with, such as
+// "${Invoices}::Amount". Everything else stays exactly as written; a Self
+// inside quotes or a comment is text, and stays.
+//
+// It is how a condition FileMaker evaluates on a layout object, whose Self is
+// the object's field, is made to read that field where nothing answers Self.
+func ReplaceSelf(src string, opts Options, with string) (string, error) {
+	expr, err := ParseWith(src, opts)
+	if err != nil {
+		return "", err
+	}
+	tokens, err := lex(src, expr.known)
+	if err != nil {
+		return "", err
+	}
+	self := make(map[int]int, len(tokens))
+	for _, t := range tokens {
+		if t.isKeyword("self") {
+			self[t.pos] = t.end
+		}
+	}
+	var edits []edit
+	expr.walkOwn(func(n node) {
+		if g, ok := n.(getNode); ok && g.selector == "SELF" {
+			if end, ok := self[g.at]; ok {
+				edits = append(edits, edit{g.at, end, with})
+				delete(self, g.at)
+			}
+		}
+	})
+	return applyEdits(src, edits), nil
 }
 
 // QuoteName writes a field or occurrence name so that a formula reads it back
@@ -107,6 +146,17 @@ func QuoteName(name string) string {
 		return name
 	}
 	return "${" + name + "}"
+}
+
+// QuoteQualifiedName writes Occurrence::Field so that a formula reads it back
+// as that field of that occurrence. A quoted field needs its occurrence
+// quoted too: only ${Occurrence}:: is read as one before a ${Field}.
+func QuoteQualifiedName(occurrence, field string) string {
+	f := QuoteName(field)
+	if o := QuoteName(occurrence); o == occurrence && f == field {
+		return o + "::" + f
+	}
+	return "${" + occurrence + "}::" + f
 }
 
 func isReservedWord(name string) bool {

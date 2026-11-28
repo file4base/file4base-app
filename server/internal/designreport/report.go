@@ -328,6 +328,7 @@ type RolePrivilege struct {
 	Role       string `json:"role" xml:"role,attr"`
 	BulkExport bool   `json:"bulk_export" xml:"bulk_export,attr"`
 	BulkImport bool   `json:"bulk_import" xml:"bulk_import,attr"`
+	FMRest     bool   `json:"fmrest" xml:"fmrest,attr"`
 }
 
 // Transfer is a named record transfer between two solutions (#96): what it
@@ -353,6 +354,11 @@ type Transfer struct {
 	// FoundSet says whether the transfer sends a found set rather than the
 	// whole table.
 	FoundSet bool `json:"found_set" xml:"found_set,attr"`
+
+	// MatchByName says the mappings are paired again by name at each run,
+	// as FileMaker's matching names: each source field is the one the names
+	// paired when the transfer was saved.
+	MatchByName bool `json:"match_by_name,omitempty" xml:"match_by_name,attr,omitempty"`
 
 	Mappings []TransferMapping `json:"mappings" xml:"mappings>mapping"`
 }

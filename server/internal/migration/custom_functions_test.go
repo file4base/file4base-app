@@ -99,7 +99,7 @@ func columnByDisplayName(t *testing.T, table schema.BundleTable, name string) sc
 // Custom functions are imported, translated like calculations, before the
 // calculations that call them, which therefore import as calculations; one
 // that cannot be read is reported with the one that calls it, and the
-// calculations calling either, or ExecuteSQL, say so.
+// calculations calling either say so; one running ExecuteSQL is unstored.
 func TestCustomFunctionsMigrate(t *testing.T) {
 	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: customFunctionsDesign("", ""), SourceLocale: "fr-FR"})
 	require.NoError(t, err)
@@ -155,7 +155,6 @@ func TestCustomFunctionsMigrate(t *testing.T) {
 	require.Contains(t, *columnByDisplayName(t, table, "Net").CalculationFormula, `prix_ht * ( 1 - ${remise} ) + Remise`)
 	for name, why := range map[string]string{
 		"Double":  "calls the custom function AppelleCassé, which could not be migrated",
-		"Requête": "calls ExecuteSQL: ExecuteSQL is not supported",
 		"Nettoyé": "calls the custom function Trim, which could not be migrated",
 	} {
 		col := columnByDisplayName(t, table, name)
@@ -166,6 +165,16 @@ func TestCustomFunctionsMigrate(t *testing.T) {
 		}
 		require.True(t, found, "%s: %q", name, why)
 	}
+	// ExecuteSQL is computed when shown, as the answer of a query changes
+	// without the record changing.
+	query := columnByDisplayName(t, table, "Requête")
+	require.Equal(t, "CALCULATION", query.FieldType)
+	require.Contains(t, *query.CalculationFormula, `"stored":false`)
+	found := false
+	for _, it := range itemsFor(report, "field", table.Name+".Requête") {
+		found = found || strings.Contains(it.Detail, "runs a query with ExecuteSQL")
+	}
+	require.True(t, found, "Requête is reported as unstored")
 	for _, it := range reportItems(report) {
 		require.NotContains(t, it.Detail, "there is no function called", it.SourceName)
 	}
@@ -233,13 +242,13 @@ func TestCustomFunctionsMigrateFromHTMLDDR(t *testing.T) {
 func TestCustomFunctionsApplyAndCompute(t *testing.T) {
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 	}
 	t.Cleanup(func() { _ = driver.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 	}
 
 	stamp := time.Now().UnixNano()

@@ -98,6 +98,17 @@ func (o QueryOptions) SortOrder() []SortField {
 // against the table's registered fields so a caller cannot name a column that
 // is not there (or inject one).
 func orderByClause(dialect dbal.Dialect, fields fieldSet, tableName string, order []SortField) (string, error) {
+	return orderByColumns(dialect, fields, tableName, order, nil)
+}
+
+// orderByColumns is orderByClause in a statement that reads some fields
+// other than by their own column: column says how it reads a field, and is
+// nil when every field is read by its column. A find on an unstored
+// calculation reads its values bound for the statement (unstored_find.go).
+func orderByColumns(dialect dbal.Dialect, fields fieldSet, tableName string, order []SortField, column func(string) string) (string, error) {
+	if column == nil {
+		column = dialect.QuoteIdentifier
+	}
 	if len(order) == 0 {
 		return "", nil
 	}
@@ -116,7 +127,7 @@ func orderByClause(dialect dbal.Dialect, fields fieldSet, tableName string, orde
 		if level.Descending {
 			dir = "DESC"
 		}
-		parts = append(parts, fmt.Sprintf("%s %s", dialect.QuoteIdentifier(level.Field), dir))
+		parts = append(parts, fmt.Sprintf("%s %s", column(level.Field), dir))
 	}
 	if len(parts) == 0 {
 		return "", nil
@@ -292,10 +303,30 @@ func (s *Service) insertRow(ctx context.Context, tableName string, record map[st
 	if err != nil {
 		return nil, err
 	}
+	// The record's ID is taken first, so that a create that fails from here
+	// on has spent it, as in FileMaker, and the formulas computed for the
+	// record know it (Get ( RecordID )).
+	recordIDs, err := ReserveRecordIDs(ctx, s.driver, tableName, 1)
+	if err != nil {
+		return nil, err
+	}
 	if err := normalizeRepetitionKeys(fields, tableName, record); err != nil {
 		return nil, err
 	}
 	normalizeTemporalValues(fields, record)
+	id, given := record["id"], true
+	if id == nil || id == "" {
+		id, given = uuid.NewString(), false
+	}
+	db := s.driver.DB()
+	ctx, scope := withIdentityScope(ctx)
+	if len(recordIDs) == 1 {
+		scope.put(db, tableName, fmt.Sprint(id), Identity{RecordID: recordIDs[0]})
+		if !given {
+			// What the auto-enter options compute sees no id yet.
+			scope.put(db, tableName, "", Identity{RecordID: recordIDs[0]})
+		}
+	}
 
 	// The auto-enter options (Fields dialog) enter what the caller did not
 	// give: a value given wins.
@@ -305,10 +336,10 @@ func (s *Service) insertRow(ctx context.Context, tableName string, record map[st
 	if err := decodeContainerValues(fields, tableName, record); err != nil {
 		return nil, err
 	}
-
-	// Ensure id exists
-	if _, ok := record["id"]; !ok || record["id"] == nil || record["id"] == "" {
-		record["id"] = uuid.NewString()
+	if v := record["id"]; v == nil || v == "" {
+		record["id"] = id
+	} else if len(recordIDs) == 1 && fmt.Sprint(v) != fmt.Sprint(id) {
+		scope.put(db, tableName, fmt.Sprint(v), Identity{RecordID: recordIDs[0]}) // an id an option entered
 	}
 
 	// Calculation fields are filled from their formulas (#30). They are
@@ -348,18 +379,28 @@ func (s *Service) insertRow(ctx context.Context, tableName string, record map[st
 		values = append(values, val)
 		idx++
 	}
+	overriding := ""
+	if len(recordIDs) == 1 {
+		columns = append(columns, dialect.QuoteIdentifier(dbal.CreationOrderColumn))
+		placeholders = append(placeholders, dialect.Placeholder(idx))
+		values = append(values, recordIDs[0])
+		overriding = dbal.OverridingSystemValue(dialect.Engine())
+	}
 
 	sqlQuery := fmt.Sprintf(
-		"INSERT INTO %s (%s) VALUES (%s)",
+		"INSERT INTO %s (%s)%s VALUES (%s)",
 		dialect.QuoteIdentifier(tableName),
 		strings.Join(columns, ", "),
+		overriding,
 		strings.Join(placeholders, ", "),
 	)
 
-	db := s.driver.DB()
 	if _, err := db.ExecContext(ctx, sqlQuery, values...); err != nil {
 		if f, ok := validation.IsUniqueIndexViolation(err, tableName, checker.Fields); ok {
 			return nil, validation.UniqueViolation(tableName, f)
+		}
+		if dbal.IsRecordIDConflict(err) {
+			recoverRecordIDs(ctx, s.driver, tableName) // the next create gets a free ID
 		}
 		return nil, fmt.Errorf("failed inserting into %s: %w", tableName, err)
 	}
@@ -406,6 +447,19 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 }
 
 func (s *Service) updateRow(ctx context.Context, tableName string, id string, updates map[string]interface{}, mode autoMode) (map[string]interface{}, error) {
+	return s.updateRowIf(ctx, tableName, id, updates, mode, nil)
+}
+
+// beforeUpdate is for tests only: nil outside them, and when a test sets it
+// (SetBeforeUpdate) it runs just before updateRowIf writes, as another write
+// would.
+var beforeUpdate func()
+
+// updateRowIf updates a record, provided it has the modification count
+// modID when modID is not nil (see UpdateRowIfModID).
+func (s *Service) updateRowIf(
+	ctx context.Context, tableName string, id string, updates map[string]interface{}, mode autoMode, modID *int64,
+) (map[string]interface{}, error) {
 	fields, err := s.tableFields(ctx, tableName)
 	if err != nil {
 		return nil, err
@@ -426,14 +480,27 @@ func (s *Service) updateRow(ctx context.Context, tableName string, id string, up
 	if err := s.dropSummaryValues(ctx, tableName, updates); err != nil {
 		return nil, err
 	}
+	if modID != nil {
+		if err := s.checkModID(ctx, tableName, id, *modID); err != nil {
+			return nil, err
+		}
+	}
 	if len(updates) == 0 {
 		return s.GetRow(ctx, tableName, id)
+	}
+	// Whether the write modifies the record, which counts it (see
+	// record_identity.go), is decided on what the caller gives, and then on
+	// what the options enter as a consequence.
+	countsModification, err := s.countsModification(ctx, tableName, fields, updates)
+	if err != nil {
+		return nil, err
 	}
 	// Modification stamps, and the calculated and looked-up values the
 	// change reaches (see autoenter.go).
 	if err := s.applyAutoEnter(ctx, tableName, fields, mode, updates, id); err != nil {
 		return nil, err
 	}
+	countsModification.alsoModifiedBy(fields, updates)
 	if err := decodeContainerValues(fields, tableName, updates); err != nil {
 		return nil, err
 	}
@@ -473,17 +540,28 @@ func (s *Service) updateRow(ctx context.Context, tableName string, id string, up
 		values = append(values, val)
 		idx++
 	}
+	if count := countsModification.countSQL(dialect); count != "" {
+		setClauses = append(setClauses, count)
+	}
+	modCount := dialect.QuoteIdentifier(dbal.ModCountColumn)
 	values = append(values, id)
+	where := fmt.Sprintf("%s = %s", dialect.QuoteIdentifier("id"), dialect.Placeholder(idx))
+	if modID != nil && countsModification.counted {
+		values = append(values, *modID)
+		where += fmt.Sprintf(" AND %s = %s", modCount, dialect.Placeholder(idx+1))
+	}
 
 	sqlQuery := fmt.Sprintf(
-		"UPDATE %s SET %s WHERE %s = %s",
+		"UPDATE %s SET %s WHERE %s",
 		dialect.QuoteIdentifier(tableName),
 		strings.Join(setClauses, ", "),
-		dialect.QuoteIdentifier("id"),
-		dialect.Placeholder(idx),
+		where,
 	)
 
 	db := s.driver.DB()
+	if beforeUpdate != nil {
+		beforeUpdate()
+	}
 	res, err := db.ExecContext(ctx, sqlQuery, values...)
 	if err != nil {
 		if f, ok := validation.IsUniqueIndexViolation(err, tableName, checker.Fields); ok {
@@ -494,7 +572,19 @@ func (s *Service) updateRow(ctx context.Context, tableName string, id string, up
 
 	affected, _ := res.RowsAffected()
 	if affected == 0 {
+		if modID != nil {
+			// Modified since it was checked, or deleted.
+			if err := s.checkModID(ctx, tableName, id, *modID); err != nil {
+				return nil, err
+			}
+			return nil, ErrModIDMismatch
+		}
 		return nil, fmt.Errorf("record not found to update with id: %s", id)
+	}
+	// What a formula of the write read of the record's identity is the
+	// count before it: the record returned is read again.
+	if scope := identityScopeOf(ctx); scope != nil {
+		scope.drop(db, tableName, id)
 	}
 
 	// A field given a value now holds exactly what it says: whatever text a
@@ -553,44 +643,7 @@ func (s *Service) AttachContainerMeta(ctx context.Context, tableName string, row
 
 // ListRows retrieves rows with optional sorting and pagination
 func (s *Service) ListRows(ctx context.Context, tableName string, opts QueryOptions) ([]map[string]interface{}, error) {
-	fields, err := s.tableFields(ctx, tableName)
-	if err != nil {
-		return nil, err
-	}
-	if opts.Offset < 0 {
-		opts.Offset = 0
-	}
-	dialect := s.driver.Dialect()
-	orderClause, err := s.orderBy(ctx, fields, tableName, opts.SortOrder())
-	if err != nil {
-		return nil, err
-	}
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
-	} else if limit > MaxPageSize {
-		// Clamp, do not fall back to the default: a caller asking for more
-		// than the maximum must still get a full page and keep paging.
-		limit = MaxPageSize
-	}
-
-	sqlQuery := fmt.Sprintf(
-		"SELECT %s FROM %s %s LIMIT %d OFFSET %d",
-		selectList(dialect, fields),
-		dialect.QuoteIdentifier(tableName),
-		orderClause,
-		limit,
-		opts.Offset,
-	)
-
-	db := s.driver.DB()
-	rows, err := db.QueryContext(ctx, sqlQuery)
-	if err != nil {
-		return nil, fmt.Errorf("query failed for table %s: %w", tableName, err)
-	}
-	defer rows.Close()
-
-	return s.readRows(ctx, tableName, rows, fields)
+	return s.findRows(ctx, tableName, nil, opts, 100)
 }
 
 // ParseFile4BaseFindCriteria translates File4Base operators (*, ..., =, ==, !, !=, <, >, <=, >=, //, @) to SQL AST
@@ -674,13 +727,17 @@ func ParseFile4BaseFindCriteria(fieldName, rawCriteria string) FindCriterion {
 // including request, minus the records that match any omitting request. With
 // only omitting requests the starting point is every record, so a lone
 // "omit city = New York" finds everyone who does not live there.
+//
+// A record an omitting request does not match stays, even when its field is
+// empty and the comparison is unknown (NULL) to the engine: "omit city = New
+// York" keeps the records with no city, as in FileMaker.
 func buildFindWhere(include, omit []string) string {
 	var parts []string
 	if len(include) > 0 {
 		parts = append(parts, "("+strings.Join(include, " OR ")+")")
 	}
 	if len(omit) > 0 {
-		parts = append(parts, "NOT ("+strings.Join(omit, " OR ")+")")
+		parts = append(parts, "("+strings.Join(omit, " OR ")+") IS NOT TRUE")
 	}
 	if len(parts) == 0 {
 		return ""
@@ -809,6 +866,12 @@ func textCriterionClause(
 type findClauses struct {
 	with, where string
 	values      []interface{}
+	// join is what the table searched is joined with: the values of its
+	// unstored calculations computed for the statement (unstored_find.go),
+	// empty when it reads none. column says how the statement reads a field
+	// of the table searched: by its column, or by the value bound for it.
+	join   string
+	column func(field string) string
 }
 
 // buildFindClauses turns the find requests into the WHERE clause that defines
@@ -825,17 +888,44 @@ func buildFindClauses(
 	dialect dbal.Dialect, fields fieldSet, tableName string, requests []FindRequest,
 	related map[string]relatedFindTarget,
 ) (findClauses, error) {
+	return buildBoundFindClauses(dialect, fields, tableName, requests, related, nil)
+}
+
+// buildBoundFindClauses is buildFindClauses for a statement that reads the
+// values bound of the unstored calculations of the table searched, nil when
+// it reads none: they are its first common table expression, and its first
+// value.
+func buildBoundFindClauses(
+	dialect dbal.Dialect, fields fieldSet, tableName string, requests []FindRequest,
+	related map[string]relatedFindTarget, bound *unstoredBinding,
+) (findClauses, error) {
 	// Requests that match are unioned; requests marked Omit subtract from what
 	// they found. (OR-ing an omitting request in, as this used to do, made
 	// "2011 except March" mean "2011 OR not March", which is almost every
 	// record.)
 	var includeClauses, omitClauses []string
-	var out findClauses
+	out := findClauses{column: dialect.QuoteIdentifier}
 	idx := 1
+	if bound != nil {
+		out.column, out.join = bound.column, bound.join
+		out.values = append(out.values, bound.value)
+		idx++
+	}
 
 	// What other solutions found comes first, bound once however many
-	// requests read it.
+	// requests read it, in each statement built.
+	for _, target := range related {
+		if target.External != nil {
+			clear(target.External.sets)
+		}
+	}
 	out.with = externalKeySets(dialect, fields, requests, related, &idx, &out.values)
+	switch {
+	case bound != nil && out.with == "":
+		out.with = "WITH " + bound.cte + " "
+	case bound != nil:
+		out.with = "WITH " + bound.cte + ", " + strings.TrimPrefix(out.with, "WITH ")
+	}
 
 	// The included requests are written before the omitted ones, whatever
 	// their order, and their values are taken in that order: a placeholder
@@ -864,7 +954,7 @@ func buildFindClauses(
 				if err := checkField(fields, tableName, crit.FieldName); err != nil {
 					return findClauses{}, err
 				}
-				clause, err := criterionClause(dialect, dialect.QuoteIdentifier(crit.FieldName),
+				clause, err := criterionClause(dialect, out.column(crit.FieldName),
 					fields[crit.FieldName], crit, &idx, &out.values)
 				if err != nil {
 					return findClauses{}, err
@@ -913,7 +1003,15 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	if len(requests) == 0 {
 		return s.ListRows(ctx, tableName, opts)
 	}
+	return s.findRows(ctx, tableName, requests, opts, 500)
+}
 
+// findRows reads a page of the records the requests find, every record
+// without any, in the order opts sorts them. A find or a sort on an
+// unstored calculation reads the values computed for it (unstored_find.go).
+func (s *Service) findRows(
+	ctx context.Context, tableName string, requests []FindRequest, opts QueryOptions, defaultLimit int,
+) ([]map[string]interface{}, error) {
 	fields, err := s.tableFields(ctx, tableName)
 	if err != nil {
 		return nil, err
@@ -921,37 +1019,37 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	if opts.Offset < 0 {
 		opts.Offset = 0
 	}
-
-	dialect := s.driver.Dialect()
-	related, err := s.resolveFindRelations(ctx, tableName, requests)
+	order := opts.SortOrder()
+	for _, level := range order {
+		if err := checkField(fields, tableName, level.Field); err != nil {
+			return nil, err
+		}
+	}
+	find, err := s.findClauses(ctx, tableName, fields, requests, sortFields(order), "sort")
 	if err != nil {
 		return nil, err
 	}
-	if err := s.refuseUnstoredCriteria(ctx, tableName, requests, related); err != nil {
-		return nil, err
-	}
-	find, err := buildFindClauses(dialect, fields, tableName, requests, related)
-	if err != nil {
-		return nil, err
-	}
-
-	orderClause, err := s.orderBy(ctx, fields, tableName, opts.SortOrder())
+	orderClause, err := s.orderBy(ctx, fields, tableName, order, find.column)
 	if err != nil {
 		return nil, err
 	}
 
 	limit := opts.Limit
 	if limit <= 0 {
-		limit = 500
+		limit = defaultLimit
 	} else if limit > MaxPageSize {
+		// Clamp, do not fall back to the default: a caller asking for more
+		// than the maximum must still get a full page and keep paging.
 		limit = MaxPageSize
 	}
 
+	dialect := s.driver.Dialect()
 	sqlQuery := fmt.Sprintf(
-		"%sSELECT %s FROM %s %s %s LIMIT %d OFFSET %d",
+		"%sSELECT %s FROM %s%s %s %s LIMIT %d OFFSET %d",
 		find.with,
 		selectList(dialect, fields),
 		dialect.QuoteIdentifier(tableName),
+		find.join,
 		find.where,
 		orderClause,
 		limit,
@@ -961,6 +1059,9 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	db := s.driver.DB()
 	rows, err := db.QueryContext(ctx, sqlQuery, find.values...)
 	if err != nil {
+		if len(requests) == 0 {
+			return nil, fmt.Errorf("query failed for table %s: %w", tableName, err)
+		}
 		return nil, fmt.Errorf("find query failed: %w", err)
 	}
 	defer rows.Close()

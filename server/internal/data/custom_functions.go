@@ -123,3 +123,13 @@ func loadLibrary(ctx context.Context, driver dbal.DatabaseDriver) (*calc.Library
 	}
 	return lib, nil
 }
+
+// ForgetPool drops what is kept for a connection pool that is closed for
+// good (a dbal.TxDriver's): its custom function library and what is known of
+// its tables' creation order columns.
+func ForgetPool(db *sql.DB) {
+	libraries.mu.Lock()
+	delete(libraries.byDB, db)
+	libraries.mu.Unlock()
+	ForgetCreationOrder(db)
+}

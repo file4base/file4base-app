@@ -117,6 +117,9 @@ type MigrationRequest struct {
 	TargetDatabase  string            `json:"target_database,omitempty"`
 	OwnerUser       string            `json:"owner_user,omitempty"`
 	OwnerPassword   string            `json:"owner_password,omitempty"`
+	// SetupCode lets the operator migrate into a new database reserved for
+	// bootstrapping a server administrator (#236). Never stored.
+	SetupCode string `json:"setup_code,omitempty"`
 
 	// NativeFileName is the filename of the attached .fmp12 copy when known
 	// (set by migration-preflight and multipart uploads for diagnostics).
@@ -168,6 +171,42 @@ type ConvertedSolution struct {
 	Bundle    *schema.SolutionBundle
 	TableRows map[string][]map[string]interface{}
 	Report    *ConversionReport
+	// Grants are the capabilities the file gave the privilege sets its
+	// accounts map to, to grant to those roles once the design is in. They
+	// only ever add to what the target database holds.
+	Grants []CapabilityGrant
+}
+
+// CapabilityGrant is one capability to grant to one account role.
+type CapabilityGrant struct {
+	Role       string
+	Capability string
+	// Sets are the privilege sets that carry it in the file.
+	Sets []string
+}
+
+// WithholdGrant records that a grant was not made, for the reason given:
+// the role's report items about the grant give way to one that says so, so
+// that the report never says both.
+func (r *ConversionReport) WithholdGrant(g CapabilityGrant, reason string) {
+	keep := func(items []ReportItem, count *int) []ReportItem {
+		out := items[:0]
+		for _, it := range items {
+			if it.Domain == "privilege" && it.TargetName == g.Role {
+				*count--
+				continue
+			}
+			out = append(out, it)
+		}
+		return out
+	}
+	r.Translated = keep(r.Translated, &r.Counts.TranslatedCount)
+	r.ManualActionRequired = keep(r.ManualActionRequired, &r.Counts.ManualActionCount)
+	addReportItem(r, ReportItem{
+		Category: CategoryManualActionRequired, Domain: "privilege", SourceName: strings.Join(g.Sets, ", "), TargetName: g.Role,
+		Detail: fmt.Sprintf("Privilege set(s) %s carry %s (Access via FileMaker Data API), which was not granted to the role %q because %s; "+
+			"grant it in Manage Security if all the accounts of the role may use the Data API", quoteList(g.Sets), g.Capability, g.Role, reason),
+	})
 }
 
 // IsFMP12Binary returns true when filename has a .fmp12/.fp7 extension or data
@@ -851,15 +890,34 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// 5. Extract Layouts (their script triggers are kept, disabled)
 	layoutNodes := catalogDefinitions(root, []string{"LayoutCatalog", "layouts"}, "Layout", "layout")
 	layoutCtx := newLayoutObjectContext(root, bundle, binding, req.NativeDateOrder)
+	// layoutTables maps a layout's FileMaker id to the table of this
+	// solution it shows, for the Import Records steps saved without their
+	// target (see layoutTargetTable).
+	layoutTables := map[string]string{}
+	layoutMenu := newMenuBuilder(schema.CatalogLayouts, schema.MenuLayout)
+	layoutIDBySource := map[string]string{}
 	for _, ln := range layoutNodes {
 		lay, items := convertLayoutNode(ln, bundle.TableOccurrences, occIDByName, occTableByName, deletedOccurrences, layoutCtx)
 		for _, it := range items {
 			addReportItem(report, it)
 		}
+		layoutID, separatorOcc := "", ""
 		if lay != nil {
 			bundle.Layouts = append(bundle.Layouts, *lay)
+			layoutID = lay.ID
+			if id := firstAttr(ln, "id", "ID"); id != "" {
+				layoutIDBySource[id] = lay.ID
+				if table := layoutTargetTable(ln, lay, bundle.TableOccurrences, occTableByName); table != "" {
+					layoutTables[strings.TrimSpace(id)] = table
+				}
+			}
 		}
+		if ref := findFirstChild(ln, "TableOccurrenceReference"); ref != nil {
+			separatorOcc = occIDByName[strings.ToLower(firstAttr(ref, "name", "Name"))]
+		}
+		layoutMenu.add(ln, layoutID, separatorOcc)
 	}
+	bundle.Catalog = append(bundle.Catalog, layoutMenu.entries...)
 	report.Counts.Layouts = len(bundle.Layouts)
 	report.Counts.LayoutObjects = layoutCtx.LayoutObjectCounts()
 
@@ -870,20 +928,25 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	if len(bundle.Tables) > 0 {
 		defaultContextTable = bundle.Tables[0].Name
 	}
+	scriptMenu := newMenuBuilder(schema.CatalogScripts, schema.MenuScript)
 	for _, sn := range scriptNodes {
 		// Skip <script> references inside <layout>
 		if firstAttr(sn, "where") != "" && len(sn.Children) == 0 {
 			continue
 		}
-		sc, items := convertScriptNode(sn, defaultContextTable, occTableByName)
+		sc, items := convertScriptNode(sn, defaultContextTable, occTableByName, layoutTables)
 		for _, it := range items {
 			addReportItem(report, it)
 		}
+		scriptID := ""
 		if sc != nil {
 			bundle.Scripts = append(bundle.Scripts, *sc)
 			scripts.add(firstAttr(sn, "id", "ID"), sc)
+			scriptID = sc.ID
 		}
+		scriptMenu.add(sn, scriptID, "")
 	}
+	bundle.Catalog = append(bundle.Catalog, scriptMenu.entries...)
 	report.Counts.Scripts = len(bundle.Scripts)
 	// Only now are the scripts known, which the layouts' triggers run.
 	for _, it := range bindLayoutTriggers(bundle, scripts, binding, report.SolutionName) {
@@ -934,22 +997,35 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 
 	// 7. Extract Accounts & Privilege Sets (always disabled until password reset)
 	accNodes := catalogDefinitions(root, []string{"AccountCatalog", "AccountsCatalog", "accounts"}, "Account", "account")
+	setsByRole := map[string][]string{}
+	setOfAccount := map[string]string{}
+	fullAccess := privilegeSetsFullAccess(root)
 	for _, an := range accNodes {
-		acc, items := convertAccountNode(an)
+		acc, items := convertAccountNode(an, fullAccess)
 		for _, it := range items {
 			addReportItem(report, it)
 		}
 		if acc != nil {
 			bundle.Users = append(bundle.Users, *acc)
+			setsByRole[acc.Role] = appendUnique(setsByRole[acc.Role], accountPrivilegeSet(an))
+			setOfAccount[acc.ID] = accountPrivilegeSet(an)
 		}
 	}
 	report.Counts.Accounts = len(bundle.Users)
+	for _, it := range applyLayoutAccess(bundle.Users, setOfAccount, privilegeLayoutAccess(root, layoutIDBySource)) {
+		addReportItem(report, it)
+	}
+	grants, grantItems := fmrestGrants(root, setsByRole)
+	for _, it := range grantItems {
+		addReportItem(report, it)
+	}
 
 	// 8. Parse optional FMPXMLRESULT / XML data files and any attached .fmp12
 	// binary. Both routes go through the same reader, so an attachment sent
 	// with an XML design is read rather than ignored (#91).
 	tableRows := make(map[string][]map[string]interface{})
 	designFileName := extractDeclaredFileName(root)
+	markSelfImports(bundle, designFileName)
 	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol, bundleRepetitions(bundle),
 		fmpTableMeta, fmpTableRawNames, fmpFieldMeta, designFileName, tableRows, report, fieldNamesByTable); err != nil {
 		return nil, err
@@ -963,6 +1039,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		Bundle:    bundle,
 		TableRows: tableRows,
 		Report:    report,
+		Grants:    grants,
 	}, nil
 }
 
@@ -1058,6 +1135,7 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 		}
 	}
 	items = append(items, convertFieldAutoEnter(tableSQL, rawFieldName, colName, autoEnterNode, &col)...)
+	col.DefaultValue = withStorageOptions(col.DefaultValue, readStorageOptions(storageNode, isGlobal))
 
 	// Determine calculation or summary formula if present
 	calcText, calcContext := "", ""
@@ -1096,6 +1174,10 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 			s := string(payload)
 			col.FieldType = "CALCULATION"
 			col.CalculationFormula = &s
+			if rawType == "TIME" {
+				// File4Base computes a time of day as a timestamp.
+				col.SourceType = schema.SourceTypeCalculationTime
+			}
 			return col, items
 		}
 		// Nothing to compute: a stored column, reported.
@@ -1121,6 +1203,7 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 
 	if fieldKind == "SUMMARY" || rawType == "SUMMARY" {
 		col.FieldType = mapBasicFieldType(rawType)
+		col.SourceType = schema.SummarySourceType(rawType)
 		items = append(items, ReportItem{
 			Category:   CategoryTranslated,
 			Domain:     "field",
@@ -1138,6 +1221,7 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 		col.FieldType = "DATE"
 	case "TIME":
 		col.FieldType = "TIMESTAMP"
+		col.SourceType = schema.SourceTypeTime
 		items = append(items, ReportItem{
 			Category:   CategoryTranslated,
 			Domain:     "field",
@@ -1228,7 +1312,13 @@ func convertFieldValidation(tableSQL, rawFieldName, colName string, vn *xmlNode)
 		rules.ExistingValue = true
 		kept = append(kept, "member of existing values")
 	}
-	if value, ok := nestedOption(vn, "MaxLength", "maxLength", "max_length"); ok {
+	// Save a Copy as XML writes <MaximumSize> and <Strict>, a Database
+	// Design Report MaxLength and StrictDataType.
+	value, ok := nestedOption(vn, "MaxLength", "maxLength", "max_length")
+	if !ok {
+		value, ok = nestedOption(vn, "MaximumSize")
+	}
+	if ok {
 		if length, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && length > 0 {
 			rules.MaxLengthEnabled = true
 			rules.MaxLength = &length
@@ -1245,7 +1335,11 @@ func convertFieldValidation(tableSQL, rawFieldName, colName string, vn *xmlNode)
 			kept = append(kept, fmt.Sprintf("between %q and %q", from, to))
 		}
 	}
-	if value, ok := nestedOption(vn, "StrictDataType", "strictDataType", "strictType"); ok {
+	value, ok = nestedOption(vn, "StrictDataType", "strictDataType", "strictType")
+	if !ok {
+		value, ok = nestedOption(vn, "Strict")
+	}
+	if ok {
 		if strict := strictTypeFromDDR(value); strict != "" {
 			rules.StrictTypeEnabled = true
 			rules.StrictType = strict
@@ -2291,10 +2385,73 @@ func layoutOccurrenceDetail(occName string, occurrences []schema.BundleOccurrenc
 	return fmt.Sprintf("Layout bound to table occurrence %q", occName)
 }
 
+// layoutTargetTable is the table of this solution a migrated layout shows,
+// as an Import Records step saved without its target imports into it, or ""
+// when it cannot be said before the script runs: the layout was saved without
+// its occurrence (the migration then shows the first one, which FileMaker
+// does not), its occurrence is of another file's table, or it has a trigger
+// that runs a script as the layout is entered or a record loaded, which may
+// go to another layout before the import.
+func layoutTargetTable(
+	ln *xmlNode, lay *schema.BundleLayout, occurrences []schema.BundleOccurrence, occTableByName map[string]string,
+) string {
+	occName := firstAttr(ln, "table_occurrence", "table", "tableOccurrence")
+	if occName == "" && findFirstChild(ln, "Table", "TableOccurrenceReference") == nil {
+		return ""
+	}
+	for _, st := range readLayoutTriggers(ln) {
+		if st.object != nil {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(st.event)) {
+		case "onlayoutenter", "onlayoutload", "onrecordload", "onmodeenter":
+			return ""
+		}
+	}
+	for _, o := range occurrences {
+		if o.ID == lay.TableOccurrenceID {
+			if o.External != nil {
+				return ""
+			}
+			return occTableByName[strings.ToLower(o.Name)]
+		}
+	}
+	return ""
+}
+
+// nextLayoutTable is the table of the layout a script is on once a step has
+// run, as far as it is fixed before the script runs: a Go to Layout to a
+// layout it names fixes it, found by the layout's FileMaker id, as two
+// layouts can share a name. A branch, a loop, a pause (the user may go to
+// another layout), another window, another script, or a step File4Base does
+// not recognise makes it unknown again, since which way it goes is decided
+// only as the script runs.
+func nextLayoutTable(current, canonical string, params map[string]interface{}, layoutTables map[string]string) string {
+	switch canonical {
+	case "Go to Layout":
+		id, _ := params["filemaker_layout_id"].(string)
+		if params["layout_destination"] != "selected" || strings.TrimSpace(id) == "" {
+			return ""
+		}
+		return layoutTables[strings.TrimSpace(id)]
+	case "", "If", "Else If", "Else", "End If", "Loop", "Exit Loop If", "End Loop",
+		"Perform Script", "Pause/Resume Script", "Go to Related Record",
+		"New Window", "Select Window", "Close Window":
+		return ""
+	}
+	return current
+}
+
 // occTableByName maps a lower-cased table occurrence name to the File4Base
 // table it shows, so a step naming an occurrence can say which table it
 // writes.
-func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName map[string]string) (*schema.BundleScript, []ReportItem) {
+//
+// layoutTables maps a layout's FileMaker id to the table of this solution it
+// shows: an Import Records step saved without its target occurrence imports
+// into the table of the layout a Go to Layout just before it fixes.
+func convertScriptNode(
+	sn *xmlNode, defaultContextTable string, occTableByName, layoutTables map[string]string,
+) (*schema.BundleScript, []ReportItem) {
 	var items []ReportItem
 	name := firstAttr(sn, "name", "Name")
 	if name == "" || nativeFolderMarker(sn) || nativeSeparatorMarker(sn) {
@@ -2307,6 +2464,9 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName m
 
 	stepNodes := findDirectOrCatalogChildren(sn, "StepList", "steps", "Step", "step")
 	steps := make([]schema.BundleStep, 0, len(stepNodes))
+	// layoutTable is the table of the layout the script is known to be on,
+	// "" when that is not known before it runs.
+	layoutTable := ""
 
 	for idx, stNode := range stepNodes {
 		rawStepName := strings.TrimSpace(firstAttr(stNode, "name", "type", "Name"))
@@ -2363,12 +2523,21 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName m
 			})
 		}
 
+		if canonical == "Import Records" && enabled {
+			if occ, _ := params["target_occurrence"].(string); occ == "" && layoutTable != "" {
+				params["current_layout_table"] = layoutTable
+			}
+		}
+		if enabled {
+			layoutTable = nextLayoutTable(layoutTable, canonical, params, layoutTables)
+		}
 		if isSupported {
 			for _, it := range stepOptionItems(canonical, params, occTableByName) {
 				it.SourceName = fmt.Sprintf("%s > %s (step %d)", name, rawStepName, idx+1)
 				it.TargetName = name
 				items = append(items, it)
 			}
+			delete(params, "current_layout_table")
 			if _, done := params["migration_note"]; !done && needsTransferDefinition(canonical) {
 				items = append(items, ReportItem{
 					Category:   CategoryManualActionRequired,
@@ -2380,6 +2549,14 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName m
 						"mapping this step referred to were not converted into one, so the step stops "+
 						"the script until a transfer is created and named in it", canonical),
 				})
+			}
+			// An Import Records step that reads another FileMaker file
+			// waits, disabled, for the transfer the migration review
+			// creates (#191); confirming it enables the step again only
+			// if FileMaker had it enabled.
+			if params["awaiting_transfer"] == true {
+				params["filemaker_step_enabled"] = enabled
+				enabled = false
 			}
 			steps = append(steps, schema.BundleStep{
 				ID:          uuid.NewString(),
@@ -3040,7 +3217,7 @@ func decodeNodeValue(n *xmlNode) interface{} {
 	return value
 }
 
-func convertAccountNode(an *xmlNode) (*schema.BundleAccount, []ReportItem) {
+func convertAccountNode(an *xmlNode, fullAccess map[string]bool) (*schema.BundleAccount, []ReportItem) {
 	// A Database Design Report puts the name and privilege set in attributes;
 	// Save a Copy as XML writes <Authentication><AccountName> and a
 	// <PrivilegeSetReference name=…> child instead.
@@ -3063,21 +3240,8 @@ func convertAccountNode(an *xmlNode) (*schema.BundleAccount, []ReportItem) {
 		}
 	}
 
-	privSet := strings.TrimSpace(firstAttr(an, "privilegeSet", "role", "PrivilegeSet"))
-	if privSet == "" {
-		if ref := findFirstChild(an, "PrivilegeSetReference"); ref != nil {
-			privSet = firstAttr(ref, "name")
-		}
-	}
-	role := "user"
-	switch strings.ToLower(privSet) {
-	case "[full access]", "full access", "owner":
-		role = "owner"
-	case "admin", "administrator", "[data entry only]":
-		if strings.Contains(strings.ToLower(privSet), "admin") {
-			role = "admin"
-		}
-	}
+	privSet := accountPrivilegeSet(an)
+	role, restricted := roleForPrivilegeSet(privSet, fullAccess)
 
 	items := []ReportItem{
 		{
@@ -3095,6 +3259,16 @@ func convertAccountNode(an *xmlNode) (*schema.BundleAccount, []ReportItem) {
 			Detail:     fmt.Sprintf("Assign a password and enable migrated account %q in Manage Security before sign-in", username),
 		},
 	}
+	if restricted {
+		items = append(items, ReportItem{
+			Category:   CategoryManualActionRequired,
+			Domain:     "account",
+			SourceName: username,
+			TargetName: username,
+			Detail: fmt.Sprintf("Privilege set %q is named like a full-access set but the file does not show it granting full access: "+
+				"account %q was given role %q with the set's layout privileges; give it another role in Manage Security if it should have one", privSet, username, role),
+		})
+	}
 
 	return &schema.BundleAccount{
 		ID:       uuid.NewString(),
@@ -3102,6 +3276,186 @@ func convertAccountNode(an *xmlNode) (*schema.BundleAccount, []ReportItem) {
 		Role:     role,
 		IsActive: false,
 	}, items
+}
+
+// accountPrivilegeSet is the name of the privilege set an account uses.
+func accountPrivilegeSet(an *xmlNode) string {
+	privSet := strings.TrimSpace(firstAttr(an, "privilegeSet", "role", "PrivilegeSet"))
+	if privSet == "" {
+		if ref := findFirstChild(an, "PrivilegeSetReference"); ref != nil {
+			privSet = strings.TrimSpace(firstAttr(ref, "name"))
+		}
+	}
+	return privSet
+}
+
+// roleForPrivilegeSet is the account role a FileMaker privilege set maps to.
+// FileMaker's own [Full Access] is an owner's. A set of the user's is an
+// owner's or an administrator's by its name only when the file shows it
+// granting full access (fullAccess, by lower-case name): a set named
+// "Admin" may be as restricted as any other, and is then a user's, which
+// restricted says.
+func roleForPrivilegeSet(privSet string, fullAccess map[string]bool) (role string, restricted bool) {
+	name := strings.ToLower(strings.TrimSpace(privSet))
+	switch name {
+	case "[full access]":
+		return "owner", false
+	case "full access", "owner":
+		if fullAccess[name] {
+			return "owner", false
+		}
+		return "user", true
+	case "admin", "administrator":
+		if fullAccess[name] {
+			return "admin", false
+		}
+		return "user", true
+	}
+	return "user", false
+}
+
+// privilegeSetsFullAccess tells, by lower-case name, the privilege sets
+// that grant full access: every record, layout, value list and script
+// modifiable, and the management of the file, its accounts and its
+// extended privileges, as [Full Access] does.
+func privilegeSetsFullAccess(root *xmlNode) map[string]bool {
+	out := map[string]bool{}
+	all := func(n *xmlNode) bool {
+		return n != nil && !strings.EqualFold(firstAttr(n, "Custom"), "true") &&
+			strings.EqualFold(firstAttr(n, "Create"), "true") &&
+			strings.EqualFold(firstAttr(n, "Edit"), "true") &&
+			strings.EqualFold(firstAttr(n, "Delete"), "true")
+	}
+	for _, set := range catalogDefinitions(root, []string{"PrivilegeSetsCatalog"}, "PrivilegeSet") {
+		access := findFirstChild(set, "access")
+		if access == nil {
+			continue
+		}
+		other := findFirstChild(access, "Other")
+		full := all(findFirstChild(access, "Records")) && all(findFirstChild(access, "Layouts")) &&
+			all(findFirstChild(access, "ValueLists")) && all(findFirstChild(access, "Scripts")) &&
+			other != nil && strings.EqualFold(firstAttr(other, "manageDatabase"), "true") &&
+			strings.EqualFold(firstAttr(other, "manageAccounts"), "true") &&
+			strings.EqualFold(firstAttr(other, "manageExtPrivs"), "true")
+		if name := strings.ToLower(strings.TrimSpace(firstAttr(set, "name"))); name != "" && full {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// fmrestGrants carries FileMaker's fmrest extended privilege (Access via
+// FileMaker Data API) over to the roles the file's accounts map to. Save a
+// Copy as XML lists, in its ExtendedPrivilegesCatalog, the privilege sets
+// each extended privilege is enabled for; setsByRole holds the privilege sets
+// the migrated accounts use, by the role each maps to.
+//
+// File4Base grants it per role, which is coarser than FileMaker's per
+// privilege set (#213): a role is granted fmrest when any of its privilege
+// sets carries it, and the accounts of its other sets gain the Data API too,
+// which the report says. Owners hold it whatever the file says.
+func fmrestGrants(root *xmlNode, setsByRole map[string][]string) ([]CapabilityGrant, []ReportItem) {
+	extended := catalogDefinitions(root, []string{"ExtendedPrivilegesCatalog"}, "ExtendedPrivilege")
+	if len(extended) == 0 {
+		return nil, fmrestUnknownItems(setsByRole)
+	}
+	withFMRest := map[string]bool{}
+	for _, ep := range extended {
+		if !strings.EqualFold(strings.TrimSpace(firstAttr(ep, "name")), schema.CapabilityFMRest) {
+			continue
+		}
+		visitNodes(ep, func(n *xmlNode) {
+			if nodeNamed(n, "PrivilegeSetReference") {
+				withFMRest[strings.ToLower(strings.TrimSpace(firstAttr(n, "name")))] = true
+			}
+		})
+	}
+
+	var grants []CapabilityGrant
+	var items []ReportItem
+	for _, role := range []string{"owner", "admin", "user"} {
+		var granting, without []string
+		for _, set := range setsByRole[role] {
+			if withFMRest[strings.ToLower(set)] {
+				granting = append(granting, set)
+			} else {
+				without = append(without, set)
+			}
+		}
+		if role == "owner" {
+			// Owners hold every capability, as [Full Access] holds every
+			// extended privilege; a set mapped to the role that does not
+			// carry fmrest gains it all the same, which is reported.
+			granting = nil
+		}
+		// One item per role: the grant, or what the role's accounts gain
+		// without their set carrying fmrest, which is to review.
+		if len(granting) > 0 {
+			grants = append(grants, CapabilityGrant{Role: role, Capability: schema.CapabilityFMRest, Sets: granting})
+		}
+		granted := fmt.Sprintf("The fmrest extended privilege (Access via FileMaker Data API) of privilege set(s) %s is granted to the role %q as its fmrest privilege",
+			quoteList(granting), role)
+		switch {
+		case len(without) == 0 && len(granting) > 0:
+			items = append(items, ReportItem{
+				Category: CategoryTranslated, Domain: "privilege", SourceName: strings.Join(granting, ", "), TargetName: role, Detail: granted,
+			})
+		case len(without) > 0 && len(granting) > 0:
+			items = append(items, ReportItem{
+				Category: CategoryManualActionRequired, Domain: "privilege", SourceName: strings.Join(append(append([]string(nil), granting...), without...), ", "), TargetName: role,
+				Detail: fmt.Sprintf("%s. Privilege set(s) %s do not carry fmrest in FileMaker, but their accounts hold that role, so they gain it too: File4Base grants the Data API per role, not per privilege set (#213). "+
+					"Review these accounts, or withhold fmrest from the role in Manage Security", granted, quoteList(without)),
+			})
+		case len(without) > 0 && role == "owner":
+			items = append(items, ReportItem{
+				Category: CategoryManualActionRequired, Domain: "privilege", SourceName: strings.Join(without, ", "), TargetName: role,
+				Detail: fmt.Sprintf("Privilege set(s) %s do not carry fmrest in FileMaker, but their accounts hold the role %q, which does: File4Base grants the Data API per role, not per privilege set (#213). "+
+					"Review these accounts: an owner always holds fmrest", quoteList(without), role),
+			})
+		}
+	}
+	return grants, items
+}
+
+// fmrestUnknownItems reports, for a document that does not say which
+// privilege sets carry fmrest, that no account role was granted the Data API.
+func fmrestUnknownItems(setsByRole map[string][]string) []ReportItem {
+	var items []ReportItem
+	for _, role := range []string{"admin", "user"} {
+		if len(setsByRole[role]) == 0 {
+			continue
+		}
+		items = append(items, ReportItem{
+			Category: CategoryManualActionRequired, Domain: "privilege", SourceName: strings.Join(setsByRole[role], ", "), TargetName: role,
+			Detail: fmt.Sprintf("The document does not list which privilege sets carry the fmrest extended privilege (Access via FileMaker Data API), so the role %q is not granted it; "+
+				"grant fmrest to the role in Manage Security if accounts of privilege set(s) %s use the Data API", role, quoteList(setsByRole[role])),
+		})
+	}
+	return items
+}
+
+func visitNodes(n *xmlNode, fn func(*xmlNode)) {
+	for _, c := range n.Children {
+		fn(c)
+		visitNodes(c, fn)
+	}
+}
+
+func quoteList(names []string) string {
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = strconv.Quote(n)
+	}
+	return strings.Join(quoted, ", ")
+}
+
+func appendUnique(list []string, s string) []string {
+	for _, x := range list {
+		if strings.EqualFold(x, s) {
+			return list
+		}
+	}
+	return append(list, s)
 }
 
 // ─── Minimal XML Tree Helpers ──────────────────────────────────────────────

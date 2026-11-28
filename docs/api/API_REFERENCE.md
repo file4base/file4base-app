@@ -133,9 +133,17 @@ Permissions are granted per layout (`read_write`, `read_only`, `none`), while th
 | `MIGRATION_UPLOAD_DIR` | system temporary directory | Where an uploaded native database copy is written while it is received. It needs free space for the largest upload; the file is private (`0600`) and removed as soon as it has been read. |
 | `FILE4BASE_ADMIN_DATABASE` | *(empty)* | Database whose owners are the server administrators (server-wide Server Tools). Empty disables the server-wide tools unless a super-owner exists (see `FILE4BASE_SUPER_OWNER`). |
 | `FILE4BASE_SUPER_OWNER` | *(empty)* | Bootstrap super-owners as `database:username` (comma-separated for several). These owner accounts sign in with full, server-wide control even before a `super_owner` flag is stored; they can then grant the privilege to other owners via `PUT /api/v1/security/users/{id}/super-owner`. |
+| `FILE4BASE_SETUP_CODE` | *(random)* | Setup code that lets a caller without a super-owner session create the reserved databases (`FILE4BASE_ADMIN_DATABASE` and the databases of `FILE4BASE_SUPER_OWNER`) through `POST /api/v1/databases` or `POST /api/v1/solutions/migrate/apply` (`setup_code`; case, spaces and dashes are ignored). At least 16 letters or digits; a shorter value is ignored with a warning. When unset, the server draws a random one at each start and prints it in its log, grouped as `XXXX-XXXX-XXXX-XXXX`, at startup while a reserved database is missing or at the first refused attempt; a code set here is never logged. See *Reserved databases* under `POST /api/v1/databases` (#236). |
 | `FILE4BASE_LOGIN_MAX_ATTEMPTS` | `10` | Failed password checks in a row (per database + username + client) before a lockout. `0` disables the limit. |
 | `FILE4BASE_LOGIN_WINDOW_SECONDS` | `900` | A gap this long with no failure forgets the earlier ones. |
 | `FILE4BASE_LOGIN_LOCKOUT_SECONDS` | `900` | How long a tripped lockout lasts. |
+| `FILE4BASE_DATA_API_DATABASES` | *(empty)* | Databases the FileMaker Data API (§ 20) serves, comma-separated, each `database` or `FileMaker name=database`. Empty turns `/fmi/data` off. |
+| `FILE4BASE_DATA_API_SESSION_TTL` | `15m` | Idle lifetime of a Data API session (Go duration), FileMaker Server's 15 minutes by default. |
+| `FILE4BASE_DATA_API_PRODUCT_NAME` | `File4Base Data API` | The name `productInfo` gives. |
+| `FILE4BASE_DATA_API_PRODUCT_VERSION`, `FILE4BASE_DATA_API_PRODUCT_BUILD_DATE` | *(empty)* | The `version` and `buildDate` `productInfo` gives; left out when empty. |
+| `FILE4BASE_UNSTORED_FIND_MAX_RECORDS` | `50000` | Most records a find, sort or summary computes an unstored calculation for (#149); more answer `422 Too Many Records to Compute`. |
+| `FILE4BASE_UNSTORED_FIND_TIMEOUT` | `30s` | Longest it computes them (Go duration). |
+| `FILE4BASE_UNSTORED_FIND_MAX_BYTES` | `16MiB` | Most bytes of computed values bound to one statement; on MariaDB, at most seven eighths of the server's `max_allowed_packet`. |
 | `FILE4BASE_TRANSFER_SCHEDULER` | `true` | Whether this server process runs due transfer schedules (§ 19). Several processes over the same databases may all leave it on: each occurrence is claimed once. Set it to `false` on a process that should only serve requests. |
 
 ---
@@ -553,7 +561,7 @@ Queries rows with optional pagination and sorting.
 - `offset` (integer, default `0`)
 - `sort_by` (string, optional)
 - `sort_asc` (boolean, default `true`)
-- `sort` (string, optional, repeatable) — orders by several fields in turn. Comma-separated or repeated; a leading `-` sorts that field descending. `?sort=company,-fee_paid` orders by Company ascending and breaks ties by Fee Paid descending. It supersedes `sort_by`/`sort_asc`, which stay for callers that only sort by one field. Every field named must be registered for the table; an unknown one answers `400 Unknown Field`.
+- `sort` (string, optional, repeatable) — orders by several fields in turn. Comma-separated or repeated; a leading `-` sorts that field descending. `?sort=company,-fee_paid` orders by Company ascending and breaks ties by Fee Paid descending. It supersedes `sort_by`/`sort_asc`, which stay for callers that only sort by one field. Every field named must be registered for the table; an unknown one answers `400 Unknown Field`. A sort by an unstored calculation computes it for every record first, within the limits of [`POST …/find`](#post-apiv1datatablefind) (`422 Too Many Records to Compute` past them).
 
 CONTAINER fields are returned as base64 strings (standard alphabet, with padding); `POST` and `PUT` accept base64 strings for them and store the decoded bytes, and a value that is not valid base64 answers `400 Invalid Value`.
 
@@ -706,6 +714,13 @@ Supported operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `RANGE`, `IS_EMPTY
 
 `options` takes the same `limit`, `offset`, `sort_by`/`sort_asc` and `sort` as `GET /api/v1/data/{table}`; `sort` is the array form, `[{"field": "company"}, {"field": "fee_paid", "descending": true}]`.
 
+An omitting request drops only the records it matches: a record whose field is empty does not match `fee_paid > 100`, so `{fee_paid: ">100", omit: true}` keeps it, as in FileMaker.
+
+**Unstored calculations (#149).** A criterion or a sort on an unstored calculation of `{table}` is computed, as FileMaker does: the criteria on stored fields narrow the records first, the calculation is computed for those left, as the caller, and the find and sort run over the values, as on a stored field of its result type. `GET /api/v1/data/{table}` sorted by one and `POST …/summary` over one work the same way. At most 50,000 records are computed per request, in at most 30 seconds and 16 MiB of values (`FILE4BASE_UNSTORED_FIND_MAX_RECORDS`, `FILE4BASE_UNSTORED_FIND_TIMEOUT`, `FILE4BASE_UNSTORED_FIND_MAX_BYTES`); every page of a found set computes them again.
+
+- `422 Too Many Records to Compute` — the request needs an unstored calculation computed for more records, or for longer, than those limits; the detail names the field and the number of records, and a criterion on a stored field narrows it.
+- `422 Unstored Calculation` — a criterion on a related table's unstored calculation (`Lines::Total`).
+
 ---
 
 ### Importing and exporting records
@@ -758,7 +773,8 @@ Brings the records in. Same body, plus `options`:
     "mappings": [{"column": 0, "field": "last_name"}, {"column": 1, "field": "city"}],
     "match_fields": ["last_name"],
     "add_unmatched": false,
-    "perform_auto_enter": true
+    "perform_auto_enter": true,
+    "abort_on_error": false
   }
 }
 ```
@@ -767,18 +783,30 @@ Brings the records in. Same body, plus `options`:
 - `date_order` — `iso` (default), `dmy` or `mdy`. `03/04/2011` cannot be read without being told.
 - `mappings` — which column goes to which field. A column not listed is left out.
 - `perform_auto_enter` — FileMaker's *Perform auto-enter options while importing* (default `false`): the fields' auto-enter options enter their values over the imported ones, except a calculated value with *Do not replace*, which keeps an imported value. Prohibit modification never stops an import.
+- `abort_on_error` — import nothing when a record would be skipped or a value left out (default `false`, see below).
 
-**One transaction.** The first row that cannot be read or stored takes the whole file with it; nothing is written and the error names the row and the column. The field validation rules apply, and calculation fields are worked out for imported records.
+**Validation skips, as FileMaker's import does (#231).** The rules validated *Always* apply; those validated only during data entry do not. As in FileMaker (*About validating data during import*), a value that breaks a rule checked as it is entered — strict data type, range, maximum length, unique, existing value — is **left out** of its record, which is imported without it, and a record that fails a rule checked on commit — *not empty*, a validation by calculation — is **skipped**. A value its field's type cannot hold (text sent to a number field, an unreadable date) is left out the same way: FileMaker would keep it as typed, which a typed column cannot. A value left out of a new record leaves the field empty, and of an updated record keeps what it held; the auto-enter options and calculations reading it are worked out without it, and a field that must not be empty and lost its value skips the record, as does a new record's field whose column is not nullable. An update writes the fields mapped and validates those; a match field whose value cannot be read, or breaks a rule, skips its row, so that no record is added without its key. With `abort_on_error`, any of these imports nothing and answers `422 Import Failed`, naming the first.
+
+**One transaction.** A row that cannot be stored for another reason takes the whole file with it; nothing is written and the error names the row. Calculation fields are worked out for imported records.
 
 A column sent to a **calculation** or a **summary** field is refused: the first's formula owns its value, the second has none in a record.
 
 #### Response `200 OK`
 ```json
-{"rows": 2, "added": 2, "updated": 0, "skipped": 0, "fields": ["last_name", "city"], "truncated": false}
+{
+  "rows": 3, "added": 2, "updated": 0, "skipped": 0, "fields": ["last_name", "city"], "truncated": false,
+  "skipped_errors": 1, "fields_skipped": 1,
+  "problems": [
+    {"row": 2, "field": "last_name", "rule": "not_empty", "message": "last_name requires a value", "record_skipped": true},
+    {"row": 3, "field": "fee_paid", "rule": "type", "value": "unpaid", "message": "fee_paid is not a number", "record_skipped": false}
+  ]
+}
 ```
 
+`skipped` counts the rows passed over without an error (an update's rows matching nothing, or with every match field empty). `skipped_errors` and `fields_skipped` are the two counts of FileMaker's Import Summary: records skipped due to errors, and values left out of the records imported. `problems` lists each in row order: `rule` is `type` for a value the field's type cannot hold, otherwise the rule broken (`not_empty`, `calculation`, `strict_type`, `max_length`, `range`, `unique`, `existing_value`); `value` quotes the text left out, at most 200 characters. A record skipped because a value left out made it fail *not empty* is reported once, with the cause's rule.
+
 #### Errors
-- `422 Import Failed` — a bad mapping, or a row that could not be read. The detail names the row and the column.
+- `422 Import Failed` — a bad mapping, a row that could not be stored, or, with `abort_on_error`, a record or value the import would have skipped. The detail names the row.
 - `422 Invalid Source File` — the file is not what it claims to be.
 - `413 Source File Too Large` — past the 25 MiB, 100 000-row or 256-column guard.
 
@@ -880,6 +908,61 @@ read in place of the stored ones (calculation fields and unknown names are
 ignored), and the stored calculations and the unstored ones the formula
 reads are computed from them.
 
+A layout object's conditions (hide, conditional formatting) read `Self` as
+the object's value, as FileMaker evaluates them. `self` names, for the
+expression at the same index, the field `Self` stands for: a field of the
+record, or of an occurrence by name (a related field, read from the
+occurrence the expressions are evaluated from), in the repetition the object
+shows (1 by default), or, with `text`, the text a text object or a button
+shows, which is its `Self` in FileMaker (`{"text": "Open"}`). A `null` entry,
+or none, leaves `Self` unknown, and an expression reading it answers with its
+`error`. Each result's `expression` is
+the one sent.
+
+```json
+{
+  "expressions": ["Self > 100", "Self = \"Open\""],
+  "self": [{"field": "marks", "repetition": 2}, {"text": "Open"}],
+  "record_ids": ["a1b2…", "c3d4…"],
+  "occurrence": "Customers"
+}
+```
+
+A portal's rows are evaluated in the record of the layout they are shown on,
+as FileMaker evaluates a portal row's conditions and the portal's filter:
+from the layout, with the row as the current record of the portal's
+occurrence. `context` names the layout's occurrence and record, and the
+records evaluated (`record_id`, `record_ids`) are the rows, seen from the
+portal's `occurrence`:
+
+```json
+{
+  "expressions": ["Customers::status = \"late\" and Companies::region = \"north\""],
+  "record_ids": ["cu-1…", "cu-2…"],
+  "occurrence": "Customers",
+  "context": {"occurrence": "Companies", "record_id": "co-1…"}
+}
+```
+
+A field named alone, and one of the portal's occurrence, read the row; one
+of an occurrence reached through the portal's reads the records related to
+the row; one of the layout's occurrence reads the layout's record, and any
+other is related to the layout's record. This is FileMaker's rule for a
+related field in a portal: the portal's record is the start only when the
+path from the layout's occurrence to the field's goes through the portal's,
+so a field of a join between them (layout → join → portal) reads the first
+join record related to the layout's record, on every row. So a field of the layout is never
+read back from the row through the relationship, which in a many-to-many
+relationship reaches another record. An aggregate (`Count`, `Sum`, `List`,
+`Last`, `GetNthRecord`…) of the portal's occurrence itself covers every
+record related to the layout's record. Without an `occurrence`, the rows are
+seen from their table's own. A portal of the layout's own occurrence (a
+self-join) evaluates its row as that occurrence's record. The caller must be
+able to read the layout's table as well as the rows' (`403`), and the
+layout's occurrence must be one of this solution's tables. The rows of an
+occurrence of another solution's table are evaluated through
+`POST /api/v1/occurrences/{occurrence}/records/evaluate` (`422` here).
+
 `expression` (singular) is accepted for a caller watching one. Without
 `record_id` every field reads as empty, so a formula like `UPPER("ab")` still
 answers. `result_type` is `Text` (the default), `Number`, `Date`, `Timestamp`,
@@ -914,9 +997,9 @@ have reads as empty — the engine's rule — and is named in `unknown_fields`
 rather than being quietly ignored.
 
 #### Errors
-- `403 Forbidden`: no access to the table.
-- `404 Not Found`: no such table, or no record with that id.
-- `422 Unprocessable Entity`: nothing to evaluate, or more than 50 expressions.
+- `403 Forbidden`: no access to the table, or to the layout's table of the `context`.
+- `404 Not Found`: no such table, or no record with that id; with a `context`, no such layout record (even with `record_ids`, where a row gone answers `null`), an occurrence that is not there, or a portal occurrence of another table.
+- `422 Unprocessable Entity`: nothing to evaluate, more than 50 expressions, or a `context` with an `occurrence` of another solution's table.
 
 ---
 
@@ -1124,6 +1207,7 @@ Groups come back in the order their break fields sort, so a report reads top to 
 #### Errors
 - `422 Invalid Summary Field` — a field named in `fields` is not a summary field, or its definition cannot be used.
 - `400 Unknown Field` — a `group_by` field the table does not have.
+- `422 Too Many Records to Compute` — a summary over, a break field or a criterion on an unstored calculation needs it computed for more than the limits of `POST …/find` allow (#149).
 
 ---
 
@@ -1135,7 +1219,7 @@ A **summary field** (`field_type: "SUMMARY"`) works out a figure over a set of r
 {"summary_type": "total", "field": "annual_fee", "running": false}
 ```
 
-`summary_type` is one of `total`, `average`, `count`, `minimum`, `maximum`, `standard_deviation`, `fraction_of_total`. The first two and the last two need a field that **stores** numbers — a calculation whose result type is Number counts. A summary over another summary, or over itself, is refused with `422`.
+`summary_type` is one of `total`, `average`, `count`, `minimum`, `maximum`, `standard_deviation`, `fraction_of_total`. The first two and the last two need a field that **stores** numbers — a calculation whose result type is Number counts, unstored or not: an unstored one is computed for the found set first (#149). A summary over another summary, or over itself, is refused with `422`.
 
 The older shape, `{"operation": "SUM", "target_column": "annual_fee"}`, is read as well, so a field defined before summaries were computed works without being set up again.
 
@@ -1376,14 +1460,19 @@ Creates a new physical database, initializes the system catalog tables (`sys_*`)
 
 An existing database is never modified: if the name is taken the response is `409 Conflict`.
 
+**Reserved databases (#236).** The owners of `FILE4BASE_ADMIN_DATABASE` and the accounts seeded by `FILE4BASE_SUPER_OWNER` are server administrators, so whoever created those databases first would administer the server. Their names are reserved: only a super-owner session can create them, or a caller who sends the server's setup code in `setup_code` (printed in the server log at startup while a reserved database is missing or at the first refused attempt, or set with `FILE4BASE_SETUP_CODE`). This is how a fresh install creates its admin database: the New Database dialog asks for the code when the server requires it. With the code, the request needs no session even when `ALLOW_PUBLIC_DATABASE_CREATION=false`, and the first owner of a database reserved by `FILE4BASE_SUPER_OWNER` (not the admin database) must be one of its seeded usernames (`422` on `user` otherwise), since nobody else could create that account later. Without a super-owner or a valid code the response is `403` with `title` *Reserved Database*, `reserved_database` and `setup_code_required: true`; that check runs before the existence check, so an existing reserved database answers `403` rather than `409` to such a caller. The same rules apply to `POST /api/v1/solutions/migrate/apply` into a new `target_database` (`422` on `owner_user`), and `POST /api/v1/solutions/clone` into a reserved name requires a super-owner.
+
 #### Request Body
 ```json
 {
   "database": "invoices_db",
   "user": "alice",
-  "password": "a-strong-password"
+  "password": "a-strong-password",
+  "setup_code": "ABCD-EFGH-IJKL-MNOP"
 }
 ```
+
+`setup_code` is only needed (and only read) for a reserved database.
 
 #### Response `201 Created`
 ```json
@@ -1396,6 +1485,8 @@ An existing database is never modified: if the name is taken the response is `40
 ```
 
 #### Errors
+- `403 Forbidden` (*Reserved Database*): a reserved database without a super-owner session or a valid `setup_code`; the detail says when the code is wrong.
+- `422 Unprocessable Entity` on `user`: the setup code was given for a database `FILE4BASE_SUPER_OWNER` seeds, and `user` is not one of its seeded usernames.
 - `409 Conflict`: a database with that name already exists.
 - `422 Unprocessable Entity`: missing database name or owner user, or an owner password that is missing, shorter than 8 characters, or equal to the username or the database name.
 
@@ -1557,6 +1648,8 @@ CONTAINER fields are MessagePack binary values in `.f4data` files, so they are r
 
 A record of an `.f4data` file may carry the original texts of its values under `__source_text` (field name → text, #124); `export-data` writes them and `import-data` restores them with the record, in the same transaction. Each must name a field of the record's table and be text of at most 64 KiB, or the import answers `400 Bad Request`.
 
+A record also carries its identity under `__record_identity` (#208): `{"record_id": <n>, "mod_id": <n>}`, its FileMaker-style record ID and modification count. `import-data` keeps both when the table has never given that record ID (to any record, deleted ones included) and no other record of the file carries it; otherwise the record gets a new record ID after the table's others, and `record_ids_renumbered` counts it among the records written. A record without `record_id` gets a new one; without `mod_id`, it counts no modification. `record_id` must be a whole number from 1 to 2^62 and `mod_id` one from 0 to 2^62, or the import answers `400 Bad Request`. The stored calculations that read the record ID are computed again for the records given a new one. A server older than 0.23 refuses files that carry the key, as it refuses any key that is not a field.
+
 #### Request Body
 Binary MessagePack payload (`Content-Type: application/x-msgpack`).
 
@@ -1569,7 +1662,8 @@ Binary MessagePack payload (`Content-Type: application/x-msgpack`).
   "records_inserted": 140,
   "records_skipped": 2,
   "records_count": 140,
-  "skipped_tables": []
+  "skipped_tables": [],
+  "record_ids_renumbered": 0
 }
 ```
 `records_count` equals `records_inserted`.
@@ -1709,7 +1803,7 @@ The `?database=<name>` query parameter and the `X-Database-Name` header are stil
 ---
 
 ### `POST /api/v1/security/users`
-Creates a new user account with hashed password (`bcrypt`). Requires the `owner` or `admin` role; only an `owner` can create another `owner`.
+Creates a new user account with hashed password (`bcrypt`). Requires the `owner` or `admin` role; only an `owner` can create another `owner`. Only a super-owner can create an account whose name `FILE4BASE_SUPER_OWNER` seeds for this database (`403`), since it would sign in as a super-owner.
 
 #### Request Body
 ```json
@@ -1736,9 +1830,13 @@ Creates a new user account with hashed password (`bcrypt`). Requires the `owner`
 ### `PUT /api/v1/security/users/{id}`
 Updates password, role and/or `is_active` of an existing user account.
 
-- `owner`: any account.
+- `owner`: any account, except a super-owner account unless the caller is a super-owner.
 - `admin`: `admin` and `user` accounts; cannot modify owner accounts nor promote to `owner`.
 - `user`: only their own password (role and status must stay unchanged).
+
+Only a super-owner can manage another super-owner account (stored flag, `FILE4BASE_SUPER_OWNER` seed, or owner of the `FILE4BASE_ADMIN_DATABASE`): anyone else gets `403` *only a super-owner can manage a super-owner account* (#209). The same rule applies to `DELETE /api/v1/security/users/{id}` and to the MFA endpoints.
+
+Changing **your own** password requires `current_password`, whatever your role: `403` when it is missing or wrong. Wrong current passwords count against the sign-in throttle of the account (`429` with `Retry-After` once it is locked). Setting the password of another account does not take that account's current password.
 
 The last active owner cannot be demoted or deactivated. When the password, role or status changes, the other sessions of that user are revoked. Setting a password clears `password_pending` (#198); a password of only spaces is refused (`400`). An owner with `password_pending` cannot sign in, so it does not count as the active owner a database must keep. An empty or omitted `role` keeps the stored one.
 
@@ -1746,17 +1844,20 @@ The last active owner cannot be demoted or deactivated. When the password, role 
 ```json
 {
   "password": "newpassword",
+  "current_password": "oldpassword",
   "role": "admin",
   "is_active": true
 }
 ```
+
+`current_password` is read only when the account is the caller's own.
 
 To let an account migrated without a password sign in, send its `password` together with `"is_active": true`.
 
 ---
 
 ### `DELETE /api/v1/security/users/{id}`
-Deletes a user account and revokes its sessions. Requires the `owner` or `admin` role (only an `owner` can delete an owner). You cannot delete your own account nor the only remaining owner account.
+Deletes a user account and revokes its sessions. Requires the `owner` or `admin` role (only an `owner` can delete an owner, only a super-owner can delete a super-owner). You cannot delete your own account nor the only remaining owner account.
 
 ---
 
@@ -1824,18 +1925,18 @@ Replaces the per-layout permissions of a user. Requires the `owner` or `admin` r
 ### `GET /api/v1/security/privileges`
 Returns the extended privileges each account role holds (#39). Requires the `owner` or `admin` role.
 
-An extended privilege is an **action** the server performs and can therefore refuse. File4Base does not restrict access by client: the desktop client, the Web Client and a direct REST call all speak to this API with the same session token, so the server cannot tell them apart, and a setting that claimed to would restrict nothing.
+An extended privilege is an **action** the server performs and can therefore refuse. File4Base does not restrict access by client: the desktop client, the Web Client and a direct REST call all speak to this API with the same session token, so the server cannot tell them apart, and a setting that claimed to would restrict nothing. The FileMaker Data API (§ 20) is the exception: it is a separate API with its own sign-in and sessions, which the server refuses to a role without `fmrest`.
 
-A role with nothing stored holds every privilege, so a database created before this table existed is not restricted by upgrading. An `owner` always holds every privilege and is reported as such whatever is stored.
+A role with nothing stored holds every bulk privilege, so a database created before this table existed is not restricted by upgrading; it does not hold `fmrest`, which is only ever granted. An `owner` always holds every privilege and is reported as such whatever is stored.
 
 #### Response `200 OK`
 ```json
 {
-  "capabilities": ["bulk_export", "bulk_import"],
+  "capabilities": ["bulk_export", "bulk_import", "fmrest"],
   "privileges": [
-    {"role": "owner", "bulk_export": true, "bulk_import": true},
-    {"role": "admin", "bulk_export": true, "bulk_import": false},
-    {"role": "user", "bulk_export": false, "bulk_import": false}
+    {"role": "owner", "bulk_export": true, "bulk_import": true, "fmrest": true},
+    {"role": "admin", "bulk_export": true, "bulk_import": false, "fmrest": false},
+    {"role": "user", "bulk_export": false, "bulk_import": false, "fmrest": true}
   ]
 }
 ```
@@ -1844,6 +1945,7 @@ A role with nothing stored holds every privilege, so a database created before t
 | --- | --- |
 | `bulk_export` | `POST /api/v1/data/{table}/export` and `GET /api/v1/solutions/export-data`. |
 | `bulk_import` | `POST /api/v1/data/{table}/import`, `POST /api/v1/data/{table}/import/preview` and `POST /api/v1/solutions/import-data`. |
+| `fmrest` | Signing in to the FileMaker Data API, `POST /fmi/data/{version}/databases/{database}/sessions` (§ 20). |
 
 Reading or writing one record at a time is not a bulk privilege: that is governed by the account role and by the per-table and per-layout access levels.
 
@@ -1852,14 +1954,14 @@ Reading or writing one record at a time is not a bulk privilege: that is governe
 ### `PUT /api/v1/security/privileges`
 Replaces the extended privileges of the roles in the request. Requires the `owner` role: granting a privilege to one's own role would be no restriction at all.
 
-Roles left out of the body keep what they hold. The `owner` entry is stored fully granted whatever it says, so that an owner cannot lock themselves out of their own database. The change applies to sessions that are already open, on the next request they make.
+Roles left out of the body keep what they hold. A role in the body is stored as given; a bulk privilege it leaves out is withheld, but a missing `fmrest` keeps the stored value (`null` withdraws it, as `false`), so a client written before `fmrest` existed neither grants nor withdraws it. The `owner` entry is stored fully granted whatever it says, so that an owner cannot lock themselves out of their own database. The change applies to sessions that are already open, on the next request they make; the Data API sessions of a role that no longer holds `fmrest` are ended at once.
 
 #### Request Body
 ```json
 {
   "privileges": [
-    {"role": "admin", "bulk_export": true, "bulk_import": false},
-    {"role": "user", "bulk_export": false, "bulk_import": false}
+    {"role": "admin", "bulk_export": true, "bulk_import": false, "fmrest": false},
+    {"role": "user", "bulk_export": false, "bulk_import": false, "fmrest": true}
   ]
 }
 ```
@@ -2052,7 +2154,7 @@ Returns the active database name, the solution's logical name (`solution_name`),
 ```
 
 ### `POST /api/v1/solutions/clone`
-*Requires `owner` role.* Creates a new physical database on the server (`target_database`), copies the caller's owner account (or provisions `owner_user` / `owner_password` when supplied), imports the entire design of the active solution (tables, fields, occurrences, relationships, layouts, scripts, value lists, accounts, role privileges, saved finds, data sources, and custom menu sets) with **zero user records**, sets `solution_name`, and optionally locks the clone's design permanently (`lock_design: true`).
+*Requires `owner` role.* Creates a new physical database on the server (`target_database`), copies the caller's owner account (or provisions `owner_user` / `owner_password` when supplied), imports the entire design of the active solution (tables, fields, occurrences, relationships, layouts, scripts, value lists, accounts, role privileges, saved finds, data sources, and custom menu sets) with **zero user records**, sets `solution_name`, and optionally locks the clone's design permanently (`lock_design: true`). Cloning into a reserved database (`FILE4BASE_ADMIN_DATABASE` or a database of `FILE4BASE_SUPER_OWNER`) requires a super-owner; anyone else gets `403` *Reserved Database* (#236).
 
 #### Request Body
 ```json
@@ -2385,6 +2487,8 @@ described above.
 ### `POST /api/v1/solutions/migrate/apply`
 *Requires `owner` role and unlocked design.* Converts and atomically imports the FileMaker design XML and optional `FMPXMLRESULT` record datasets into either the active session database or a newly created isolated `target_database` (when `target_database`, `owner_user`, and `owner_password` are supplied). Returns `201 Created` with `status: "migrated"`, `records_inserted`, `import_report` (the solution import's report: created/updated counts, `accounts_pending_password` and `warnings`, as for `POST /api/v1/solutions/import`), and the full `ConversionReport`. The accounts named in `accounts_pending_password` are created inactive with `password_pending: true` (see `GET /api/v1/security/users`). Accepts the same JSON body as preflight, or the same `multipart/form-data` upload for a native copy above 64 MiB (see preflight).
 
+A new `target_database` that is reserved (`FILE4BASE_ADMIN_DATABASE` or a database of `FILE4BASE_SUPER_OWNER`) needs a super-owner session or the server's `setup_code` in the body, as for `POST /api/v1/databases`; otherwise `403` *Reserved Database*. With the code, a seeded database's `owner_user` must be one of its seeded usernames (`422`). Unlike `POST /api/v1/databases`, the code does not lift `ALLOW_PUBLIC_DATABASE_CREATION=false` here (#236).
+
 An explicitly attached native dataset that cannot be read or represented is
 refused with `422 Native Data Import Blocked` before any target write. Apply does
 not report a schema-only migration as a successful import of that dataset.
@@ -2408,13 +2512,13 @@ File4Base supports RFC 6238 Time-Based One-Time Password (TOTP) two-factor authe
 When `mfa_enabled` is `true` for an account, `POST /api/v1/auth/login` requires `"totp_code": "123456"` in addition to `username` and `password`. If `totp_code` is omitted when MFA is enabled, `POST /api/v1/auth/login` returns `401 Unauthorized` with `"mfa_required": true`.
 
 ### `POST /api/v1/security/users/{id}/mfa/setup`
-*Requires `admin` or `owner` role (or the user's own session).* Generates a fresh 160-bit Base32 TOTP secret and `otpauth://totp/` URI for QR code provisioning without enabling enforcement until verified.
+*Requires `admin` or `owner` role (or the user's own session); only a super-owner for another super-owner's account.* Generates a fresh 160-bit Base32 TOTP secret and `otpauth://totp/` URI for QR code provisioning without enabling enforcement until verified.
 
 ### `POST /api/v1/security/users/{id}/mfa/enable`
-*Requires `admin` or `owner` role (or the user's own session).* Verifies a 6-digit TOTP code (`{"code": "123456", "secret": "..."}`) and activates MFA (`mfa_enabled = true`) on the account.
+*Requires `admin` or `owner` role (or the user's own session); only a super-owner for another super-owner's account.* Verifies a 6-digit TOTP code (`{"code": "123456", "secret": "..."}`) and activates MFA (`mfa_enabled = true`) on the account.
 
 ### `POST /api/v1/security/users/{id}/mfa/disable`
-*Requires `admin` or `owner` role (or the user's own session).* Disables MFA (`mfa_enabled = false`) and clears the stored TOTP secret for account `{id}`.
+*Requires `admin` or `owner` role (or the user's own session); only a super-owner for another super-owner's account.* Disables MFA (`mfa_enabled = false`) and clears the stored TOTP secret for account `{id}`.
 
 ---
 
@@ -2434,12 +2538,12 @@ Powers the top-level **Server Tools** administration console (`ServerToolsDialog
 | `POST /api/v1/server/containers/update` | server administrator | Creates an automatic `pre_update` point-in-time backup snapshot in `./data/backups/` and prepares/triggers a container stack update (`target_version`, `container`). A snapshot that cannot be made answers `500 Update Failed` and nothing is updated. |
 | `POST /api/v1/server/containers/{name}/restart` | server administrator | Triggers a graceful service reload/connection pool refresh for `{name}` and records an audit event. |
 | `GET /api/v1/server/containers/{name}/logs` | server administrator | Returns recent structured log lines for `{name}`. |
-| `GET /api/v1/server/backups` | admin / owner (own database) | Lists stored server snapshots (`.f4b.json`) with size, table count, and timestamp. |
-| `POST /api/v1/server/backups` | admin / owner (own database) | Creates an on-demand server snapshot of the target database's schema, layouts, scripts, value lists, accounts and records. The database's catalog migrations are applied first, so a database nobody has signed in to since an upgrade can be backed up. A part that cannot be read or exported answers `500 Backup Failed` and writes no snapshot. |
-| `GET /api/v1/server/backups/{id}/download` | admin / owner (own database) | Downloads a stored backup snapshot archive. |
+| `GET /api/v1/server/backups` | admin / owner (own database) | Lists stored server snapshots (`.f4b.json`) with size, table count, timestamp and `type` (`manual`, `pre_update`, `pre_restore`, `uploaded`). Only each file's header is read. A backup interrupted while being written (`.f4b.json.partial`) is never listed, and is removed when the server starts. |
+| `POST /api/v1/server/backups` | admin / owner (own database) | Creates an on-demand server snapshot of the target database's schema, layouts, scripts, value lists, accounts and records. The database's catalog migrations are applied first, so a database nobody has signed in to since an upgrade can be backed up. A part that cannot be read or exported answers `500 Backup Failed` and writes no snapshot. The snapshot is **consistent**: its design and records are read in one read-only repeatable-read transaction, so what users change while it is taken is not in it (on either engine; a change of a table's structure waits for the backup to end). The records are written to disk as they are read, not held in memory, and the file is written under a temporary name reserved for it and renamed once complete and synced (#203). |
+| `GET /api/v1/server/backups/{id}/download` | admin / owner (own database) | Downloads a stored backup snapshot (the `.f4b.json`), streamed from disk. A server administrator can also download, or delete, a file whose header cannot be read. |
 | `GET /api/v1/server/backups/{id}/download?format=targz` | admin / owner (own database) | The same snapshot as a gzip-compressed tar (`tar xzf` → the `.f4b.json`). |
 | `POST /api/v1/server/backups/upload` | admin / owner (own database) | Stores an uploaded backup file (a `.tar.gz` from download, or a raw `.f4b.json`) as a server-side backup that can then be restored. A non-admin's upload is stamped with their own database. |
-| `POST /api/v1/server/backups/{id}/restore` | admin / owner (own database) | Verifies and restores a stored snapshot into the target database. A snapshot whose records cannot be decoded answers `400 Corrupt Backup` before anything changes; records that cannot be restored answer `500 Restore Failed` (the tables have been emptied by then, and the problem detail says so) rather than `"status": "restored"`. |
+| `POST /api/v1/server/backups/{id}/restore` | admin / owner (own database) | Restores a stored snapshot into the database its header names, the one access was checked against. A snapshot that cannot be decoded answers `400 Corrupt Backup` before anything changes, and a second restore of the same database while one runs answers `409 Restore In Progress` (as do a backup of that database and the deletion of one of its backups meanwhile), and so does a restore asked for while a backup of that database is being taken. An automatic `pre_restore` backup of the database is taken first (none taken: `500`, nothing restored). The restore stops at its first error, a record it cannot put back included, and answers `500 Restore Failed`: on PostgreSQL it runs in one transaction, which is rolled back, and the pre-restore backup is deleted; on MariaDB, which commits before every change of a table's structure, the pre-restore backup is restored again and kept (records can come back with new record IDs), and the problem detail names it if that fails too. If the commit itself fails, whether it was applied is not known: the pre-restore backup is kept and named. A restore that completes keeps it, so it can be undone, and answers `status: "restored"` with `pre_restore_backup` (its id), `tables_count`, and the counts of tables, fields, layouts, scripts and records restored. A restore runs to its end even if the client disconnects. Accounts are restored as a solution import restores them: an existing account keeps its password, and one deleted since the backup comes back without one (#203). |
 | `DELETE /api/v1/server/backups/{id}` | admin / owner (own database) | Deletes a stored backup snapshot. |
 | `GET /api/v1/server/tls` | server administrator | Returns the current Web/API domain, HTTPS/HSTS state, TLS mode (`acme`, `custom`, `self_signed`, `http_only`), ACME email/challenge type, and X.509 certificate metadata (`cert_issuer`, `cert_subject`, `cert_sans`, `cert_not_after`, `cert_days_left`, `cert_sha256`). In the default `self_signed` mode the metadata is re-read from disk, so it describes the certificate the stack really serves: `cert_source` is `local_ca`, `ca_available` says whether the authority can be downloaded, and `ca_subject` / `ca_not_after` / `ca_sha256` identify it. No private key is ever part of the response. |
 | `PUT /api/v1/server/tls` | server administrator | Updates the domain, HTTPS/HSTS flags, ACME settings, or custom PEM certificate configuration. In `self_signed` mode it reissues the leaf certificate for `domain` plus `extra_sans` (extra host names and IP addresses), signed by the same local authority, so installed trust survives a domain change. |
@@ -2622,11 +2726,16 @@ An **empty `database`** on either end means *the solution holding the definition
 
 | Field | Values | Meaning |
 | --- | --- | --- |
-| `mode` | `update_matching` (default), `add` | `update_matching` finds the destination record whose match fields hold the same values and updates it; this is the mode that makes a transfer replayable. `add` makes every source record a new record, every run. |
+| `mode` | `update_matching` (default), `add`, `replace_found_set` | `update_matching` finds the destination record whose match fields hold the same values and updates it; this is the mode that makes a transfer replayable. `add` makes every source record a new record, every run. `replace_found_set` is FileMaker's *Replace field contents in found set, in order* (`#191`): the n-th source record is written into the n-th record of the destination found set (the run must name it: without `destination_found_set` the run is refused with `422`, never widened to the whole table), and the source records left once it runs out are added under `on_unmatched: "add"` or passed over under `skip`. It matches on nothing, so `match_fields` is refused. |
 | `match_fields` | destination field names | The stable business keys. Required by `update_matching`, refused by `add`. Every one of them must be mapped, so the source always supplies the key it is matched on. |
 | `on_unmatched` | `add` (default), `skip` | What happens to a source record that matches no destination record. Consulted by `update_matching` only. |
-| `on_rejected` | `abort` (default), `skip` | What happens to a source value the destination field cannot hold. See the transaction contract below. |
+| `on_rejected` | `abort` (default), `skip` | What happens to a source value the destination field cannot hold or its validation refuses, and to a record the destination's validation skips. See the transaction contract below. |
 | `date_order` | `iso` (default), `dmy`, `mdy` | How a date written `03/04/2011` is to be read. There is no way to tell from the value, so the definition says. |
+| `perform_auto_enter` | `false` (default), `true` | Whether the destination's auto-enter options run on the records written, as the import option of the same name does. |
+| `auto_enter_fields` | destination field names | With `perform_auto_enter`, only these fields' auto-enter options run, as FileMaker's per-field choice in the import field mapping does. Absent (`null`) means every field's; an empty list means no field's, and is stored as such. Refused without `perform_auto_enter`. |
+| `match_by_name` | `false` (default), `true` | FileMaker's *matching names* import order (`#191`): at every run, each mapped destination field is paired with the source field of the **same name, whatever its case** (FileMaker field names are unique within a table regardless of case), not with the mapping's `source_field`, which records what the names paired when the transfer was saved. Only the mapped destination fields are written. One no source field is named as is left out of that run and listed in the report's `unpaired`; a match field so left, two source fields a case apart, or no pair at all refuses the run. |
+
+A **stored calculation** can be a match field of `update_matching`, as FileMaker matches on one *for matching only*: its value finds the record, compared by the calculation's result type, and is never written, as the formula owns it, nor listed in the report's `fields`; a record added for a row that matches nothing gets the formula's value. An unstored calculation has no stored value to find a record by and is refused as a match field, and a calculation is never written by any mode.
 
 ### `POST /api/v1/transfers`
 Creates a definition. Requires `owner`/`admin` and an unlocked design. The body is the object above without `id`, `created_by`, `created_at` and `updated_at`.
@@ -2654,6 +2763,15 @@ Runs one definition.
 
 `peer_token` is required when the two ends are different solutions and refused when they are the same one. The body may be omitted entirely for a transfer inside one solution.
 
+Two optional fields serve the `Import Records` script step (`#191`):
+
+| Field | Meaning |
+| --- | --- |
+| `destination_found_set` | Destination record ids, in order: the found set of the window the step runs in. `update_matching` then updates every matching record it holds and only those, in that order, each counted in `updated`, as FileMaker does; `replace_found_set` writes into it in that order. The found set is locked for the run; a record deleted before it keeps its place, and its source row is skipped. Ignored by `add`. |
+| `return_record_ids` | Answer `record_ids`, the destination records added or updated, so the window can show them as its found set afterwards. |
+
+The destination is written as the account of the session that reaches it, so an auto-enter of the account name enters that account.
+
 #### Response `200 OK` — the destination was written
 ```json
 {
@@ -2666,16 +2784,20 @@ Runs one definition.
   "on_unmatched": "add",
   "on_rejected": "skip",
   "rows": 3,
-  "added": 2,
+  "added": 3,
   "updated": 0,
   "skipped": 0,
+  "skipped_errors": 0,
+  "fields_skipped": 1,
   "rejected": [
     {
       "row": 3,
       "source_field": "score_text",
       "destination_field": "score",
       "value": "non renseigné",
-      "reason": "is not a number"
+      "reason": "score is not a number",
+      "rule": "type",
+      "record_skipped": false
     }
   ],
   "committed": true,
@@ -2689,8 +2811,11 @@ Runs one definition.
 | `added` | Records created in the destination. |
 | `updated` | Destination records a match key found and updated. |
 | `skipped` | Records passed over for want of a match, under `on_unmatched: "skip"`. |
-| `rejected` | Rows the destination could not hold, each with its 1-based position in the source found set, the two fields, the value and the reason. |
+| `skipped_errors` | Records the destination's validation skipped (FileMaker's *records skipped due to errors*). |
+| `fields_skipped` | Values left out of the records written (FileMaker's *fields skipped due to errors*). |
+| `rejected` | Each record skipped and value left out, with its 1-based position in the source found set, the two fields, the value, the reason, the `rule` (`type` for a value the field's type cannot hold, otherwise the validation rule, as the import's `problems`) and `record_skipped`. |
 | `committed` | Whether the destination transaction was committed. |
+| `unpaired` | For a `match_by_name` transfer, the destination fields no source field was named as on this run, left out of it. Absent otherwise. |
 
 #### Response `422 Unprocessable Content` — nothing was written
 
@@ -2704,10 +2829,10 @@ The body is **the same report object**, with `committed: false` and an added `er
   "updated": 0,
   "skipped": 0,
   "rejected": [
-    { "row": 3, "source_field": "score_text", "destination_field": "score", "value": "non renseigné", "reason": "is not a number" }
+    { "row": 3, "source_field": "score_text", "destination_field": "score", "value": "non renseigné", "reason": "score is not a number", "rule": "type", "record_skipped": false }
   ],
   "committed": false,
-  "error": "transfer refused: rows the destination cannot hold: 1 of 3 rows were rejected and this transfer aborts on a rejected row, so the destination was left unchanged"
+  "error": "transfer refused: rows the destination cannot hold: 0 record(s) and 1 value(s) were rejected of 3 rows and this transfer aborts on a rejected row, so the destination was left unchanged"
 }
 ```
 
@@ -2718,12 +2843,54 @@ Other responses are RFC 9457 problem documents, not reports: `400 Bad Request` (
 One transfer writes **one destination table, inside one transaction**. A transfer of parents and children is two definitions run in order, and each commits on its own.
 
 - **A mapping or table that cannot be resolved blocks the run** before a single record moves: a field neither table has, or a destination table that is not in the far solution's catalog, answers `422` with `committed: false` and nothing written. An unresolved target is never guessed at and never partially applied.
-- **`on_rejected: "abort"` (the default) refuses the whole transfer.** Every rejected row is reported, the destination is left exactly as it was, and the run can be replayed once the source is corrected. This is the all-or-nothing contract a manual import already follows (`#38`).
-- **`on_rejected: "skip"` quarantines the rejected rows** and commits the rest in that one transaction. The rejected rows are still reported in full.
-- **A row the destination refuses for another reason** — a validation rule, a constraint — rolls the transaction back as it does for a manual import, and the run answers `422` with `committed: false`.
+- **`on_rejected: "abort"` (the default) refuses the whole transfer** on any rejection: a value the destination field cannot hold or its validation refuses, or a record the validation skips. Every one is reported, the destination is left exactly as it was, and the run can be replayed once the source is corrected. It is the all-or-nothing option, the import's `abort_on_error`.
+- **`on_rejected: "skip"` imports as FileMaker does (`#231`)**, the import's default: a value the destination field cannot hold, or that breaks strict data type, range, maximum length, unique or existing value, is left out of its record, which is written without it (a new record's field stays empty, or the record is not written when the column is not nullable; an updated record's keeps what it held); a record failing *not empty* or a validation by calculation is not written. The rest commits in that one transaction, and every rejection is reported. A transfer created for a migrated FileMaker *Import Records* step uses `skip`.
+- **A row the destination refuses for another reason** — a database constraint — rolls the transaction back as it does for a manual import, and the run answers `422` with `committed: false`.
 - **Retrying is replaying.** A refused run wrote nothing, so the same request can simply be sent again. A *committed* run can be sent again too: with `mode: "update_matching"` and stable match keys, a replay updates the same records instead of duplicating them, so a transfer of parents and then children neither duplicates a parent nor orphans a child. `mode: "add"` is deliberately not replayable — it is for an append-only destination — and the capability parity matrix says so.
 
 Values cross through the same conversion a manual import runs (`data.CoerceImportValue`), so a number keeps its exact decimal, text keeps its spaces and its accents, a date is read in the definition's `date_order`, and a container crosses as the same bytes.
+
+### FileMaker Import Records steps (`#191`)
+
+A FileMaker *Import Records* step that imports from another FileMaker file saves its source fields **by position only** and never names the source table. A migrated step of that kind is kept **disabled**, with `awaiting_transfer: true` in its parameters, until a transfer is created for it. These endpoints, used by the migration review, list those steps, infer their source table and create the transfer once a developer confirms it. All three require `owner`/`admin`; confirming also requires an unlocked design.
+
+#### `GET /api/v1/transfers/import-steps`
+```json
+{ "steps": [ {
+  "step_id": "…", "script_id": "…", "script_name": "Pull ledger", "step_index": 2,
+  "source_file": "Ledger", "target_table": "orders", "method": "update", "add_remaining": true,
+  "auto_enter_fields": ["stamp"],
+  "mappings": [ { "position": 1, "target_field": "code", "match": true }, { "position": 2, "target_field": "total" } ],
+  "suggested_database": "ledger", "suggested_by": "database_name", "enabled_in_filemaker": true
+} ] }
+```
+`method` is `add`, `update` or `replace`. `auto_enter_fields` is `["*"]` when FileMaker performs every field's auto-enter options. `suggested_by` says why a solution is suggested: `this_file` (the step imports from its own file), `file_reference` or `database_name`. A step whose file path is computed as the script runs has no `source_file` and no suggestion. `problem` says why a step cannot get a transfer as saved: every field it imports into or matches on was deleted from the target table in FileMaker, or the table was (FileMaker then imports nothing either), a field it imports or matches on was saved without its source position, it matches on no field, or it splits repeating values into separate records. `match_by_name` is set for a step whose fields FileMaker pairs by matching names. A step saved without its target table occurrence imports into the table of the current layout: when a `Go to Layout` to a layout it names comes before it in the script, with no branch, loop, pause, window, `Perform Script` or unrecognised step between them, the migration takes that layout's table as the target, found by the layout's FileMaker id (two layouts can share a name), and sets `target_from_layout`. A layout the migration dropped, saved without its table occurrence, of another file's table, or running a script as it is entered or a record loaded (`OnLayoutEnter`, `OnRecordLoad`, `OnModeEnter`) fixes no target. `enabled_in_filemaker` says whether confirming its transfer enables the step. A step migrated before `#191` (enabled, naming no transfer) is listed too.
+
+#### `POST /api/v1/transfers/import-steps/infer`
+```json
+{ "source_database": "ledger", "peer_token": "eyJ…", "step_ids": ["…"] }
+```
+An empty `source_database` is this solution; another one needs a session token of it, as a run does, and only the tables that account may export from are considered. A step's source positions are the source table's fields **in creation order**, which a migrated field keeps as its FileMaker id. A migrated field deleted since keeps its position (`sys_deleted_source_fields` records its FileMaker id), so the positions after it do not shift; a step reading that position fits no table. A table **fits** when it has at least as many fields as the highest position and the type at every imported or match position is the type of the field it goes into (a calculation counts as its result type). FileMaker itself imports a value into a field of another type without converting it (text kept in a number field is flagged as not valid), and imports container data only into a container field: a table is **possible** (`possible`) when it has a live field at every position and no container data meets a field that is not a container, or the other way round. The answer per step is:
+
+- `high`: of the tables that fit, exactly one has field names agreeing with the step's at half of the positions or more (names can single out one of several tables that fit by type; `reason` then says how many others fit by type alone);
+- `medium`: exactly one table fits, and the names do not confirm it;
+- `low`: no table fits, and exactly one is possible; `reason` lists the pairs whose types differ ("2 amount (TEXT) → total (NUMBER)"). The transfer converts such values, passing over and reporting a record whose value does not convert. A low inference is never confirmed in bulk;
+- no `table`: none is possible, several fit and names do not single one out, or several are possible and none fits; `reason` says which, and `candidates` lists every table with its counts (`fields`, `positions`, `types_matched`, `names_matched`, `fits`, `possible`) for a developer to pick from, with `deleted_positions` and `pairs`: per position the step reads, `{ "position": 2, "source_field": "amount", "target_field": "total", "match": false }`, with `deleted` or `missing` when the table has no live field there, `source_type` and `target_type` when the two types differ, and `incompatible` for container data and a field that is not a container. The review shows the pairing of the picked table.
+
+A step matching names (`by_name: true` in the answer) is weighed by name, not position: a table is possible when it has a field named as each target field, whatever the case, with the container rule above; the only possible table is `high` when every pair has the same type, `low` otherwise, and the pairs carry no `position`. The pairing is the one the transfer's run makes: the target field's current name, against every field of the source table, whether it came from FileMaker or not; two source fields a case apart pair neither. A table naming only some of them is left for a developer to pick; its transfer leaves the others out at each run, as FileMaker does. A target field that no longer resolves (deleted or renamed since the migration) leaves the step uninferred, and `reason` names it.
+
+When the source account may not export from some tables, they are left out of `tables` and `candidates`, `tables_hidden` counts them and `reason` says so: uniqueness is then among the visible tables only, and the review leaves such a step out of its bulk confirmation.
+
+When the source is this solution, the step's target table is not offered as its own source. Nothing is written.
+
+#### `POST /api/v1/transfers/import-steps/confirm`
+```json
+{ "items": [ { "step_id": "…", "source_database": "ledger", "source_table": "entries" } ],
+  "peer_tokens": { "ledger": "eyJ…" } }
+```
+Every source solution, and its session, is checked before anything is created; a refusal there creates nothing. Then, for each item, in one transaction of its own (the step locked, so two confirmations cannot both create one): the transfer is planned from the step (Add → `add`; Update → `update_matching` on the step's match fields; Replace → `replace_found_set`; *add remaining* → `on_unmatched: "add"`; `on_rejected: "skip"`; the step's auto-enter choice), created under a unique name, named in the step, and the step is enabled again **if FileMaker had it enabled**. A source table that lacks a position the step reads, an update step with no match field, an import into a calculation, or a match on an unstored calculation is refused: File4Base never invents a match field. A step matching names gets `match_by_name: true`, each mapping's `source_field` being the field its name pairs with now; a table where no field is named as any target field, none as a match field of an update, or two a case apart is refused, as the transfer could never run against it.
+
+A request with more than one item is a **bulk confirmation**, held on the server to the rule the review shows: each step is inferred again, and only a step inferred with `high` or `medium` confidence over every table, from the table named, without a `problem` and with its target saved in FileMaker (not `target_from_layout`), is created. Any other item answers an `error` ending "confirm the step on its own, with its source table picked", and is created by a request naming it alone. The answer is `{"steps": [{"step_id": "…", "transfer": "Import orders from ledger.entries (Pull ledger, step 2)"}]}`, with `error` instead of `transfer` for a step that could not be created; the others are unaffected.
 
 ---
 
@@ -2835,6 +3002,7 @@ The records of a table occurrence, by id or name: those of a table of this solut
 | `POST /`, `PUT /{id}`, `PATCH /{id}`, `DELETE /{id}`, `POST /{id}/related` | the same writes (`PATCH` is `PUT`: both change only the fields sent) | Written there as the group's account, with its privileges (above). |
 | `GET /{id}/related`, `POST /related` | the related reads | Follow this solution's relationships from that record. |
 | `POST /{id}/duplicate`, `GET /serials/{field}`, `PUT /serials/{field}`, `POST /relookup` | the auto-enter routes (§ 4) | Run there as the group's account: the copy gets that solution's serial numbers and stamps. |
+| `POST /evaluate` | `POST /api/v1/data/{table}/evaluate`, seen from the occurrence | The rows of a portal on a layout of this solution, given as the `context`: read there as the group's account, the formula evaluated here, the layout's record read as the caller. Without a `context`: `422`. |
 
 An unknown occurrence answers `404 Table Occurrence Not Found`.
 
@@ -2955,3 +3123,34 @@ Runs a schedule now, exactly as the scheduler would: as its accounts, re-checked
 
 ### `GET /api/v1/transfer-schedules/{id}/runs`
 The schedule's recorded runs, newest first, in the shape above.
+
+---
+
+## 20. FileMaker Data API (`/fmi/data`, `#208`)
+
+File4Base answers FileMaker clients at FileMaker Server's Data API paths, as FileMaker Server 26 does: same statuses, error codes and messages, key order and number spelling, as recorded by the conformance suite in `server/testdata/dataapi`. `v1`, `v2` and `vLatest` answer alike; any other version answers `400` with `{"response":{}}`, an unknown path Express's `404` page, and a known path with another method `405` (code `1704`). The API is off unless `FILE4BASE_DATA_API_DATABASES` lists the databases it serves, under the names FileMaker clients use.
+
+Access is opt-in twice: the operator serves the database (`FILE4BASE_DATA_API_DATABASES`), and an owner grants the `fmrest` privilege to the account roles that may use it ([`/api/v1/security/privileges`](#get-apiv1securityprivileges)), FileMaker's *Access via FileMaker Data API* extended privilege. Owners always hold it, as `[Full Access]` holds every extended privilege; `admin` and `user` hold it only once granted, including on a database upgraded from a version without it. An account whose role does not hold it is refused at sign-in with `401`, code `9` (`Insufficient privileges`). It is checked again on every call, so once it is withdrawn, the role's Data API tokens answer `401`, code `952`; Manage Security also ends those sessions at once. It is per role rather than per privilege set (`#213`). A migration grants it to a role when any privilege set mapped to that role carries `fmrest` in the Save a Copy as XML file, and reports the privilege sets of that role that did not. When the role already held accounts in the target database, the migration only reports it, since granting it would open the Data API to those accounts too. A solution file (`POST /api/v1/solutions/import`) restores it by the same rule: a file written before `fmrest` leaves it as it is, a file may withdraw it, and it grants it only to a role that held no account in the database before, otherwise it says so in the import's `warnings`. An account with two-step verification cannot sign in to the Data API, which cannot ask for the second factor; turning it on ends the account's Data API sessions at once, and a token whose account has it on is refused on its next call.
+
+Phase P1 serves:
+
+| Endpoint | Notes |
+|---|---|
+| `GET /fmi/data/{version}/productInfo` | No session. Name, then `buildDate` and `version` when configured, then the date and time formats. |
+| `GET /fmi/data/{version}/databases` | No session; Basic credentials are allowed and ignored, any other `Authorization` answers `401` (code `960`). The served databases that exist. |
+| `POST /fmi/data/{version}/databases/{database}/sessions` | Basic credentials of a local account of the database; the body is `{}` or `{"fmDataSource":[…]}`, checked but not used yet. `200` with the token in `response.token` and in `X-FM-Data-Access-Token`. The name matches in any case; the session is bound to the name as written. The sign-in throttle of `/api/v1` applies. |
+| `DELETE /fmi/data/{version}/databases/{database}/sessions/{token}` | Revokes the session at once. |
+| `GET /fmi/data/{version}/validateSession` | `Authorization: Bearer <token>`. Does not extend the session. |
+
+Phase P3 adds the metadata endpoints. Each takes `Authorization: Bearer <token>` and makes the checks every call with a session makes, in FileMaker Server's order.
+
+| Endpoint | Notes |
+|---|---|
+| `GET /fmi/data/{version}/databases/{database}/layouts` | The layout menu, in its order: `{"name","table"}` per layout (`table` is its table occurrence), `{"name":"-","table"}` per separator, `{"name","isFolder":true,"folderLayoutNames":[…]}` per folder. A layout the account has no access to (`none`) is left out; a folder is listed whatever it holds. Owners and admins see every layout. |
+| `GET /fmi/data/{version}/databases/{database}/scripts` | The script menu: `{"name","isFolder":false}` per script and separator (`"-"`), `{"name","folderScriptNames":[…],"isFolder":true}` per folder. |
+| `GET /fmi/data/{version}/databases/{database}/layouts/{layout}` | `fieldMetaData`, one entry per field object outside the portals, and `portalMetaData`, the row fields of each portal keyed by its object name (its occurrence's name when it has none). Each entry: `name` (`Occurrence::Field` for a related field), `type`, `displayType`, `result`, `global`, `autoEnter`, `fourDigitYear`, `maxRepeat`, `maxCharacters`, `notEmpty`, `numeric`, `timeOfDay`, `valueList` when the control has one, `repetitionStart`, `repetitionEnd`. A `recordId` query parameter must name a record of the layout's table that the account may read, otherwise `500`, code `101`. |
+| `GET /fmi/data/{version}/databases/{database}/layouts/{layout}/metadata` | The first Data API version's description: `metaData`, one entry per field outside the portals with `name`, `type`, `result`, `global` (`"true"`/`"false"`), `valueList`, `repetitions` and `id`; a repeating field is listed once per repetition shown, `Field(2)` with id `12_2`. |
+
+A layout is named as written in its menu, in any case; an unknown layout, or one the account has no access to, answers `500`, code `105`. The description follows the layout's own definition (`docs/specs/layout_schema.json`): an object that says its portal (`portal`, `""` for none), as a migrated one does, is where it says; any other is in the first portal of its panel whose bounds hold it wholly, as the client draws it. Field options come from the field (`type`, `result` and the validation and auto-enter facts), and `id` from FileMaker's own field id when the field was migrated. File4Base has no field-level privileges, so a field FileMaker would answer `<No Access>` for is described and read as any other ([#233](https://github.com/file4base/file4base-app/issues/233)).
+
+A Data API session is a session kind of its own: it is never accepted by `/api/v1`, and an `/api/v1` session is never accepted here. It expires after `FILE4BASE_DATA_API_SESSION_TTL` without a call (`401`, code `952`), and is revoked as soon as its account is deleted, disabled, demoted or given another password. Every other endpoint checks its request (content type, `Authorization`, the `_find` body and the record read query parameters) and its token as FileMaker Server does, then answers `500` with code `3` until its phase lands. Server accounts and accounts with two-step verification cannot sign in yet (`401`, code `212`). Replies carry no CORS or trace headers, and the request log redacts the token of a sign-out path. The bundled Web Client's Nginx proxies `/fmi/data` to the API over its own TLS and keeps it out of its access log; FileMaker clients should use that HTTPS address rather than the API's plain port.

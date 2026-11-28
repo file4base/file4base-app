@@ -2,12 +2,15 @@ package migration
 
 import (
 	"fmt"
+	"html"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/google/uuid"
 )
@@ -17,7 +20,9 @@ import (
 // FileMaker writes each part of a layout with its height (<Definition
 // size>), its own style and the objects drawn in it, and each object with
 // its <Bounds> in layout coordinates: the top of the layout is 0 and the
-// parts follow each other down. File4Base places objects the same way (a
+// parts follow each other down. An object inside a portal, a panel, a
+// group, a grouped button, a button bar or a popover's panel is written
+// from that container's top-left corner, and placed here on the layout. File4Base places objects the same way (a
 // part is the band its objects' tops fall in), so a part keeps its height
 // and an object its box, and the layout reads as it did.
 //
@@ -55,6 +60,11 @@ type layoutObjectContext struct {
 
 	counts map[string]*LayoutObjectCount
 	media  map[string]map[string]interface{}
+
+	// nestedAbsolute: the file writes the bounds of objects inside a
+	// container in layout coordinates, not from the container's corner
+	// (see nestedInLayoutCoordinates).
+	nestedAbsolute bool
 }
 
 func newLayoutObjectContext(root *xmlNode, bundle *schema.SolutionBundle, binding formulaBinding, dateOrder string) *layoutObjectContext {
@@ -107,7 +117,73 @@ func newLayoutObjectContext(root *xmlNode, bundle *schema.SolutionBundle, bindin
 	if ctx.defaultTheme == nil && len(ctx.themes) == 1 {
 		ctx.defaultTheme = only
 	}
+	ctx.nestedAbsolute = nestedInLayoutCoordinates(root)
 	return ctx
+}
+
+// nestedInLayoutCoordinates tells how a file writes the bounds of the
+// objects inside a container: a portal, a tab or slide control and its
+// panels, a group, a grouped button, a button bar or a popover's panel.
+// FileMaker's Save as XML writes them from the top-left corner of the
+// container they are in, so a portal's row objects sit in its first row
+// whatever the portal's place on the layout. An XML written by another
+// tool may give them in layout coordinates, as FileMaker gives the
+// containers on the layout. The file is taken to use layout coordinates
+// only when more of its nested objects lie within their container read
+// that way than read from the container's corner. A popover's panel is
+// the exception: FileMaker places it on the layout, wherever its button
+// is.
+func nestedInLayoutCoordinates(root *xmlNode) bool {
+	box := func(n *xmlNode) (b [4]float64, ok bool) {
+		bn := findFirstChild(n, "Bounds")
+		if bn == nil {
+			return b, false
+		}
+		for i, k := range []string{"top", "left", "bottom", "right"} {
+			b[i], _ = strconv.ParseFloat(firstAttr(bn, k), 64)
+		}
+		return b, true
+	}
+	within := func(b, c [4]float64) bool {
+		const slack = 1 + 1e-6 // FileMaker rounds bounds to fractions of a point
+		return b[0] >= c[0]-slack && b[1] >= c[1]-slack && b[2] <= c[2]+slack && b[3] <= c[3]+slack
+	}
+	layoutOnly, cornerOnly := 0, 0
+	// portalRows: the rows a portal container shows, 0 for another
+	// container.
+	var walk func(n *xmlNode, container *[4]float64, portalRows int)
+	walk = func(n *xmlNode, container *[4]float64, portalRows int) {
+		for _, c := range n.Children {
+			b, ok := box(c)
+			if c.Name != "LayoutObject" || !ok {
+				walk(c, container, portalRows)
+				continue
+			}
+			if container != nil && firstAttr(c, "type") != "PopoverPanel" {
+				asWritten := within(b, *container)
+				fromCorner := within(b, [4]float64{0, 0, container[2] - container[0], container[3] - container[1]})
+				if portalRows > 0 {
+					// A portal's row objects are in its first row.
+					row := (container[2] - container[0]) / float64(portalRows)
+					asWritten = within(b, [4]float64{container[0], container[1], container[0] + row, container[3]})
+					fromCorner = within(b, [4]float64{0, 0, row, container[3] - container[1]})
+				}
+				switch {
+				case asWritten && !fromCorner:
+					layoutOnly++
+				case fromCorner && !asWritten:
+					cornerOnly++
+				}
+			}
+			rows := 0
+			if o := childPath(c, "Portal", "Options"); o != nil && firstAttr(c, "type") == "Portal" {
+				rows, _ = strconv.Atoi(firstAttr(o, "show"))
+			}
+			walk(c, &b, rows)
+		}
+	}
+	walk(root, nil, 0)
+	return layoutOnly > cornerOnly
 }
 
 // isNativeLayout reports whether a layout is written the <FMSaveAsXML> way,
@@ -199,9 +275,13 @@ type nativeLayout struct {
 	buttonIcons    int             // icons dropped from buttons that have a label
 	portalsFar     int             // portals of an occurrence several relationships away, listed along the path
 	portalFilter   int             // portal filters that could not be bound, the portal kept empty
-	portalSort     int             // portal sort fields of another occurrence, left out of the sort
+	portalSort     int             // portal sort fields of another occurrence or in a value list's order, left out of the sort
 	formatsLeft    int             // conditional formats not kept
+	formatsDiffer  int             // "Value is" conditions kept as a calculation that compares with other values
+	formatsOff     int             // conditional formats switched off in FileMaker, left out
 	popovers       map[string]bool // ids of the popover buttons, whose panels open over the layout
+	inPortal       bool            // converting a portal's row objects
+	origin         [2]float64      // layout coordinates (x, y) the bounds being read are written from
 	vectorImage    int
 	mergeKept      int
 }
@@ -288,8 +368,42 @@ func convertNativeLayout(ln *xmlNode, ctx *layoutObjectContext, def map[string]i
 		}
 		l.objects = append(under, over...)
 	}
+	markOutsidePortals(l.objects)
 	def["objects"] = l.objects
 	return l.report()
+}
+
+// markOutsidePortals says `"portal": ""` on each object that lies within a
+// portal's bounds, on its panel, without being one of its row objects: a
+// client would otherwise take it for one, as an object's bounds are all
+// that tell where a layout drawn in the designer puts it.
+func markOutsidePortals(objects []map[string]interface{}) {
+	num := func(o map[string]interface{}, k string) float64 { f, _ := o[k].(float64); return f }
+	panel := func(o map[string]interface{}) string {
+		if p, _ := o["panel"].(map[string]interface{}); p != nil {
+			return fmt.Sprint(p["control"], "#", p["index"])
+		}
+		return ""
+	}
+	var portals []map[string]interface{}
+	for _, o := range objects {
+		if o["type"] == "portal" {
+			portals = append(portals, o)
+		}
+	}
+	for _, o := range objects {
+		if _, said := o["portal"]; said || o["type"] == "portal" {
+			continue
+		}
+		for _, p := range portals {
+			if panel(o) == panel(p) && num(o, "x") >= num(p, "x") && num(o, "y") >= num(p, "y") &&
+				num(o, "x")+num(o, "width") <= num(p, "x")+num(p, "width") &&
+				num(o, "y")+num(o, "height") <= num(p, "y")+num(p, "height") {
+				o["portal"] = ""
+				break
+			}
+		}
+	}
 }
 
 // nativeLayoutView reads the view a layout opens in from its options.
@@ -370,7 +484,7 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 		// sit.
 		if g := findFirstChild(obj, "GroupedButton"); g != nil {
 			if list := findFirstChild(g, "ObjectList"); list != nil {
-				l.convertList(list)
+				l.inside(obj, func() { l.convertList(list) })
 			}
 		}
 		l.ctx.count(kind).Migrated++
@@ -419,15 +533,34 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 	if ok {
 		base["id"] = l.objectID(obj)
 		l.conditionalFormats(obj, base)
+		l.textHideSelf(obj, base)
 		l.objects = append(l.objects, base)
 		l.ctx.count(kind).Migrated++
 	}
 }
 
-// conditionalFormats keeps a field's conditional formatting whose condition
-// is a calculation ("Formula is"), bound from the layout's occurrence, with
-// the text colour, fill, bold, italic and underline it gives. Conditions on
-// the field's value, and formats of other objects, are reported.
+// fmConditionOperands is, by the type of a <Condition>, how many values of
+// its <Range> the condition compares with: 0 is FileMaker's "Formula is",
+// 1 to 20 its "Value is" conditions, in the order of its menu: between, not
+// between, equal to, not equal to, greater than, less than, greater than or
+// equal to, less than or equal to, containing, not containing, beginning
+// with, ending with, empty, before today, today, after today, more than x
+// days passed, more than x days ahead, less than x days passed and less than
+// x days ahead.
+var fmConditionOperands = map[string]int{
+	"0": 0, "1": 2, "2": 2, "3": 1, "4": 1, "5": 1, "6": 1, "7": 1, "8": 1, "9": 1, "10": 1,
+	"11": 1, "12": 1, "13": 0, "14": 0, "15": 0, "16": 0, "17": 1, "18": 1, "19": 1, "20": 1,
+}
+
+// conditionalFormats keeps an object's conditional formatting, bound from the
+// layout's occurrence, with the text colour, fill, bold, italic and
+// underline it gives. FileMaker writes every condition as the calculation it
+// evaluates, a "Value is" condition too (greater than 0 as Self>0, a date
+// as Date(3;15;1990)): each is kept as that calculation, Self included,
+// which Browse mode answers as the object's value (a field's, so it
+// compares as the field's type does, or the text a text or a button
+// shows). Formats that cannot be bound, and formats of other objects, are
+// reported.
 func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface{}) {
 	f := childPath(obj, "Conditions", "Formatting")
 	if f == nil {
@@ -439,15 +572,27 @@ func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface
 		if c.Name != "Condition" {
 			continue
 		}
+		// Bit 0 of <Options> is the condition's check box in FileMaker's
+		// dialog: a condition switched off is never applied.
+		if opt := findFirstChild(c, "Options"); opt != nil {
+			if o, err := strconv.Atoi(strings.TrimSpace(opt.Text)); err == nil && o&1 == 0 {
+				l.formatsOff++
+				continue
+			}
+		}
+		operands, known := fmConditionOperands[firstAttr(c, "type")]
 		formula := calculationText(c)
-		if out["type"] != "field" || style == nil || firstAttr(c, "type") != "0" || formula == "" {
+		if !formattedKinds[out["type"]] || style == nil || !known || formula == "" {
 			l.formatsLeft++
 			continue
 		}
-		bound, ok := l.bindFormula(formula)
-		if !ok {
+		bound, ok := l.bindCondition(formula)
+		if !ok || !l.selfReadable(obj, out, formula) {
 			l.formatsLeft++
 			continue
+		}
+		if !rangeInFormula(findFirstChild(c, "Range"), operands, formula) {
+			l.formatsDiffer++
 		}
 		css := resolveStyle(nil, nil, findFirstChild(c, "LocalCSS"))
 		rule := map[string]interface{}{"operator": "formula", "value": bound}
@@ -472,6 +617,221 @@ func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface
 	if len(rules) > 0 {
 		style["conditional_rules"] = rules
 	}
+}
+
+// formattedKinds are the objects whose conditional formatting is kept:
+// fields, texts and buttons (a popover's and a button bar's segments too),
+// the objects FileMaker's dialog formats. A grouped button's formats, which
+// FileMaker applies to the objects it groups, are not kept.
+var formattedKinds = map[interface{}]bool{"field": true, "label": true, "button": true, "popover_button": true}
+
+// selfReadable reports whether the Self of a condition of the object obj,
+// converted as out, can be answered. In a text's and a button's conditions
+// Self is the text they show, which Browse mode sends: one that merges
+// fields shows another text on each record, and one FileMaker computes
+// (a button's calculated label) is not known, so a condition reading those
+// is not kept. In a field's, Self is the value the object shows (in each
+// repetition and each portal row it shows), and the condition is kept when
+// that field is one the import has: it is bound once more with Self written
+// as the object's field, Occurrence::Field as FileMaker names them, to tell.
+func (l *nativeLayout) selfReadable(obj *xmlNode, out map[string]interface{}, formula string) bool {
+	opts, _ := l.ctx.binding.options(l.table)
+	if out["type"] != "field" {
+		if textSelfKnown(obj, out) {
+			return true
+		}
+		replaced, err := calc.ReplaceSelf(formula, opts, "")
+		return err == nil && replaced == formula
+	}
+	ref := childPath(obj, "Field", "FieldReference")
+	name, occName := "", l.occName
+	if ref != nil {
+		name = referencedFieldName(ref)
+		if to := findFirstChild(ref, "TableOccurrenceReference"); to != nil && firstAttr(to, "name") != "" {
+			occName = firstAttr(to, "name")
+		}
+	}
+	if name == "" || strings.ContainsAny(name+occName, "{}") {
+		// Self names nothing a formula can write: the formula stands only
+		// if it does not read it.
+		replaced, err := calc.ReplaceSelf(formula, opts, "")
+		return err == nil && replaced == formula
+	}
+	replaced, err := calc.ReplaceSelf(formula, opts, calc.QuoteQualifiedName(occName, name))
+	if err != nil || replaced == formula {
+		return true
+	}
+	_, ok := l.bindCondition(replaced)
+	return ok
+}
+
+// textSelfKnown reports whether Browse mode knows the Self of the text or
+// button obj, converted as out: the text it shows, unless it merges a
+// field or FileMaker computes it (see selfReadable).
+func textSelfKnown(obj *xmlNode, out map[string]interface{}) bool {
+	text, _ := out["text"].(string)
+	return !strings.Contains(text, "{{") && !fmMergeField.MatchString(text) && !calculatedLabel(obj)
+}
+
+// textHideSelf drops the hide condition of a text or a button that reads a
+// Self Browse mode does not know (see textSelfKnown), which it would
+// answer with another text: it is reported as a hide condition that could
+// not be bound, as FileMaker's would show the object otherwise.
+func (l *nativeLayout) textHideSelf(obj *xmlNode, out map[string]interface{}) {
+	hide, _ := out["hide_when"].(string)
+	if hide == "" || !formattedKinds[out["type"]] || out["type"] == "field" || textSelfKnown(obj, out) {
+		return
+	}
+	// The bound formula reads the imported names.
+	if replaced, err := calc.ReplaceSelf(hide, calc.Options{Library: l.ctx.binding.stored}, ""); err == nil && replaced == hide {
+		return
+	}
+	delete(out, "hide_when")
+	delete(out, "hide_in_find")
+	l.hideUnbound++
+}
+
+// calculatedLabel reports whether the button obj (a popover button, a
+// segment of a button bar) shows a label FileMaker computes, which the
+// migration keeps only when it is a constant.
+func calculatedLabel(obj *xmlNode) bool {
+	for _, holder := range []string{"Button", "PopoverButton"} {
+		lb := childPath(obj, holder, "Label")
+		if lb == nil || findFirstChild(lb, "Text") != nil || findFirstChild(lb, "Calculation") == nil {
+			continue
+		}
+		if _, ok := calcLiteral(calculationText(lb)); !ok {
+			return true
+		}
+	}
+	return false
+}
+
+// bindCondition binds a conditional format's or a hide condition's
+// calculation from the layout's occurrence, as FileMaker reads it. Browse
+// mode evaluates a portal row's from the portal's occurrence, against the
+// row's record, as it does the portal filter: the layout's own fields are
+// then written qualified, for them to read the layout's record still.
+func (l *nativeLayout) bindCondition(formula string) (string, bool) {
+	if !l.inPortal {
+		return l.bindFormula(formula)
+	}
+	return l.bindQualified(formula)
+}
+
+// bindQualified binds a formula of a portal row from the layout's
+// occurrence, with the layout's own fields written qualified: Browse mode
+// reads a field named alone from the row, and one of the layout's
+// occurrence from the layout's record (see the evaluate route's context).
+func (l *nativeLayout) bindQualified(formula string) (string, bool) {
+	bound, ok := l.bindFormula(formula)
+	if !ok {
+		return "", false
+	}
+	// The bound formula reads the imported names.
+	opts := calc.Options{Library: l.ctx.binding.stored}
+	qualified, unresolved, err := calc.Rewrite(bound, opts, func(occurrence, field string) (string, bool) {
+		if occurrence == "" {
+			occurrence = l.occName
+		}
+		return calc.QuoteQualifiedName(occurrence, field), true
+	})
+	if err != nil || len(unresolved) > 0 {
+		return "", false
+	}
+	return qualified, true
+}
+
+// rangeInFormula reports whether the calculation FileMaker keeps for a
+// "Value is" condition compares with the values its <Range> shows (the
+// first operands of Start and End): a number is one of the formula's
+// numbers, sign included; anything else is one of its quoted texts, or its
+// digits are among the formula's, as 15/03/1990 is written Date(3;15;1990).
+// An export was seen to keep, for a condition showing greater than one
+// number, a calculation comparing with another.
+func rangeInFormula(r *xmlNode, operands int, formula string) bool {
+	if operands == 0 || r == nil {
+		return true
+	}
+	texts, numbers, digits := formulaLiterals(formula)
+	for _, tag := range []string{"Start", "End"}[:operands] {
+		n := findFirstChild(r, tag)
+		if n == nil || strings.TrimSpace(n.Text) == "" {
+			continue
+		}
+		// FileMaker writes the quotes of a value typed in quotes, which
+		// it compares as that text, as &quot;.
+		v := html.UnescapeString(strings.TrimSpace(n.Text))
+		if len(v) >= 2 && strings.HasPrefix(v, `"`) && strings.HasSuffix(v, `"`) {
+			v = v[1 : len(v)-1]
+		}
+		if slices.ContainsFunc(texts, func(t string) bool { return strings.EqualFold(t, v) }) {
+			continue
+		}
+		if fmNumber.MatchString(v) {
+			if !slices.Contains(numbers, fmNumberValue(v)) {
+				return false
+			}
+			continue
+		}
+		runs := fmDigitRuns.FindAllString(v, -1)
+		if len(runs) == 0 {
+			return false
+		}
+		for _, d := range runs {
+			if !digits[strings.TrimLeft(d, "0")] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+var (
+	fmDigitRuns     = regexp.MustCompile(`[0-9]+`)
+	fmNumber        = regexp.MustCompile(`^-?[0-9]+(?:[.,][0-9]+)?$`)
+	fmNumberLiteral = regexp.MustCompile(`-?[0-9]+(?:[.,][0-9]+)?`)
+)
+
+// fmNumberValue is the value of a number written with "." or ",".
+func fmNumberValue(s string) float64 {
+	f, _ := strconv.ParseFloat(strings.Replace(s, ",", ".", 1), 64)
+	return f
+}
+
+// formulaLiterals are the quoted texts of a formula, unescaped, the numbers
+// written outside them, and their runs of digits without leading zeros.
+func formulaLiterals(formula string) (texts []string, numbers []float64, digits map[string]bool) {
+	digits = map[string]bool{}
+	var outside, text strings.Builder
+	quoted := false
+	runes := []rune(formula)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		switch {
+		case !quoted && r == '"':
+			quoted = true
+			text.Reset()
+		case quoted && r == '\\' && i+1 < len(runes):
+			i++
+			text.WriteRune(runes[i])
+		case quoted && r == '"':
+			quoted = false
+			texts = append(texts, text.String())
+			outside.WriteRune(' ')
+		case quoted:
+			text.WriteRune(r)
+		default:
+			outside.WriteRune(r)
+		}
+	}
+	for _, n := range fmNumberLiteral.FindAllString(outside.String(), -1) {
+		numbers = append(numbers, fmNumberValue(n))
+	}
+	for _, d := range fmDigitRuns.FindAllString(outside.String(), -1) {
+		digits[strings.TrimLeft(d, "0")] = true
+	}
+	return texts, numbers, digits
 }
 
 // panelControl converts a tab or slide control: the control itself, drawn
@@ -531,7 +891,7 @@ func (l *nativeLayout) panelControl(obj *xmlNode, kind string) {
 		start := len(l.objects)
 		if inner != nil {
 			if objects := findFirstChild(inner, "ObjectList"); objects != nil {
-				l.convertList(objects)
+				l.inside(obj, func() { l.inside(p, func() { l.convertList(objects) }) })
 			}
 		}
 		for _, o := range l.objects[start:] {
@@ -554,7 +914,7 @@ func (l *nativeLayout) baseObject(obj *xmlNode) map[string]interface{} {
 	num := func(k string) float64 { f, _ := strconv.ParseFloat(firstAttr(b, k), 64); return f }
 	top, left, bottom, right := num("top"), num("left"), num("bottom"), num("right")
 	out := map[string]interface{}{
-		"x": left, "y": top,
+		"x": l.origin[0] + left, "y": l.origin[1] + top,
 		"width": math.Max(0, right-left), "height": math.Max(0, bottom-top),
 	}
 	if name := firstAttr(obj, "name"); name != "" {
@@ -569,7 +929,7 @@ func (l *nativeLayout) baseObject(obj *xmlNode) map[string]interface{} {
 		if hide := findFirstChild(cond, "Hide"); hide != nil {
 			formula := calculationText(hide)
 			if formula != "" {
-				if bound, ok := l.bindFormula(formula); ok {
+				if bound, ok := l.bindCondition(formula); ok {
 					out["hide_when"] = bound
 					if parseBoolAttr(hide, "findMode") {
 						out["hide_in_find"] = true
@@ -581,6 +941,20 @@ func (l *nativeLayout) baseObject(obj *xmlNode) map[string]interface{} {
 		}
 	}
 	return out
+}
+
+// inside converts the objects of a container with their bounds read from
+// its top-left corner, as FileMaker writes them (see
+// nestedInLayoutCoordinates).
+func (l *nativeLayout) inside(container *xmlNode, convert func()) {
+	outer := l.origin
+	if b := findFirstChild(container, "Bounds"); b != nil && !l.ctx.nestedAbsolute {
+		top, _ := strconv.ParseFloat(firstAttr(b, "top"), 64)
+		left, _ := strconv.ParseFloat(firstAttr(b, "left"), 64)
+		l.origin = [2]float64{outer[0] + left, outer[1] + top}
+	}
+	convert()
+	l.origin = outer
 }
 
 // bindFormula binds a calculation of the layout to the imported names.
@@ -818,10 +1192,19 @@ func (l *nativeLayout) field(obj *xmlNode, kind string, out map[string]interface
 			}
 			binding["repetitions_shown"] = n
 		}
-		if vl := findFirstChild(display, "ValueListReference"); vl != nil && control[0] != "edit_box" && control[0] != "drop_down_calendar" {
+		// Kept for every control, as FileMaker keeps it: an edit box's
+		// value list is the one it auto-completes from and the Data API
+		// names it, though only a list control shows it here.
+		if vl := findFirstChild(display, "ValueListReference"); vl != nil {
 			if id := l.ctx.valueLists[strings.ToLower(firstAttr(vl, "name"))]; id != "" {
 				binding["value_list_id"] = id
 			}
+		}
+		// Display Style 5 is taken as the concealed edit box, the one
+		// style number no other control uses (unverified: no export seen
+		// has one).
+		if control[0] == "edit_box" && kind == "Edit Box" && firstAttr(display, "Style") == "5" {
+			binding["concealed"] = true
 		}
 		if ph := findFirstChild(display, "Placeholder"); ph != nil {
 			if text, ok := calcLiteral(calculationText(ph)); ok && text != "" {
@@ -1092,10 +1475,16 @@ func (l *nativeLayout) report() []ReportItem {
 		review = append(review, plural(l.portalFilter, "portal")+" whose filter calculation could not be bound, showing no records until it is set again")
 	}
 	if l.portalSort > 0 {
-		review = append(review, plural(l.portalSort, "portal sort field")+" of another occurrence, left out of the portal's sort")
+		review = append(review, plural(l.portalSort, "portal sort field")+" of another occurrence or in a value list's order, left out of the portal's sort")
 	}
 	if l.formatsLeft > 0 {
-		review = append(review, plural(l.formatsLeft, "conditional format")+" not kept (a condition on the value, not a calculation; one that could not be bound; or on an object other than a field)")
+		review = append(review, plural(l.formatsLeft, "conditional format")+" not kept (a condition that could not be bound, or on an object other than a field, a text or a button)")
+	}
+	if l.formatsOff > 0 {
+		review = append(review, plural(l.formatsOff, "conditional format")+" switched off in FileMaker, left out")
+	}
+	if l.formatsDiffer > 0 {
+		review = append(review, plural(l.formatsDiffer, "conditional format")+" whose \"Value is\" condition shows other values than the calculation FileMaker keeps for it, kept as that calculation")
 	}
 	if l.mergeKept > 0 {
 		review = append(review, plural(l.mergeKept, "merge field")+" of a related field or a variable, shown as FileMaker wrote it")
@@ -1398,21 +1787,50 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 		}
 		if n, err := strconv.Atoi(firstAttr(o, "show")); err == nil && n > 0 {
 			config["row_count"] = n
+			// FileMaker divides the portal into its rows, however short.
+			if h, _ := base["height"].(float64); h > 0 {
+				config["row_height"] = h / float64(n)
+			}
 		}
 	}
 	if spec := findFirstChild(p, "SortSpecification"); spec != nil {
+		// sort is what the portal sorts its rows by here: fields of its own
+		// occurrence, ascending or descending. sort_fields is FileMaker's
+		// whole sort order, fields of another occurrence and value list
+		// orders included.
 		var keys []string
+		var fields []interface{}
 		for _, sort := range findNodes(spec, "Sort") {
 			ref := childPath(sort, "PrimaryField", "FieldReference")
 			if ref == nil {
 				continue
 			}
 			column, at, ok := l.column(ref)
-			if !ok || at.id != occ.id {
+			if !ok {
 				l.portalSort++
 				continue
 			}
-			if firstAttr(sort, "type") == "Descending" {
+			order := "ascending"
+			switch firstAttr(sort, "type") {
+			case "Descending":
+				order = "descending"
+			case "Custom":
+				order = "custom"
+			}
+			field := map[string]interface{}{"field_name": column, "table_occurrence": at.name, "order": order}
+			if order == "custom" {
+				if vl := findFirstChild(sort, "ValueListReference"); vl != nil {
+					if id := l.ctx.valueLists[strings.ToLower(firstAttr(vl, "name"))]; id != "" {
+						field["value_list_id"] = id
+					}
+				}
+			}
+			fields = append(fields, field)
+			if at.id != occ.id || order == "custom" {
+				l.portalSort++
+				continue
+			}
+			if order == "descending" {
 				column = "-" + column
 			}
 			keys = append(keys, column)
@@ -1420,14 +1838,29 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 		if len(keys) > 0 {
 			config["sort"] = strings.Join(keys, ",")
 		}
+		if len(fields) > 0 {
+			config["sort_fields"] = fields
+		}
 	}
 	if c := findFirstChild(p, "Calculation"); c != nil {
-		if formula := calculationText(c); formula != "" {
-			// FileMaker evaluates the filter from the portal's occurrence,
-			// against each related record.
-			fb := l.ctx.binding.bind(occ.table, formula, occ.name, fmt.Sprintf("the portal filter of the layout %q", l.name))
-			if fb.why == "" && !occ.external {
-				config["filter"] = fb.rewritten
+		// A field of a file closed at export is named by its id only.
+		if formula := strings.TrimSpace(markNamelessFieldReferences(c, calculationText(c))); formula != "" {
+			// FileMaker evaluates the filter on each related record, from
+			// the layout: Browse mode reads a field named alone from the
+			// row, so one of the portal's occurrence is written so, bound
+			// from it; one of another solution's table is named only
+			// through its occurrence, so its filter is bound from the
+			// layout, the layout's fields qualified.
+			var filter string
+			var ok bool
+			if occ.external {
+				filter, ok = l.bindQualified(formula)
+			} else {
+				fb := l.ctx.binding.bind(occ.table, formula, occ.name, fmt.Sprintf("the portal filter of the layout %q", l.name))
+				filter, ok = fb.rewritten, fb.why == ""
+			}
+			if ok {
+				config["filter"] = filter
 			} else {
 				// Rows the filter would leave out are never shown.
 				config["filter"] = "0"
@@ -1443,8 +1876,61 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 	l.objects = append(l.objects, base)
 	l.ctx.count("Portal").Migrated++
 	if list := findFirstChild(p, "ObjectList"); list != nil {
-		l.convertList(list)
+		outer, first := l.inPortal, len(l.objects)
+		l.inPortal = true
+		l.inside(obj, func() { l.convertList(list) })
+		l.inPortal = outer
+		// The portal's row objects say they are its, as FileMaker nests
+		// them in it: their bounds alone do not tell. FileMaker draws them
+		// within the portal, so one jutting out of it, often by a fraction
+		// of a point at its border, is drawn to the portal's edge.
+		for _, o := range l.objects[first:] {
+			if _, ok := o["portal"]; !ok {
+				o["portal"] = base["id"]
+				// A popover's panel opened from a row is drawn over the
+				// layout, not in the row.
+				if _, onPanel := o["panel"]; !onPanel {
+					clipToBox(o, base)
+				}
+			}
+		}
 	}
+}
+
+// clipToBox trims the box of o to the part of it within box, when they
+// overlap, so that a client adding up its x and width (y and height) finds
+// it within box.
+func clipToBox(o, box map[string]interface{}) {
+	num := func(m map[string]interface{}, k string) float64 { f, _ := m[k].(float64); return f }
+	clip := func(pos, size, boxPos, boxSize string) bool {
+		start, end := num(o, pos), num(o, pos)+num(o, size)
+		limit := num(box, pos) + num(box, boxSize)
+		if start >= num(box, pos) && end <= limit {
+			return true
+		}
+		start, end = math.Max(start, num(box, pos)), math.Min(end, limit)
+		if end <= start {
+			return false
+		}
+		extent := end - start
+		for extent > 0 && start+extent > limit {
+			extent = math.Nextafter(extent, 0)
+		}
+		o[pos], o[size] = start, extent
+		return true
+	}
+	if !overlaps(o, box) {
+		return
+	}
+	clip("x", "width", "x", "width")
+	clip("y", "height", "y", "height")
+}
+
+// overlaps reports whether the boxes of a and b share some area.
+func overlaps(a, b map[string]interface{}) bool {
+	num := func(m map[string]interface{}, k string) float64 { f, _ := m[k].(float64); return f }
+	return num(a, "x") < num(b, "x")+num(b, "width") && num(b, "x") < num(a, "x")+num(a, "width") &&
+		num(a, "y") < num(b, "y")+num(b, "height") && num(b, "y") < num(a, "y")+num(a, "height")
 }
 
 // popover converts a popover button: the button, then its panel's
@@ -1463,6 +1949,8 @@ func (l *nativeLayout) popover(obj *xmlNode) {
 	base["default_panel"] = -1
 	id := l.objectID(obj)
 	base["id"] = id
+	l.conditionalFormats(obj, base)
+	l.textHideSelf(obj, base)
 	l.objects = append(l.objects, base)
 	l.ctx.count("Popover Button").Migrated++
 	if l.popovers == nil {
@@ -1479,6 +1967,10 @@ func (l *nativeLayout) popover(obj *xmlNode) {
 		return
 	}
 	start := len(l.objects)
+	// The panel is placed on the layout, its objects from its corner.
+	outer := l.origin
+	l.origin = [2]float64{}
+	defer func() { l.origin = outer }()
 	if back := l.baseObject(panel); back != nil {
 		back["type"] = "rect"
 		style := l.style(panel, []string{"popover"}, false)
@@ -1495,7 +1987,7 @@ func (l *nativeLayout) popover(obj *xmlNode) {
 		l.ctx.count("PopoverPanel").Migrated++
 	}
 	if list := findFirstChild(panel, "ObjectList"); list != nil {
-		l.convertList(list)
+		l.inside(panel, func() { l.convertList(list) })
 	}
 	for _, o := range l.objects[start:] {
 		if _, nested := o["panel"]; !nested {
@@ -1512,7 +2004,7 @@ func (l *nativeLayout) groupedButton(obj *xmlNode) {
 		return
 	}
 	if list := findFirstChild(g, "ObjectList"); list != nil {
-		l.convertList(list)
+		l.inside(obj, func() { l.convertList(list) })
 	}
 	base := l.baseObject(obj)
 	if base == nil {
@@ -1525,6 +2017,8 @@ func (l *nativeLayout) groupedButton(obj *xmlNode) {
 		base["action"] = action
 	}
 	base["id"] = l.objectID(obj)
+	// Its formats are reported, not kept (see formattedKinds).
+	l.conditionalFormats(obj, map[string]interface{}{"type": "grouped_button"})
 	l.objects = append(l.objects, base)
 	l.ctx.count("Grouped Button").Migrated++
 }
@@ -1535,20 +2029,28 @@ func (l *nativeLayout) buttonBar(obj *xmlNode) {
 	if list == nil {
 		return
 	}
-	for _, seg := range list.Children {
-		if seg.Name != "LayoutObject" {
-			continue
+	l.inside(obj, func() {
+		for _, seg := range list.Children {
+			if seg.Name != "LayoutObject" {
+				continue
+			}
+			if firstAttr(seg, "type") == "Popover Button" {
+				l.popover(seg) // a segment opening a popover
+				continue
+			}
+			base := l.baseObject(seg)
+			if base == nil {
+				continue
+			}
+			if l.button(seg, findFirstChild(seg, "Button"), base) {
+				base["id"] = l.objectID(seg)
+				l.conditionalFormats(seg, base)
+				l.textHideSelf(seg, base)
+				l.objects = append(l.objects, base)
+				l.ctx.count("Button").Migrated++
+			}
 		}
-		base := l.baseObject(seg)
-		if base == nil {
-			continue
-		}
-		if l.button(seg, findFirstChild(seg, "Button"), base) {
-			base["id"] = l.objectID(seg)
-			l.objects = append(l.objects, base)
-			l.ctx.count("Button").Migrated++
-		}
-	}
+	})
 	l.ctx.count("Button Bar").Migrated++
 }
 

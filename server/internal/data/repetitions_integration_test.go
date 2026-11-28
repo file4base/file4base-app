@@ -21,14 +21,14 @@ import (
 func TestRepeatingFields(t *testing.T) {
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 		return
 	}
 	defer driver.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 		return
 	}
 

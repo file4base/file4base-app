@@ -45,8 +45,10 @@ type ColumnDefinition struct {
 type TableDefinition struct {
 	Name    string
 	Columns []ColumnDefinition
-	// CreationOrder adds the column the table's records are numbered in as
-	// they are created (CreationOrderColumn), which every user table has.
+	// CreationOrder adds the columns of a record's identity, which every
+	// user table has: the number its records are given as they are created
+	// (CreationOrderColumn), and how many times each was modified
+	// (ModCountColumn).
 	CreationOrder bool
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/autoenter"
 	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/containermeta"
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/repetition"
 	"github.com/file4base/file4base-app/server/internal/sourcetext"
@@ -181,6 +182,9 @@ type ColumnMetadata struct {
 	// migration, so another solution's occurrences that name the field only
 	// by id find it (#107). Empty for a field not migrated from FileMaker.
 	SourceFieldID string `json:"source_field_id,omitempty"`
+	// SourceType is FileMaker's type of a migrated field where File4Base's
+	// own does not say it (see SourceType), empty otherwise.
+	SourceType string `json:"source_type,omitempty"`
 }
 
 // RelationshipMetadata represents an occurrence join in sys_relationships.
@@ -268,6 +272,9 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		`ALTER TABLE sys_columns ADD COLUMN IF NOT EXISTS max_repetitions INT NOT NULL DEFAULT 1;`,
 		// FileMaker field ids (see migrations/005_external_occurrences.sql).
 		`ALTER TABLE sys_columns ADD COLUMN IF NOT EXISTS source_field_id VARCHAR(32);`,
+		// FileMaker's type of a migrated field where File4Base's does not
+		// say it (see migrations/012_layout_catalog.sql).
+		`ALTER TABLE sys_columns ADD COLUMN IF NOT EXISTS source_type VARCHAR(32);`,
 		`CREATE TABLE IF NOT EXISTS sys_table_occurrences (
 			id VARCHAR(36) PRIMARY KEY,
 			base_table_id VARCHAR(36) REFERENCES sys_tables(id) ON DELETE CASCADE,
@@ -298,6 +305,8 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		);`,
 		// The match criteria of a relationship after its first.
 		relationshipPredicatesSQL(ts),
+		// Deleted FileMaker fields (see migrations/011_deleted_source_fields.sql).
+		deletedSourceFieldsSQL,
 		relationshipColumnNamesSQL[0],
 		relationshipColumnNamesSQL[1],
 		`CREATE TABLE IF NOT EXISTS sys_layouts (
@@ -308,6 +317,10 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			created_at ` + ts + `,
 			updated_at ` + ts + `
 		);`,
+		// The layout menu's order and folders (see
+		// migrations/012_layout_catalog.sql).
+		`ALTER TABLE sys_layouts ADD COLUMN IF NOT EXISTS folder_id VARCHAR(36);`,
+		`ALTER TABLE sys_layouts ADD COLUMN IF NOT EXISTS position INT;`,
 		`CREATE TABLE IF NOT EXISTS sys_value_lists (
 			id VARCHAR(36) PRIMARY KEY,
 			name VARCHAR(128) NOT NULL UNIQUE,
@@ -475,14 +488,18 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			report TEXT
 		);`,
 		// Capabilities granted per account role (#39). A role without a
-		// row holds every capability, so a database created before this
-		// table existed keeps working unrestricted.
+		// row holds every bulk capability, so a database created before
+		// this table existed keeps working unrestricted; the Data API
+		// (fmrest) is held only once granted.
 		`CREATE TABLE IF NOT EXISTS sys_privileges (
 			role VARCHAR(32) PRIMARY KEY,
 			bulk_export BOOLEAN NOT NULL DEFAULT TRUE,
 			bulk_import BOOLEAN NOT NULL DEFAULT TRUE,
+			fmrest BOOLEAN NOT NULL DEFAULT FALSE,
 			updated_at ` + ts + `
 		);`,
+		// Data API access (see migrations/009_privilege_fmrest.sql).
+		`ALTER TABLE sys_privileges ADD COLUMN IF NOT EXISTS fmrest BOOLEAN NOT NULL DEFAULT FALSE;`,
 		`CREATE TABLE IF NOT EXISTS sys_scripts (
 			id VARCHAR(36) PRIMARY KEY,
 			name VARCHAR(128) NOT NULL,
@@ -492,6 +509,10 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			created_at ` + ts + `,
 			updated_at ` + ts + `
 		);`,
+		// The script menu's order; folder_id is a folder of sys_catalog_items
+		// (see migrations/012_layout_catalog.sql).
+		`ALTER TABLE sys_scripts ADD COLUMN IF NOT EXISTS position INT;`,
+		catalogItemsSQL(ts),
 		`CREATE TABLE IF NOT EXISTS sys_script_steps (
 			id VARCHAR(36) PRIMARY KEY,
 			script_id VARCHAR(36) NOT NULL REFERENCES sys_scripts(id) ON DELETE CASCADE,
@@ -517,6 +538,10 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 	// older one end up with the same columns and foreign keys.
 	queries = append(queries, valueListOptionsSQL(s.driver.Dialect().Engine())...)
 	queries = append(queries, customFunctionNameIndexSQL(s.driver.Dialect().Engine())...)
+	// MariaDB's record ID allocators (see dbal.RecordIDsTable).
+	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
+		queries = append(queries, dbal.RecordIDsTableSQL)
+	}
 
 	db := s.driver.DB()
 	for _, q := range queries {
@@ -530,8 +555,9 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		return err
 	}
 	upgradedCatalogs.Store(db, true)
-	// Every user table numbers its records in creation order.
-	if err := s.ensureCreationOrder(ctx); err != nil {
+	// Every user table numbers its records in creation order and counts
+	// their modifications.
+	if err := s.ensureRecordIdentity(ctx); err != nil {
 		return err
 	}
 
@@ -780,6 +806,9 @@ func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetad
 	if !ValidSourceFieldID(col.SourceFieldID) {
 		return nil, fmt.Errorf("%w: source_field_id is a FileMaker field id, digits only", ErrInvalidFieldOptions)
 	}
+	if !ValidSourceType(col.SourceType) {
+		return nil, fmt.Errorf("%w: source_type %q is not a FileMaker field type File4Base keeps", ErrInvalidFieldOptions, col.SourceType)
+	}
 
 	// Retrieve target table name
 	db := s.driver.DB()
@@ -850,11 +879,11 @@ func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetad
 	}
 
 	// Insert into sys_columns
-	insertColSQL := `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, source_field_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+	insertColSQL := `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, source_field_id, source_type) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 	if dialect.Engine() == dbal.EngineMariaDB {
-		insertColSQL = `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, source_field_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		insertColSQL = `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, source_field_id, source_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	}
-	if _, err := tx.ExecContext(ctx, insertColSQL, col.ID, col.TableID, col.Name, col.DisplayName, string(col.FieldType), col.IsNullable, col.IsPrimaryKey, col.DefaultValue, col.CalculationFormula, col.ValidationRules, col.CreatedAt, col.MaxRepetitions, nullable(col.SourceFieldID)); err != nil {
+	if _, err := tx.ExecContext(ctx, insertColSQL, col.ID, col.TableID, col.Name, col.DisplayName, string(col.FieldType), col.IsNullable, col.IsPrimaryKey, col.DefaultValue, col.CalculationFormula, col.ValidationRules, col.CreatedAt, col.MaxRepetitions, nullable(col.SourceFieldID), nullable(col.SourceType)); err != nil {
 		return nil, fmt.Errorf("failed registering column in sys_columns: %w", err)
 	}
 	if err := s.syncUniqueIndex(ctx, tx, tableName, col.Name, col.FieldType, rules); err != nil {
@@ -900,6 +929,15 @@ func (s *Service) syncUniqueIndex(ctx context.Context, db interface {
 			// The index goes with its generated column; neither may exist yet.
 			_, _ = db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", qTable, index))
 			_, _ = db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", qTable, index))
+			return nil
+		}
+		// Already unique: adding the column and index again would fail.
+		var present int
+		if err := s.driver.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.statistics
+			WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`, table, name).Scan(&present); err != nil {
+			return fmt.Errorf("the unique index of %s could not be looked up: %w", field, err)
+		}
+		if present > 0 {
 			return nil
 		}
 		value := fmt.Sprintf("CAST(%s AS CHAR)", qField)
@@ -960,13 +998,13 @@ func (s *Service) DeleteColumn(ctx context.Context, tableID string, columnID str
 	}
 
 	// 2. Get column name and check primary key
-	var colName string
+	var colName, sourceFieldID string
 	var isPrimaryKey bool
-	qCol := `SELECT name, is_primary_key FROM sys_columns WHERE id = $1 AND table_id = $2`
+	qCol := `SELECT name, is_primary_key, COALESCE(source_field_id, '') FROM sys_columns WHERE id = $1 AND table_id = $2`
 	if dialect.Engine() == dbal.EngineMariaDB {
-		qCol = `SELECT name, is_primary_key FROM sys_columns WHERE id = ? AND table_id = ?`
+		qCol = `SELECT name, is_primary_key, COALESCE(source_field_id, '') FROM sys_columns WHERE id = ? AND table_id = ?`
 	}
-	if err := db.QueryRowContext(ctx, qCol, columnID, tableID).Scan(&colName, &isPrimaryKey); err != nil {
+	if err := db.QueryRowContext(ctx, qCol, columnID, tableID).Scan(&colName, &isPrimaryKey, &sourceFieldID); err != nil {
 		return fmt.Errorf("column not found: %w", err)
 	}
 
@@ -989,12 +1027,23 @@ func (s *Service) DeleteColumn(ctx context.Context, tableID string, columnID str
 	if err := s.ensureRelationshipPredicates(ctx); err != nil {
 		return err
 	}
+	if sourceFieldID != "" {
+		if err := s.ensureDeletedSourceFields(ctx); err != nil {
+			return err
+		}
+	}
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+
+	// A migrated field keeps its place among its table's FileMaker fields,
+	// which Import Records steps read by position (#191).
+	if err := s.recordDeletedSourceField(ctx, tx, tableID, sourceFieldID); err != nil {
+		return err
+	}
 
 	// A relationship matching on the field goes with it, whichever of its
 	// criteria names the field: dropping only that criterion would leave a
@@ -1243,9 +1292,9 @@ func (s *Service) TableByName(ctx context.Context, name string) (table *TableMet
 // tableColumns reads the columns of a registered table, with their
 // source_field_id (#107), in the order they were created.
 func (s *Service) tableColumns(ctx context.Context, tableID string) ([]ColumnMetadata, error) {
-	colQuery := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, '') FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
+	colQuery := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, ''), COALESCE(source_type, '') FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
 	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
-		colQuery = `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, '') FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
+		colQuery = `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, ''), COALESCE(source_type, '') FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
 	}
 	rows, err := s.driver.DB().QueryContext(ctx, colQuery, tableID)
 	if err != nil {
@@ -1256,7 +1305,7 @@ func (s *Service) tableColumns(ctx context.Context, tableID string) ([]ColumnMet
 	for rows.Next() {
 		var c ColumnMetadata
 		var fType string
-		if err := rows.Scan(&c.ID, &c.TableID, &c.Name, &c.DisplayName, &fType, &c.IsNullable, &c.IsPrimaryKey, &c.DefaultValue, &c.CalculationFormula, &c.ValidationRules, &c.CreatedAt, &c.MaxRepetitions, &c.SourceFieldID); err != nil {
+		if err := rows.Scan(&c.ID, &c.TableID, &c.Name, &c.DisplayName, &fType, &c.IsNullable, &c.IsPrimaryKey, &c.DefaultValue, &c.CalculationFormula, &c.ValidationRules, &c.CreatedAt, &c.MaxRepetitions, &c.SourceFieldID, &c.SourceType); err != nil {
 			return nil, err
 		}
 		c.FieldType = dbal.AgnosticFieldType(fType)
@@ -1304,6 +1353,9 @@ func (s *Service) DeleteTable(ctx context.Context, tableID string) error {
 	}
 	if err := containermeta.DeleteTable(ctx, tx, dialect, tableName); err != nil {
 		return err
+	}
+	if err := data.ForgetRecordIDs(ctx, tx, dialect, tableName); err != nil {
+		return fmt.Errorf("failed dropping the record ID allocator of %s: %w", tableName, err)
 	}
 
 	// 3. Delete from sys_tables (cascades to sys_columns and sys_table_occurrences via FK)

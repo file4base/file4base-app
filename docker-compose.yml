@@ -69,6 +69,14 @@ services:
       # empty disables the server-wide tools.
       FILE4BASE_ADMIN_DATABASE: "${FILE4BASE_ADMIN_DATABASE:-}"
       FILE4BASE_SUPER_OWNER: "${FILE4BASE_SUPER_OWNER:-}"
+      FILE4BASE_SETUP_CODE: "${FILE4BASE_SETUP_CODE:-}"
+      # FileMaker Data API at /fmi/data: the databases it serves ("database"
+      # or "FileMaker name=database", comma-separated); empty turns it off.
+      FILE4BASE_DATA_API_DATABASES: "${FILE4BASE_DATA_API_DATABASES:-}"
+      FILE4BASE_DATA_API_SESSION_TTL: "${FILE4BASE_DATA_API_SESSION_TTL:-15m}"
+      FILE4BASE_DATA_API_PRODUCT_NAME: "${FILE4BASE_DATA_API_PRODUCT_NAME:-}"
+      FILE4BASE_DATA_API_PRODUCT_VERSION: "${FILE4BASE_DATA_API_PRODUCT_VERSION:-}"
+      FILE4BASE_DATA_API_PRODUCT_BUILD_DATE: "${FILE4BASE_DATA_API_PRODUCT_BUILD_DATE:-}"
       # Embedded SQLite control store for project registry, options, and permissions
       CONTROL_DB_PATH: "/app/data/file4base_control.db"
       # Shared secret for AES-256-GCM encrypted payload channel between Web/Desktop and API

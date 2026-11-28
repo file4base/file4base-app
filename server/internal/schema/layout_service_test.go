@@ -21,7 +21,7 @@ func TestLayoutService_CRUD(t *testing.T) {
 		DSN:        dsn,
 	})
 	if err != nil {
-		t.Skip("PostgreSQL not available:", err)
+		testdb.Unavailable(t, "PostgreSQL not available:", err)
 		return
 	}
 	defer driver.Close()
@@ -30,7 +30,7 @@ func TestLayoutService_CRUD(t *testing.T) {
 	defer cancel()
 
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("PostgreSQL ping failed:", err)
+		testdb.Unavailable(t, "PostgreSQL ping failed:", err)
 		return
 	}
 

@@ -41,6 +41,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -221,21 +222,30 @@ func (c *Checker) fail(f Field, rule, message string) error {
 }
 
 func (c *Checker) checkField(ctx context.Context, recordID string, f Field, values map[string]interface{}, created bool) error {
+	if err := c.checkEntered(ctx, recordID, f, values); err != nil {
+		return err
+	}
+	return c.checkCommitted(ctx, recordID, f, values, created)
+}
+
+// checkEntered applies the options FileMaker checks on a field's value as it
+// is entered: strict data type, maximum length, range, unique and existing
+// value. An empty value meets them all.
+func (c *Checker) checkEntered(ctx context.Context, recordID string, f Field, values map[string]interface{}) error {
 	r := f.Rules
 	value := values[f.Name]
 	text, empty := asText(value)
 	if empty {
-		if r.NotEmpty {
-			return c.fail(f, "not_empty", fmt.Sprintf("%s requires a value", f.Name))
-		}
-		if created && !r.CalculationAlways {
-			// A new record's field left empty was not modified.
-			return nil
-		}
-		return c.checkCalculation(ctx, recordID, f, values)
+		return nil
 	}
 	if r.StrictTypeEnabled {
-		if !matchesStrictType(r.StrictType, text) {
+		strictText := text
+		if t, ok := value.(time.Time); ok && r.StrictType == "Time of Day" {
+			// A migrated time field is kept as a timestamp: its value is
+			// the time of day it holds.
+			strictText = t.Format("15:04:05.999999999")
+		}
+		if !matchesStrictType(r.StrictType, strictText) {
 			return c.fail(f, "strict_type", fmt.Sprintf("%s must be %s", f.Name, strictTypeDescription(r.StrictType)))
 		}
 	}
@@ -262,7 +272,82 @@ func (c *Checker) checkField(ctx context.Context, recordID string, f Field, valu
 			return c.fail(f, "existing_value", fmt.Sprintf("%s must be a value another record already has", f.Name))
 		}
 	}
+	return nil
+}
+
+// checkCommitted applies the options FileMaker checks when the record is
+// committed: not empty, and the validation by calculation.
+func (c *Checker) checkCommitted(ctx context.Context, recordID string, f Field, values map[string]interface{}, created bool) error {
+	if _, empty := asText(values[f.Name]); empty {
+		if f.Rules.NotEmpty {
+			return c.fail(f, "not_empty", fmt.Sprintf("%s requires a value", f.Name))
+		}
+		if created && !f.Rules.CalculationAlways {
+			// A new record's field left empty was not modified.
+			return nil
+		}
+	}
 	return c.checkCalculation(ctx, recordID, f, values)
+}
+
+// CheckImportedFields applies to the fields an import writes (fields, or all
+// ruled fields when nil) the options checked as a value is entered (strict
+// data type, maximum length, range, unique, existing value), and answers one
+// error for each field whose value breaks one. FileMaker imports the record
+// without such a field (see "About validating data during import" in the
+// FileMaker Pro help): the caller leaves it out, then calls
+// CheckImportedRecord. Only the rules validated "always" apply, and the
+// fields are checked in name order, so the report is the same on each run.
+func (c *Checker) CheckImportedFields(ctx context.Context, recordID string, values map[string]interface{}, fields map[string]bool) ([]*Error, error) {
+	var broken []*Error
+	for _, f := range c.importRuled() {
+		if fields != nil && !fields[f.Name] {
+			continue
+		}
+		err := c.checkEntered(ctx, recordID, f, values)
+		var invalid *Error
+		if errors.As(err, &invalid) {
+			broken = append(broken, invalid)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return broken, nil
+}
+
+// CheckImportedRecord applies the options checked when an imported record is
+// committed (not empty, and the validation by calculation), whose failure
+// FileMaker answers by skipping the whole record. fields are the fields the
+// import writes, nil for a new record, whose every ruled field is checked.
+func (c *Checker) CheckImportedRecord(ctx context.Context, recordID string, values map[string]interface{}, fields map[string]bool) error {
+	for _, f := range c.importRuled() {
+		var err error
+		switch {
+		case fields == nil || fields[f.Name]:
+			err = c.checkCommitted(ctx, recordID, f, values, fields == nil)
+		case f.Rules.CalculationAlways:
+			err = c.checkCalculation(ctx, recordID, f, values)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// importRuled answers the fields whose rules apply to an import, by name.
+func (c *Checker) importRuled() []Field {
+	ruled := make([]Field, 0, len(c.Fields))
+	for _, f := range c.Fields {
+		if f.Rules == nil || !f.Rules.AppliesTo(false) || f.Rules.AllowOverride && c.Restore {
+			continue
+		}
+		ruled = append(ruled, f)
+	}
+	sort.Slice(ruled, func(i, j int) bool { return ruled[i].Name < ruled[j].Name })
+	return ruled
 }
 
 // checkCalculation applies a field's validation by calculation, last, as

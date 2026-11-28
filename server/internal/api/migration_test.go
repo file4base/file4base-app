@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/api"
 	"github.com/file4base/file4base-app/server/internal/migration"
+	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -190,4 +192,173 @@ func TestAPI_FileMakerMigrationRollsBackIntoAnExistingDatabase(t *testing.T) {
 
 	assert.Equal(t, before, tableNames(),
 		"a failed migration leaves the design exactly as it was")
+}
+
+// A migration grants fmrest to the role of the privilege sets that carry it
+// (#213) only when that role held no account before: otherwise it would open
+// the Data API to accounts the file knows nothing of, so it reports instead.
+func TestAPI_MigrationGrantsFMRestOnlyToRolesItFills(t *testing.T) {
+	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
+	design := `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
+ <BaseTableCatalog><BaseTable id="129" name="Notes"/></BaseTableCatalog>
+ <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Notes"/><ObjectList><Field id="1" name="Body" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog></FieldsForTables>
+ <ExtendedPrivilegesCatalog membercount="1"><ObjectList membercount="1">
+  <ExtendedPrivilege id="9" name="fmrest"><ObjectList membercount="1"><PrivilegeSetReference id="4" name="Clerks"/></ObjectList></ExtendedPrivilege>
+ </ObjectList></ExtendedPrivilegesCatalog>
+ <AccountsCatalog membercount="2"><ObjectList membercount="2">
+  <Account id="3" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>clerk</AccountName></Authentication><PrivilegeSetReference id="4" name="Clerks"/></Account>
+  <Account id="5" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>viewer</AccountName></Authentication><PrivilegeSetReference id="6" name="Viewers"/></Account>
+ </ObjectList></AccountsCatalog>
+ </AddAction></Structure></FMSaveAsXML>`
+
+	migrate := func(withUser, granted bool) (bool, *migration.ConversionReport) {
+		db := uniqueDB("f4b_migrest")
+		h.createDatabase(db, "alice", "alice-secret")
+		owner := h.login(db, "alice", "alice-secret")
+		if withUser {
+			rec := h.do(http.MethodPost, "/api/v1/security/users", owner,
+				map[string]interface{}{"username": "dave", "password": "dave-secret-pw", "role": "user"}, nil)
+			require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		}
+		if granted {
+			rec := h.do(http.MethodPut, "/api/v1/security/privileges", owner, map[string]interface{}{"privileges": []map[string]interface{}{
+				{"role": "user", "bulk_export": true, "bulk_import": true, "fmrest": true},
+			}}, nil)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		}
+		var res struct {
+			Report *migration.ConversionReport `json:"report"`
+		}
+		rec := h.do(http.MethodPost, "/api/v1/solutions/migrate/apply", owner, map[string]interface{}{"design_xml": design}, &res)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		var listed struct {
+			Privileges []schema.RolePrivileges `json:"privileges"`
+		}
+		rec = h.do(http.MethodGet, "/api/v1/security/privileges", owner, nil, &listed)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		for _, p := range listed.Privileges {
+			if p.Role == "user" {
+				return p.FMRest, res.Report
+			}
+		}
+		t.Fatal("no user role listed")
+		return false, nil
+	}
+
+	// The role's privilege items, whatever their category.
+	userItems := func(report *migration.ConversionReport) (translated, manual []migration.ReportItem) {
+		for _, it := range report.Translated {
+			if it.Domain == "privilege" && it.TargetName == "user" {
+				translated = append(translated, it)
+			}
+		}
+		for _, it := range report.ManualActionRequired {
+			if it.Domain == "privilege" && it.TargetName == "user" {
+				manual = append(manual, it)
+			}
+		}
+		return translated, manual
+	}
+
+	// One item per role: granted, with the set that gains it without
+	// carrying it to review.
+	granted, report := migrate(false, false)
+	assert.True(t, granted, "the role only migrated accounts hold is granted fmrest")
+	translated, manual := userItems(report)
+	assert.Empty(t, translated)
+	require.Len(t, manual, 1, "%+v", manual)
+	assert.Contains(t, manual[0].Detail, `is granted to the role "user"`)
+	assert.Contains(t, manual[0].Detail, `"Viewers" do not carry fmrest`)
+
+	// A role that already holds it keeps it, and the same item.
+	granted, report = migrate(true, true)
+	assert.True(t, granted)
+	translated, manual = userItems(report)
+	assert.Empty(t, translated)
+	require.Len(t, manual, 1, "%+v", manual)
+	assert.Contains(t, manual[0].Detail, `is granted to the role "user"`)
+
+	granted, report = migrate(true, false)
+	assert.False(t, granted, "a role that already held an account is not granted fmrest")
+	translated, manual = userItems(report)
+	assert.Empty(t, translated, "nor is it reported as granted")
+	require.Len(t, manual, 1, "one item says it was not granted, and why: %+v", manual)
+	assert.Contains(t, manual[0].Detail, "which was not granted")
+	assert.Contains(t, manual[0].Detail, "already had accounts")
+	assert.Equal(t, "Clerks", manual[0].SourceName)
+	assert.Equal(t, len(report.Translated), report.Counts.TranslatedCount)
+}
+
+// A layout migrated before objects inside containers were placed from them
+// is repaired by migrating the file again into the same database: the
+// migrated layout is replaced, not duplicated.
+func TestAPI_MigratingAgainReplacesMisplacedNestedObjects(t *testing.T) {
+	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
+	dbName := uniqueDB("f4b_mig_nest")
+	h.createDatabase(dbName, "alice", "alice-secret")
+	ownerTok := h.login(dbName, "alice", "alice-secret")
+
+	// As FileMaker's Save as XML writes it: the group's member from the
+	// group's corner.
+	design := `<?xml version="1.0" encoding="UTF-8"?>
+<FMSaveAsXML Has_DDR_INFO="True"><File name="Notes.fmp12">
+  <BaseTableCatalog><BaseTable id="1" name="Notes"/></BaseTableCatalog>
+  <FieldsForTables><FieldCatalog><BaseTableSourceReference id="1" name="Notes"/>
+    <Field id="1" name="Body" datatype="text" fieldtype="normal"/></FieldCatalog></FieldsForTables>
+  <RelationshipGraph><TableList><Table id="1" name="Notes" baseTable="Notes" baseTableId="1"/></TableList><RelationshipList/></RelationshipGraph>
+  <LayoutCatalog><Layout id="1" name="Note" width="400">
+    <TableOccurrenceReference id="1" name="Notes"/>
+    <PartsList><Part type="Body"><Definition type="Body" kind="4" size="300" absolute="0"/><ObjectList>
+      <LayoutObject type="Group"><UUID>00000000-0000-0000-0000-000000000001</UUID><Bounds top="100" left="50" bottom="140" right="250"/>
+        <GroupedButton><ObjectList>
+          <LayoutObject type="Text" name="caption"><UUID>00000000-0000-0000-0000-000000000002</UUID><Bounds top="5" left="5" bottom="25" right="105"/>
+            <Text><StyledText><Data><![CDATA[Caption]]></Data></StyledText></Text>
+          </LayoutObject>
+        </ObjectList></GroupedButton>
+      </LayoutObject>
+    </ObjectList></Part></PartsList>
+    <UUID>00000000-0000-0000-0000-0000000000ff</UUID>
+  </Layout></LayoutCatalog>
+</File></FMSaveAsXML>`
+	migrate := func() {
+		rec := h.do(http.MethodPost, "/api/v1/solutions/migrate/apply", ownerTok, map[string]interface{}{"design_xml": design}, nil)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	}
+	caption := func() (schema.LayoutMetadata, map[string]interface{}, map[string]interface{}) {
+		var found []schema.LayoutMetadata
+		for _, l := range h.observeLayouts(ownerTok) {
+			if l.Name == "Note" {
+				found = append(found, l)
+			}
+		}
+		require.Len(t, found, 1)
+		var def map[string]interface{}
+		require.NoError(t, json.Unmarshal(found[0].Definition, &def))
+		for _, o := range def["objects"].([]interface{}) {
+			if m := o.(map[string]interface{}); m["name"] == "caption" {
+				return found[0], def, m
+			}
+		}
+		t.Fatalf("no caption: %s", found[0].Definition)
+		return schema.LayoutMetadata{}, nil, nil
+	}
+
+	migrate()
+	_, _, o := caption()
+	assert.Equal(t, []interface{}{55.0, 105.0}, []interface{}{o["x"], o["y"]})
+
+	// Where an earlier migration put it, at the corner of the layout.
+	layout, def, o := caption()
+	o["x"], o["y"] = 5.0, 5.0
+	raw, err := json.Marshal(def)
+	require.NoError(t, err)
+	rec := h.do(http.MethodPut, "/api/v1/layouts/"+layout.ID, ownerTok, map[string]interface{}{"name": layout.Name, "definition": json.RawMessage(raw)}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	_, _, o = caption()
+	require.Equal(t, []interface{}{5.0, 5.0}, []interface{}{o["x"], o["y"]})
+
+	migrate()
+	again, _, o := caption()
+	assert.Equal(t, layout.ID, again.ID)
+	assert.Equal(t, []interface{}{55.0, 105.0}, []interface{}{o["x"], o["y"]})
 }

@@ -21,7 +21,7 @@ func TestSecurityService(t *testing.T) {
 		DSN:        dsn,
 	})
 	if err != nil {
-		t.Skip("PostgreSQL not accessible, skipping integration test:", err)
+		testdb.Unavailable(t, "PostgreSQL not accessible, skipping integration test:", err)
 		return
 	}
 	defer driver.Close()
@@ -30,7 +30,7 @@ func TestSecurityService(t *testing.T) {
 	defer cancel()
 
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("PostgreSQL ping failed, skipping integration test:", err)
+		testdb.Unavailable(t, "PostgreSQL ping failed, skipping integration test:", err)
 		return
 	}
 

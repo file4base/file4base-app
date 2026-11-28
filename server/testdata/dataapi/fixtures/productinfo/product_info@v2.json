@@ -27,7 +27,7 @@
         "body": {
           "response": {
             "productInfo": {
-              "name": "FileMaker Data API Engine",
+              "name": "<product-name>",
               "dateFormat": "MM/dd/yyyy",
               "timeFormat": "HH:mm:ss",
               "timeStampFormat": "MM/dd/yyyy HH:mm:ss"
@@ -98,7 +98,7 @@
         "body": {
           "response": {
             "productInfo": {
-              "name": "FileMaker Data API Engine",
+              "name": "<product-name>",
               "dateFormat": "MM/dd/yyyy",
               "timeFormat": "HH:mm:ss",
               "timeStampFormat": "MM/dd/yyyy HH:mm:ss"

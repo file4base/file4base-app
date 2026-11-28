@@ -343,9 +343,10 @@ func TestRelatedRows_SortedByAnUnstoredCalculation(t *testing.T) {
 		require.ErrorIs(t, err, data.ErrTooManyRelated, side)
 	}
 
-	// A found set is still never sorted by one.
-	_, err := data.NewService(p.a.driver).ListRows(ctx, "children", data.QueryOptions{SortBy: "score"})
-	require.ErrorIs(t, err, data.ErrUnstoredField)
+	// A found set is sorted by one too, once it is computed (#149).
+	sorted, err := data.NewService(p.a.driver).ListRows(ctx, "children", data.QueryOptions{SortBy: "score", SortAsc: true, Limit: 3})
+	require.NoError(t, err)
+	require.Len(t, sorted, 3)
 }
 
 // A table found without its creation order column is looked up again once

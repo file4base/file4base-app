@@ -40,8 +40,10 @@ class ChangePasswordDialog extends StatefulWidget {
 
 class _ChangePasswordDialogState extends State<ChangePasswordDialog> {
   final _formKey = GlobalKey<FormState>();
+  final _currentPasswordController = TextEditingController();
   final _newPasswordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  bool _obscureCurrent = true;
   bool _obscureNew = true;
   bool _obscureConfirm = true;
   bool _isLoading = false;
@@ -49,6 +51,7 @@ class _ChangePasswordDialogState extends State<ChangePasswordDialog> {
 
   @override
   void dispose() {
+    _currentPasswordController.dispose();
     _newPasswordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
@@ -66,6 +69,7 @@ class _ChangePasswordDialogState extends State<ChangePasswordDialog> {
       await widget.apiClient.updateUser(
         widget.currentUser.id,
         password: _newPasswordController.text,
+        currentPassword: _currentPasswordController.text,
         role: widget.currentUser.role,
         database: widget.databaseName,
       );
@@ -78,11 +82,17 @@ class _ChangePasswordDialogState extends State<ChangePasswordDialog> {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _errorMessage = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+          // The server's reason (a wrong current password, too many
+          // attempts) reads better without the status line around it.
+          _errorMessage = e is ApiException && e.detail.isNotEmpty
+              ? _sentence(e.detail)
+              : e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
         });
       }
     }
   }
+
+  static String _sentence(String s) => '${s[0].toUpperCase()}${s.substring(1)}${s.endsWith('.') ? '' : '.'}';
 
   @override
   Widget build(BuildContext context) {
@@ -133,6 +143,23 @@ class _ChangePasswordDialogState extends State<ChangePasswordDialog> {
                 ),
                 const SizedBox(height: 12),
               ],
+              TextFormField(
+                controller: _currentPasswordController,
+                obscureText: _obscureCurrent,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'Current Password',
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                  prefixIcon: const Icon(Icons.lock_open_outlined, size: 18),
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscureCurrent ? Icons.visibility_off : Icons.visibility, size: 18),
+                    onPressed: () => setState(() => _obscureCurrent = !_obscureCurrent),
+                  ),
+                ),
+                validator: (val) => (val == null || val.isEmpty) ? 'Please enter your current password' : null,
+              ),
+              const SizedBox(height: 14),
               TextFormField(
                 controller: _newPasswordController,
                 obscureText: _obscureNew,

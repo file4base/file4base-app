@@ -12,6 +12,7 @@ import 'dart:async';
 
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/security/set_password_dialog.dart';
+import 'package:file4base_client/features/solution_manager/migration_import_steps_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -281,6 +282,7 @@ class _MigrationResultsViewState extends State<MigrationResultsView> {
           const SizedBox(height: 10),
           _buildPendingAccounts(),
         ],
+        MigrationImportStepsPanel(apiClient: widget.apiClient, database: widget.result.database),
         const SizedBox(height: 10),
         _buildReview(),
         if (widget.fullReport != null) ...[

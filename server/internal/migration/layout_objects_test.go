@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,9 +17,11 @@ import (
 )
 
 // layoutObjectsFixture is a handwritten <FMSaveAsXML> layout in the shape
-// FileMaker writes one: parts with their size, objects with their bounds in
-// layout coordinates, a theme with CSS, a library picture and the usual
-// nesting of groups and tab panels. The names are invented.
+// FileMaker writes one: parts with their size, a theme with CSS, a library
+// picture and the usual nesting of groups and tab panels. Its objects,
+// nested ones too, have their bounds in layout coordinates, as some tools
+// write them; nestedRelativeBody is written as FileMaker does. The names
+// are invented.
 const layoutObjectsFixture = `<?xml version="1.0" encoding="UTF-8"?>
 <FMSaveAsXML Has_DDR_INFO="True">
   <File name="Recipes.fmp12">
@@ -482,13 +485,13 @@ func TestFMCSSColor(t *testing.T) {
 func TestNativeLayoutValueListSurvivesImport(t *testing.T) {
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 	}
 	t.Cleanup(func() { _ = driver.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 	}
 
 	stamp := time.Now().UnixNano()
@@ -868,9 +871,10 @@ func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
                 <Portal>
                   <TableOccurrenceReference id="2" name="Ingredients"/>
                   <Options index="2" show="4"/>
-                  <SortSpecification value="True" maintain="True" blanksLast="False"><SortList membercount="2">
+                  <SortSpecification value="True" maintain="True" blanksLast="False"><SortList membercount="3">
                     <Sort type="Descending"><PrimaryField><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference></PrimaryField></Sort>
                     <Sort type="Ascending"><PrimaryField><FieldReference name="Title" id="1"><TableOccurrenceReference name="Recipes" id="1"/></FieldReference></PrimaryField></Sort>
+                    <Sort type="Custom"><PrimaryField><FieldReference name="RecipeTitle" id="1"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference></PrimaryField><ValueListReference id="9" name="Not In This File"/></Sort>
                   </SortList></SortSpecification>
                   <Calculation><Text><![CDATA[Quantity > 1]]></Text></Calculation>
                   <ObjectList>
@@ -932,6 +936,15 @@ func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
 		first["filter_problem"] != nil || first["allow_creation"] != true {
 		t.Fatalf("portal: %v", first)
 	}
+	// FileMaker's whole sort order is kept, a field of another occurrence
+	// and a value list's order included, though the portal sorts by its
+	// own fields only.
+	sortFields, _ := json.Marshal(first["sort_fields"])
+	if string(sortFields) != `[{"field_name":"quantity","order":"descending","table_occurrence":"Ingredients"},`+
+		`{"field_name":"title","order":"ascending","table_occurrence":"Recipes"},`+
+		`{"field_name":"recipetitle","order":"custom","table_occurrence":"Ingredients"}]` {
+		t.Fatalf("portal sort fields: %s", sortFields)
+	}
 	// A filter that cannot be bound shows no record rather than all of them.
 	second := byType["portal"][1]["portal_config"].(map[string]interface{})
 	if second["filter"] != "0" || second["filter_problem"] != true {
@@ -950,6 +963,16 @@ func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
 	}
 	if portalAt < 0 || fieldAt < portalAt {
 		t.Fatalf("row field at %d, portal at %d", fieldAt, portalAt)
+	}
+	// Each says which portal it is in; an object outside a portal says none.
+	objects := def["objects"].([]interface{})
+	if row, portal := objects[fieldAt].(map[string]interface{}), objects[portalAt].(map[string]interface{}); row["portal"] == nil || row["portal"] != portal["id"] {
+		t.Fatalf("row field in portal %v, want %v", row["portal"], portal["id"])
+	}
+	for _, raw := range objects[:portalAt] {
+		if o := raw.(map[string]interface{}); o["portal"] != nil {
+			t.Fatalf("an object before the portal says it is in %v", o["portal"])
+		}
 	}
 	// A portal several relationships away lists the records along its
 	// path, and creates none.
@@ -975,25 +998,290 @@ func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
 			review += it.Detail
 		}
 	}
-	for _, want := range []string{"1 portal showing the records of an occurrence several relationships away, listed along the path", "1 portal whose filter calculation could not be bound", "1 portal sort field of another occurrence"} {
+	for _, want := range []string{"1 portal showing the records of an occurrence several relationships away, listed along the path", "1 portal whose filter calculation could not be bound", "2 portal sort fields of another occurrence or in a value list's order, left out of the portal's sort"} {
 		if !strings.Contains(review, want) {
 			t.Fatalf("review %q lacks %q", review, want)
 		}
 	}
 }
 
-func TestNativeLayoutConditionalFormatsByCalculation(t *testing.T) {
+// fmCondition writes a <Condition> as FileMaker's Save a Copy as XML does:
+// its type (0 "Formula is", 1 to 20 a "Value is" condition), the
+// calculation FileMaker keeps for it, the values its dialog shows and the
+// format it gives, with a red text.
+func fmCondition(kind int, formula, start, end string) string {
+	rng := ""
+	if start != "-" {
+		rng = "<Range><Start>" + start + "</Start><End>" + end + "</End></Range>"
+	}
+	return fmt.Sprintf(`<Condition type="%d" id="0"><Options>7</Options><Calculation><Text><![CDATA[%s]]></Text></Calculation>%s
+	  <LocalCSS type="ObjectCustomStyle" name="" displayName=""><![CDATA[self:normal .self
+{
+	color: rgba(100%%,0%%,0%%,1);
+	background-color: rgba(0%%,0%%,100%%,1);
+	font-weight: bold;
+}
+]]></LocalCSS></Condition>`, kind, formula, rng)
+}
+
+// The calculations FileMaker 26 was seen to write for its "Value is"
+// conditions, with the values its dialog shows (a date as the file's
+// locale writes it, "-" for none); not between, not containing, beginning
+// with, ending with, after today, more than x days passed, more than and
+// less than x days ahead were not seen, and are written alike.
+var fmValueConditions = map[string][]struct {
+	kind                int
+	formula, start, end string
+}{
+	"price": {
+		{1, `Self≥1 and Self≤5`, "1", "5"},
+		{2, `not (Self≥1 and Self≤5)`, "1", "5"},
+		{3, `Self=0`, "0", ""},
+		{4, `Self≠2,5`, "2,5", ""},
+		{5, `Self>100`, "100", ""},
+		{6, `Self<0`, "0", ""},
+		{7, `Self≥10`, "10", ""},
+		{8, `Self≤10`, "10", ""},
+		{13, `IsEmpty(Self)`, "-", ""},
+		{0, `Self < 0 and Price ≠ 7`, "-", ""},
+		{5, `Self>40`, "50", ""}, // a calculation that disagrees with its dialog
+	},
+	"served on": {
+		{5, `Self>Date(3;15;1990)`, "15/03/1990", ""},
+		{14, `GetAsDate(Self) < Get(CurrentDate)`, "-", ""},
+		{15, `GetAsDate(Self) = Get(CurrentDate)`, "-", ""},
+		{16, `GetAsDate(Self) > Get(CurrentDate)`, "-", ""},
+		{17, `(Get(CurrentDate) - GetAsDate(Self)) > 3`, "3", ""},
+		{18, `(GetAsDate(Self) - Get(CurrentDate)) > 3`, "3", ""},
+		{19, `(Get(CurrentDate) - GetAsDate(Self)) < 4`, "4", ""},
+		{20, `(GetAsDate(Self) - Get(CurrentDate)) < 4`, "4", ""},
+	},
+	"unit": {
+		{3, `Self="k\"g"`, `k"g`, ""},
+		{4, `Self≠"kg"`, "kg", ""},
+		{9, `PatternCount(Self; "g") > 0`, "g", ""},
+		{10, `PatternCount(Self; "g") = 0`, "g", ""},
+		{11, `Left(Self; Length("k")) = "k"`, "k", ""},
+		{12, `Right(Self; Length("g")) = "g"`, "g", ""},
+	},
+}
+
+func TestNativeLayoutConditionalFormats(t *testing.T) {
+	conditions := func(field string) string {
+		var b strings.Builder
+		for _, c := range fmValueConditions[field] {
+			b.WriteString(fmCondition(c.kind, c.formula, c.start, c.end))
+		}
+		return b.String()
+	}
+	replace := func(design, uuid, formatting string) string {
+		at := "<UUID>00000000-0000-0000-0000-" + uuid + "</UUID>"
+		if !strings.Contains(design, at) {
+			t.Fatalf("no object %s", uuid)
+		}
+		return strings.Replace(design, at, at+"<Conditions><Formatting>"+formatting+"</Formatting></Conditions>", 1)
+	}
 	design := strings.Replace(layoutObjectsFixture,
 		`<Conditions><Hide findMode="True"><Calculation><Text><![CDATA[Archived = 1]]></Text></Calculation></Hide></Conditions>`,
 		`<Conditions><Hide findMode="True"><Calculation><Text><![CDATA[Archived = 1]]></Text></Calculation></Hide>
-		<Formatting>
-		  <Condition id="1" type="0"><Options>7</Options><Calculation><Text><![CDATA[Price > 100]]></Text></Calculation>
-		    <LocalCSS><![CDATA[self:normal .self { color: rgba(100%,0%,0%,1); background-color: rgba(0%,0%,100%,1); font-weight: bold; }]]></LocalCSS></Condition>
-		  <Condition id="2" type="3"><Options>5</Options><Calculation><Text><![CDATA[10]]></Text></Calculation>
-		    <LocalCSS><![CDATA[self:normal .self { color: rgba(0%,100%,0%,1); }]]></LocalCSS></Condition>
-		  <Condition id="3" type="0"><Options>7</Options><Calculation><Text><![CDATA[Nowhere::Thing]]></Text></Calculation>
-		    <LocalCSS><![CDATA[self:normal .self { color: rgba(0%,100%,0%,1); }]]></LocalCSS></Condition>
-		</Formatting></Conditions>`, 1)
+		<Formatting>`+fmCondition(0, "Price > 100", "-", "")+conditions("price")+
+			fmCondition(0, "Nowhere::Thing", "-", "")+fmCondition(21, "Self > 0", "-", "")+`</Formatting></Conditions>`, 1)
+	design = replace(design, "000000000004", conditions("served on"))
+	design = replace(design, "000000000005", conditions("unit"))
+	// A related field's Self reads it from the layout's occurrence.
+	design = replace(design, "000000000031", fmCondition(5, "Self>5", "5", ""))
+	// A box showing repetitions 2 and 3 of a field of three has a Self for
+	// each.
+	design = strings.Replace(design, `<Field id="2" name="Quantity" datatype="number" fieldtype="normal"/>`,
+		`<Field id="2" name="Quantity" datatype="number" fieldtype="normal" maxRepetition="3"/>`, 1)
+	design = replace(design, "000000000006", fmCondition(13, "IsEmpty(Self)", "-", "")+fmCondition(0, "Recipes::Price > 1", "-", ""))
+	// A condition switched off in FileMaker is never applied. Self reads a
+	// field of an occurrence no relationship joins to the layout's, which
+	// cannot be read.
+	design = replace(design, "000000000007", strings.Replace(fmCondition(13, "IsEmpty(Self)", "-", ""), "<Options>7</Options>", "<Options>6</Options>", 1)+
+		fmCondition(14, "GetAsDate(Self) = Get(CurrentDate)", "-", ""))
+	// A text's Self is the text it shows, which one merging fields
+	// changes on each record.
+	design = replace(design, "000000000001", fmCondition(0, "Recipes::Price > 1", "-", "")+fmCondition(0, `Self = "Recipe"`, "-", ""))
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design, SourceLocale: "fr-FR"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	rulesOf := map[string][]interface{}{}
+	for _, raw := range def["objects"].([]interface{}) {
+		o := raw.(map[string]interface{})
+		if rules, _ := o["style"].(map[string]interface{})["conditional_rules"].([]interface{}); rules != nil {
+			if b, ok := o["field_binding"].(map[string]interface{}); ok {
+				rulesOf[fmt.Sprint(b["table_occurrence"], "::", b["field_name"])] = rules
+			} else {
+				rulesOf[fmt.Sprint(o["type"])] = rules
+			}
+		}
+	}
+	formulas := func(key string) []string {
+		var out []string
+		for _, raw := range rulesOf[key] {
+			r := raw.(map[string]interface{})
+			if r["operator"] != "formula" || r["text_color"] != "#FF0000" || r["fill_color"] != "#0000FF" || r["bold"] != true {
+				t.Fatalf("%s: rule %v", key, r)
+			}
+			out = append(out, r["value"].(string))
+		}
+		return out
+	}
+	// Each condition keeps FileMaker's calculation, Self included, with
+	// its fields bound and its decimals written with a point.
+	want := map[string][]string{
+		"Recipes::price": {"price > 100", "Self≥1 and Self≤5", "not (Self≥1 and Self≤5)", "Self=0", "Self≠2.5",
+			"Self>100", "Self<0", "Self≥10", "Self≤10", "IsEmpty(Self)", "Self < 0 and price ≠ 7", "Self>40"},
+		"Recipes::served_on": {"Self>Date(3;15;1990)", "GetAsDate(Self) < Get(CurrentDate)",
+			"GetAsDate(Self) = Get(CurrentDate)", "GetAsDate(Self) > Get(CurrentDate)",
+			"(Get(CurrentDate) - GetAsDate(Self)) > 3", "(GetAsDate(Self) - Get(CurrentDate)) > 3",
+			"(Get(CurrentDate) - GetAsDate(Self)) < 4", "(GetAsDate(Self) - Get(CurrentDate)) < 4"},
+		"Recipes::unit": {`Self="k\"g"`, `Self≠"kg"`, `PatternCount(Self; "g") > 0`, `PatternCount(Self; "g") = 0`,
+			`Left(Self; Length("k")) = "k"`, `Right(Self; Length("g")) = "g"`},
+		"Ingredient Recipes::price": {"Self>5"},
+		// Browse mode answers Self in each repetition the box shows.
+		"Ingredients::quantity": {"IsEmpty(Self)", "Recipes::price > 1"},
+		"label":                 {"Recipes::price > 1"},
+	}
+	if len(rulesOf) != len(want) {
+		t.Fatalf("objects with rules: %v", rulesOf)
+	}
+	for key, w := range want {
+		if g := formulas(key); !slices.Equal(g, w) {
+			t.Errorf("%s:\n got %q\nwant %q", key, g, w)
+		}
+	}
+	var review string
+	for _, it := range got.Report.ManualActionRequired {
+		if it.Domain == "layout" {
+			review += it.Detail
+		}
+	}
+	// Not kept: a formula that cannot be bound, an unknown condition, a
+	// Self that cannot be read and the merging text's Self.
+	for _, w := range []string{"4 conditional formats not kept", "1 conditional format switched off in FileMaker, left out",
+		`1 conditional format whose "Value is" condition shows other values than the calculation FileMaker keeps for it`} {
+		if !strings.Contains(review, w) {
+			t.Errorf("review %q lacks %q", review, w)
+		}
+	}
+}
+
+// The objects of a portal's rows keep their conditional formats, Self
+// included, which each row answers as its own record's value.
+func TestNativeLayoutConditionalFormatInAPortalRow(t *testing.T) {
+	portal := `<LayoutObject type="Portal">
+                <UUID>00000000-0000-0000-0000-000000000050</UUID>
+                <Bounds top="300" left="20" bottom="400" right="300"/>
+                <Portal>
+                  <TableOccurrenceReference id="2" name="Ingredients"/>
+                  <ObjectList>
+                    <LayoutObject type="Edit Box"><UUID>00000000-0000-0000-0000-000000000051</UUID><Bounds top="300" left="20" bottom="320" right="120"/>
+                      <Conditions><Formatting>` + fmCondition(6, "Self<1", "1", "") +
+		fmCondition(0, "Ingredients::Quantity > Price", "", "") + `</Formatting></Conditions>
+                      <Field><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference></Field>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>`
+	design := strings.Replace(layoutObjectsFixture, `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+              </LayoutObject>`, portal, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	if !strings.Contains(string(encoded), `"value":"Self\u003c1"`) {
+		t.Fatalf("definition: %s", encoded)
+	}
+	// Each row evaluates it from the portal's occurrence: a field of the
+	// layout's, which FileMaker reads from the layout, is written qualified.
+	if !strings.Contains(string(encoded), `"value":"Ingredients::quantity \u003e Recipes::price"`) {
+		t.Fatalf("the layout's field read from the portal's occurrence: %s", encoded)
+	}
+	for _, it := range got.Report.ManualActionRequired {
+		if strings.Contains(it.Detail, "conditional format") {
+			t.Errorf("reported: %s", it.Detail)
+		}
+	}
+}
+
+// Texts and buttons keep their conditional formats, with Self as the text
+// they show: a button bar's segments and a popover button too. A grouped
+// button's, a calculated label's Self and a merging text's Self are not
+// kept. In a portal row, a hide condition is the row's, as its formats
+// are.
+func TestNativeLayoutConditionalFormatsOfTextsAndButtons(t *testing.T) {
+	formats := func(formulas ...string) string {
+		var b strings.Builder
+		for _, f := range formulas {
+			b.WriteString(fmCondition(0, f, "-", ""))
+		}
+		return "<Conditions><Formatting>" + b.String() + "</Formatting></Conditions>"
+	}
+	// formats with a hide condition.
+	hidden := func(hide string, formulas ...string) string {
+		return strings.Replace(formats(formulas...), "<Conditions>",
+			"<Conditions><Hide><Calculation><Text><![CDATA["+hide+"]]></Text></Calculation></Hide>", 1)
+	}
+	objects := `<LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000070</UUID><Bounds top="240" left="20" bottom="255" right="100"/>
+                ` + hidden(`Self = "Shut"`, `Self = "Open"`, "Price > 1") + `
+                <Text><StyledText><Data><![CDATA[Open]]></Data></StyledText></Text>
+              </LayoutObject>
+              <LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000071</UUID><Bounds top="240" left="100" bottom="255" right="200"/>
+                ` + hidden(`Self = "x"`, `Self = "x"`) + `
+                <Text><StyledText><Data><![CDATA[Price <<Price>>]]></Data></StyledText></Text>
+              </LayoutObject>
+              <LayoutObject type="Button"><UUID>00000000-0000-0000-0000-000000000072</UUID><Bounds top="260" left="20" bottom="275" right="100"/>
+                ` + formats(`Self = "Go"`) + `
+                <Button><Label><Text><StyledText><Data><![CDATA[Go]]></Data></StyledText></Text></Label></Button>
+              </LayoutObject>
+              <LayoutObject type="Button"><UUID>00000000-0000-0000-0000-000000000073</UUID><Bounds top="260" left="100" bottom="275" right="200"/>
+                ` + hidden("IsEmpty(Self)", `Self = "x"`, "Price = 2") + `
+                <Button><Label><Calculation><Text><![CDATA[Title & "!"]]></Text></Calculation></Label></Button>
+              </LayoutObject>
+              <LayoutObject type="Button Bar"><UUID>00000000-0000-0000-0000-000000000074</UUID><Bounds top="280" left="20" bottom="295" right="220"/>
+                <ButtonBar><ObjectList membercount="1">
+                  <LayoutObject type="Button"><UUID>00000000-0000-0000-0000-000000000075</UUID><Bounds top="280" left="20" bottom="295" right="120"/>
+                    ` + formats(`Self = "Seg"`) + `
+                    <Button><Label><Text><StyledText><Data><![CDATA[Seg]]></Data></StyledText></Text></Label></Button>
+                  </LayoutObject>
+                  <LayoutObject type="Popover Button"><UUID>00000000-0000-0000-0000-00000000007a</UUID><Bounds top="280" left="120" bottom="295" right="220"/>
+                    ` + formats(`Self = "Pop"`) + `
+                    <PopoverButton><Label><Text><StyledText><Data><![CDATA[Pop]]></Data></StyledText></Text></Label></PopoverButton>
+                  </LayoutObject>
+                </ObjectList></ButtonBar>
+              </LayoutObject>
+              <LayoutObject type="Popover Button"><UUID>00000000-0000-0000-0000-000000000076</UUID><Bounds top="300" left="20" bottom="315" right="100"/>
+                ` + formats(`Self = "More"`) + `
+                <PopoverButton><Label><Text><StyledText><Data><![CDATA[More]]></Data></StyledText></Text></Label></PopoverButton>
+              </LayoutObject>
+              <LayoutObject type="Grouped Button"><UUID>00000000-0000-0000-0000-000000000077</UUID><Bounds top="320" left="20" bottom="335" right="200"/>
+                ` + formats("Price > 3") + `
+                <GroupedButton><ObjectList membercount="0"></ObjectList></GroupedButton>
+              </LayoutObject>
+              <LayoutObject type="Portal"><UUID>00000000-0000-0000-0000-000000000078</UUID><Bounds top="340" left="20" bottom="400" right="300"/>
+                <Portal><TableOccurrenceReference id="2" name="Ingredients"/><ObjectList>
+                  <LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000079</UUID><Bounds top="340" left="20" bottom="355" right="120"/>
+                    <Conditions><Hide><Calculation><Text><![CDATA[Ingredients::Quantity > Price]]></Text></Calculation></Hide>
+                    <Formatting>` + fmCondition(0, `Self = "Row"`, "-", "") + `</Formatting></Conditions>
+                    <Text><StyledText><Data><![CDATA[Row]]></Data></StyledText></Text>
+                  </LayoutObject>
+                </ObjectList></Portal>
+              </LayoutObject>`
+	design := strings.Replace(layoutObjectsFixture, `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+              </LayoutObject>`, objects, 1)
 	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
 	if err != nil {
 		t.Fatal(err)
@@ -1003,19 +1291,52 @@ func TestNativeLayoutConditionalFormatsByCalculation(t *testing.T) {
 	if err := json.Unmarshal(encoded, &def); err != nil {
 		t.Fatal(err)
 	}
-	var rules []interface{}
-	for _, o := range objectsByType(def)["field"] {
-		if o["name"] == "price" {
-			rules, _ = o["style"].(map[string]interface{})["conditional_rules"].([]interface{})
+	formulasOf := map[string][]string{}
+	hideOf := map[string]interface{}{}
+	for _, raw := range def["objects"].([]interface{}) {
+		o := raw.(map[string]interface{})
+		key := fmt.Sprint(o["type"], ":", o["text"])
+		hideOf[key] = o["hide_when"]
+		rules, _ := o["style"].(map[string]interface{})["conditional_rules"].([]interface{})
+		for _, r := range rules {
+			rule := r.(map[string]interface{})
+			if rule["text_color"] != "#FF0000" || rule["fill_color"] != "#0000FF" || rule["bold"] != true {
+				t.Fatalf("%s: rule %v", key, rule)
+			}
+			formulasOf[key] = append(formulasOf[key], rule["value"].(string))
 		}
 	}
-	if len(rules) != 1 {
-		t.Fatalf("rules: %v", rules)
+	want := map[string][]string{
+		"label:Open":          {`Self = "Open"`, "price > 1"},
+		"button:Go":           {`Self = "Go"`},
+		"button:":             {"price = 2"}, // the calculated label's
+		"button:Seg":          {`Self = "Seg"`},
+		"popover_button:More": {`Self = "More"`},
+		"popover_button:Pop":  {`Self = "Pop"`}, // a button bar's segment
+		"label:Row":           {`Self = "Row"`},
 	}
-	rule := rules[0].(map[string]interface{})
-	if rule["operator"] != "formula" || rule["value"] != "price > 100" || rule["text_color"] != "#FF0000" ||
-		rule["fill_color"] != "#0000FF" || rule["bold"] != true {
-		t.Fatalf("rule: %v", rule)
+	if len(formulasOf) != len(want) {
+		t.Fatalf("objects with formats: %v", formulasOf)
+	}
+	for key, w := range want {
+		if g := formulasOf[key]; !slices.Equal(g, w) {
+			t.Errorf("%s:\n got %q\nwant %q", key, g, w)
+		}
+	}
+	// The row evaluates its hide condition from the portal's occurrence:
+	// the layout's field is written qualified.
+	if h := hideOf["label:Row"]; h != "Ingredients::quantity > Recipes::price" {
+		t.Errorf("hide condition in a portal row: %v", h)
+	}
+	// A hide condition reads the text's Self as its formats do: not kept
+	// where Browse mode does not know it.
+	if h := hideOf["label:Open"]; h != `Self = "Shut"` {
+		t.Errorf("hide condition of a text: %v", h)
+	}
+	for _, key := range []string{"button:", "label:Price {{price}}"} {
+		if h, seen := hideOf[key]; !seen || h != nil {
+			t.Errorf("hide condition reading an unknown Self (%s): %v, %v", key, seen, h)
+		}
 	}
 	var review string
 	for _, it := range got.Report.ManualActionRequired {
@@ -1023,8 +1344,44 @@ func TestNativeLayoutConditionalFormatsByCalculation(t *testing.T) {
 			review += it.Detail
 		}
 	}
-	if !strings.Contains(review, "2 conditional formats not kept") {
-		t.Fatalf("review: %s", review)
+	for _, w := range []string{"3 conditional formats not kept (a condition that could not be bound, or on an object other than a field, a text or a button)",
+		`2 objects with a "Hide object when" calculation that could not be bound`} {
+		if !strings.Contains(review, w) {
+			t.Errorf("review %q lacks %q", review, w)
+		}
+	}
+}
+
+func TestRangeInFormula(t *testing.T) {
+	rng := func(start, end string) *xmlNode {
+		return &xmlNode{Name: "Range", Children: []*xmlNode{{Name: "Start", Text: start}, {Name: "End", Text: end}}}
+	}
+	for _, c := range []struct {
+		formula, start, end string
+		operands            int
+		want                bool
+	}{
+		{"Self>0", "0", "", 1, true},
+		{"Self≥1 and Self≤5", "1", "5", 2, true},
+		{"Self≥1 and Self≤5", "1", "6", 2, false},
+		{"Self>40", "50", "", 1, false},
+		{"Self>Date(3;15;1990)", "15/03/1990", "", 1, true},
+		{"Self>Date(3;15;1990)", "16/03/1990", "", 1, false},
+		{`Self="a \"c\" \\ d"`, `a "c" \ d`, "", 1, true},
+		{`Self="Kg"`, "kg", "", 1, true},
+		{`Self="kg"`, "&quot;kg&quot;", "", 1, true},
+		{`Self="kg"`, "g", "", 1, false},
+		{`Self="12"`, "12", "", 1, true},
+		{"Self>-5", "5", "", 1, false},
+		{"Self>-5", "-5", "", 1, true},
+		{"Self>2.5", "2,50", "", 1, true},
+		{"Self>2.5", "25", "", 1, false},
+		{"IsEmpty(Self)", "", "", 0, true},
+		{"Self=1", "", "", 1, true},
+	} {
+		if got := rangeInFormula(rng(c.start, c.end), c.operands, c.formula); got != c.want {
+			t.Errorf("rangeInFormula(%q, %q, %q) = %v, want %v", c.formula, c.start, c.end, got, c.want)
+		}
 	}
 }
 
@@ -1097,5 +1454,283 @@ func TestNativeLayoutButtonStepFieldOfAnotherFile(t *testing.T) {
 	}
 	if entry["field"] != "id_2" {
 		t.Fatalf("field = %v, want the other file's column id_2", entry["field"])
+	}
+}
+
+// An edit box keeps its value list, as FileMaker keeps it for every control
+// (the one it auto-completes from); Display Style 5 is taken as a concealed
+// edit box.
+func TestNativeLayoutEditBoxKeepsItsValueListAndConcealment(t *testing.T) {
+	old := `<FieldReference name="Price" id="2"><TableOccurrenceReference name="Ingredient Recipes" id="4"/></FieldReference>
+                  <Display Style="0" show="1"/>`
+	if !strings.Contains(layoutObjectsFixture, old) {
+		t.Fatal("the fixture changed")
+	}
+	design := strings.Replace(layoutObjectsFixture, old, `<FieldReference name="Price" id="2"><TableOccurrenceReference name="Ingredient Recipes" id="4"/></FieldReference>
+                  <Display Style="5" show="1"><ValueListReference name="Units" id="1"/></Display>`, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	var unitList string
+	for _, vl := range got.Bundle.ValueLists {
+		if vl.Name == "Units" {
+			unitList = vl.ID
+		}
+	}
+	found := false
+	for _, f := range objectsByType(def)["field"] {
+		b := f["field_binding"].(map[string]interface{})
+		switch {
+		case f["y"] == 200.0 && f["x"] == 220.0:
+			found = true
+			if b["control_style"] != "edit_box" || b["value_list_id"] != unitList || unitList == "" || b["concealed"] != true {
+				t.Fatalf("concealed edit box with a value list: %v", b)
+			}
+		case b["concealed"] != nil:
+			t.Fatalf("a field that is not concealed says it is: %v", b)
+		}
+	}
+	if !found {
+		t.Fatal("no edit box at 220,200")
+	}
+}
+
+// nestedRelativeBody is the body of a layout as FileMaker's Save as XML
+// writes it: an object inside a portal, a tab panel, a group, a grouped
+// button, a button bar or a popover's panel has its bounds from the
+// container's top-left corner, a popover's panel its own on the layout.
+// The objects are invented.
+const nestedRelativeBody = `<ObjectList>
+              <LayoutObject type="Portal" name="rows"><UUID>00000000-0000-0000-0000-0000000000a1</UUID><Bounds top="70" left="20" bottom="170" right="320"/>
+                <Portal><TableOccurrenceReference id="2" name="Ingredients"/><Options index="1" show="4"/>
+                  <ObjectList>
+                    <LayoutObject type="Edit Box" name="qty"><UUID>00000000-0000-0000-0000-0000000000a2</UUID><Bounds top="2" left="4" bottom="22" right="104"/>
+                      <Field><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference><Display Style="0" show="1"/></Field>
+                    </LayoutObject>
+                    <LayoutObject type="Text" name="edge"><UUID>00000000-0000-0000-0000-0000000000a3</UUID><Bounds top="-0.5" left="110" bottom="20" right="200"/>
+                      <Text><StyledText><Data><![CDATA[Edge]]></Data></StyledText></Text>
+                    </LayoutObject>
+                    <LayoutObject type="Grouped Button" name="rowbutton"><UUID>00000000-0000-0000-0000-0000000000a4</UUID><Bounds top="2" left="210" bottom="22" right="290"/>
+                      <GroupedButton><ObjectList>
+                        <LayoutObject type="Text" name="rowlabel"><UUID>00000000-0000-0000-0000-0000000000a5</UUID><Bounds top="2" left="2" bottom="18" right="78"/>
+                          <Text><StyledText><Data><![CDATA[Open]]></Data></StyledText></Text>
+                        </LayoutObject>
+                      </ObjectList>
+                      <action><Step enable="True" id="16" name="Go to Record/Request/Page"><Options>0</Options></Step></action></GroupedButton>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>
+              <LayoutObject type="Tab Control" name="tabs"><UUID>00000000-0000-0000-0000-0000000000b1</UUID><Bounds top="130" left="340" bottom="250" right="590"/>
+                <TabControl default="0"><ObjectList>
+                  <LayoutObject type="Panel"><Bounds top="0" left="0" bottom="120" right="250"/>
+                    <TabPanel><Calculation><Text><![CDATA["One"]]></Text></Calculation><ObjectList>
+                      <LayoutObject type="Group" name="group"><UUID>00000000-0000-0000-0000-0000000000b2</UUID><Bounds top="40" left="10" bottom="80" right="200"/>
+                        <GroupedButton><ObjectList>
+                          <LayoutObject type="Edit Box" name="title"><UUID>00000000-0000-0000-0000-0000000000b3</UUID><Bounds top="5" left="5" bottom="25" right="105"/>
+                            <Field><FieldReference name="Title" id="1"><TableOccurrenceReference name="Recipes" id="1"/></FieldReference><Display Style="0" show="1"/></Field>
+                          </LayoutObject>
+                        </ObjectList></GroupedButton>
+                      </LayoutObject>
+                    </ObjectList></TabPanel>
+                  </LayoutObject>
+                </ObjectList></TabControl>
+              </LayoutObject>
+              <LayoutObject type="Popover Button" name="pop"><UUID>00000000-0000-0000-0000-0000000000c1</UUID><Bounds top="180" left="20" bottom="195" right="100"/>
+                <PopoverButton>
+                  <Label><Text><StyledText><Data><![CDATA[More]]></Data></StyledText></Text></Label>
+                  <LayoutObject type="PopoverPanel" name="poppanel"><UUID>00000000-0000-0000-0000-0000000000c2</UUID><Bounds top="200" left="110" bottom="250" right="300"/>
+                    <ObjectList>
+                      <LayoutObject type="Text" name="inside"><UUID>00000000-0000-0000-0000-0000000000c3</UUID><Bounds top="10" left="10" bottom="30" right="100"/>
+                        <Text><StyledText><Data><![CDATA[Inside]]></Data></StyledText></Text>
+                      </LayoutObject>
+                    </ObjectList>
+                  </LayoutObject>
+                </PopoverButton>
+              </LayoutObject>
+              <LayoutObject type="Button Bar" name="bar"><UUID>00000000-0000-0000-0000-0000000000d1</UUID><Bounds top="230" left="20" bottom="245" right="220"/>
+                <ButtonBar><ObjectList membercount="1">
+                  <LayoutObject type="Button" name="segment"><UUID>00000000-0000-0000-0000-0000000000d2</UUID><Bounds top="0" left="100" bottom="15" right="200"/>
+                    <Button><Label><Text><StyledText><Data><![CDATA[Next]]></Data></StyledText></Text></Label>
+                    <action><Step enable="True" id="16" name="Go to Record/Request/Page"><Options>0</Options></Step></action></Button>
+                  </LayoutObject>
+                </ObjectList></ButtonBar>
+              </LayoutObject>
+            </ObjectList>`
+
+// withBody is layoutObjectsFixture with body as its body's objects.
+func withBody(t *testing.T, body string) string {
+	t.Helper()
+	at := strings.Index(layoutObjectsFixture, `<Definition type="Body"`)
+	start := at + strings.Index(layoutObjectsFixture[at:], "<ObjectList>")
+	end := at + strings.Index(layoutObjectsFixture[at:], "</ObjectList>\n          </Part>") + len("</ObjectList>")
+	if at < 0 || start < at || end < start {
+		t.Fatal("the fixture's body moved")
+	}
+	return layoutObjectsFixture[:start] + body + layoutObjectsFixture[end:]
+}
+
+// convertedByName converts design and answers its layout's objects by name.
+func convertedByName(t *testing.T, design string) (map[string]map[string]interface{}, []map[string]interface{}) {
+	t.Helper()
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(raw, &def); err != nil {
+		t.Fatal(err)
+	}
+	named := map[string]map[string]interface{}{}
+	var all []map[string]interface{}
+	for _, o := range def["objects"].([]interface{}) {
+		m := o.(map[string]interface{})
+		all = append(all, m)
+		if n, _ := m["name"].(string); n != "" {
+			named[n] = m
+		}
+	}
+	return named, all
+}
+
+func box(o map[string]interface{}) [4]float64 {
+	return [4]float64{o["x"].(float64), o["y"].(float64), o["width"].(float64), o["height"].(float64)}
+}
+
+func TestNativeLayoutNestedBoundsFromTheirContainer(t *testing.T) {
+	named, _ := convertedByName(t, withBody(t, nestedRelativeBody))
+	want := map[string][4]float64{
+		"rows":      {20, 70, 300, 100},
+		"qty":       {24, 72, 100, 20},
+		"edge":      {130, 70, 90, 20}, // jutting half a point above the portal: drawn from its edge
+		"rowbutton": {230, 72, 80, 20},
+		"rowlabel":  {232, 74, 76, 16},
+		"tabs":      {340, 130, 250, 120},
+		"title":     {355, 175, 100, 20}, // tab control + panel + group + its own
+		"pop":       {20, 180, 80, 15},
+		"poppanel":  {110, 200, 190, 50}, // a popover's panel is placed on the layout
+		"inside":    {120, 210, 90, 20},
+		"segment":   {120, 230, 100, 15},
+	}
+	for name, b := range want {
+		o := named[name]
+		if o == nil {
+			t.Fatalf("%s not migrated: %v", name, named)
+		}
+		if box(o) != b {
+			t.Errorf("%s: %v, want %v", name, box(o), b)
+		}
+	}
+	portal := named["rows"]
+	for _, name := range []string{"qty", "edge", "rowbutton", "rowlabel"} {
+		if named[name]["portal"] != portal["id"] {
+			t.Errorf("%s is not a row object of the portal: %v", name, named[name])
+		}
+	}
+	if p, _ := named["title"]["panel"].(map[string]interface{}); p == nil || p["control"] != named["tabs"]["id"] {
+		t.Errorf("title is not on the tab panel: %v", named["title"])
+	}
+}
+
+// A file whose nested objects lie within their containers only in layout
+// coordinates, as some tools write them, is read in layout coordinates.
+func TestNativeLayoutNestedBoundsInLayoutCoordinates(t *testing.T) {
+	named, _ := convertedByName(t, withBody(t, `<ObjectList>
+              <LayoutObject type="Portal" name="rows"><UUID>00000000-0000-0000-0000-0000000000a1</UUID><Bounds top="130" left="20" bottom="230" right="320"/>
+                <Portal><TableOccurrenceReference id="2" name="Ingredients"/><Options index="1" show="4"/>
+                  <ObjectList>
+                    <LayoutObject type="Edit Box" name="qty"><UUID>00000000-0000-0000-0000-0000000000a2</UUID><Bounds top="132" left="24" bottom="152" right="124"/>
+                      <Field><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference><Display Style="0" show="1"/></Field>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>
+            </ObjectList>`))
+	if b := box(named["qty"]); b != [4]float64{24, 132, 100, 20} || named["qty"]["portal"] != named["rows"]["id"] {
+		t.Fatalf("qty: %v", named["qty"])
+	}
+	// One that fits its portal read either way, but only its first row in
+	// layout coordinates.
+	named, _ = convertedByName(t, withBody(t, `<ObjectList>
+              <LayoutObject type="Portal" name="rows"><UUID>00000000-0000-0000-0000-0000000000a1</UUID><Bounds top="70" left="20" bottom="170" right="320"/>
+                <Portal><TableOccurrenceReference id="2" name="Ingredients"/><Options index="1" show="4"/>
+                  <ObjectList>
+                    <LayoutObject type="Edit Box" name="qty"><UUID>00000000-0000-0000-0000-0000000000a2</UUID><Bounds top="72" left="24" bottom="88" right="124"/>
+                      <Field><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference><Display Style="0" show="1"/></Field>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>
+            </ObjectList>`))
+	if b := box(named["qty"]); b != [4]float64{24, 72, 100, 16} {
+		t.Fatalf("qty in the first row: %v", named["qty"])
+	}
+	// The handwritten fixture, written so throughout, keeps its places.
+	named, all := convertedByName(t, layoutObjectsFixture)
+	for _, o := range all {
+		if o["type"] == "oval" && (o["x"] != 430.0 || o["y"] != 160.0) {
+			t.Fatalf("oval on the tab panel: %v", o)
+		}
+	}
+	if b := box(named["price"]); b[0] != 20 || b[1] != 70 {
+		t.Fatalf("grouped field: %v", named["price"])
+	}
+}
+
+func TestNativeLayoutPortalRowsAtTheirPortalsEdges(t *testing.T) {
+	named, _ := convertedByName(t, withBody(t, `<ObjectList>
+              <LayoutObject type="Portal" name="rows"><UUID>00000000-0000-0000-0000-0000000000a1</UUID><Bounds top="70" left="20" bottom="170" right="320"/>
+                <Portal><TableOccurrenceReference id="2" name="Ingredients"/><Options index="1" show="5"/>
+                  <ObjectList>
+                    <LayoutObject type="Popover Button" name="pop"><UUID>00000000-0000-0000-0000-0000000000c1</UUID><Bounds top="2" left="250" bottom="18" right="290"/>
+                      <PopoverButton>
+                        <Label><Text><StyledText><Data><![CDATA[More]]></Data></StyledText></Text></Label>
+                        <LayoutObject type="PopoverPanel" name="poppanel"><UUID>00000000-0000-0000-0000-0000000000c2</UUID><Bounds top="100" left="280" bottom="160" right="380"/>
+                          <ObjectList>
+                            <LayoutObject type="Text" name="inside"><UUID>00000000-0000-0000-0000-0000000000c3</UUID><Bounds top="5" left="5" bottom="25" right="80"/>
+                              <Text><StyledText><Data><![CDATA[Inside]]></Data></StyledText></Text>
+                            </LayoutObject>
+                          </ObjectList>
+                        </LayoutObject>
+                      </PopoverButton>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>
+              <LayoutObject type="Portal" name="narrow"><UUID>00000000-0000-0000-0000-0000000000a5</UUID><Bounds top="180" left="0" bottom="230" right="50.1"/>
+                <Portal><TableOccurrenceReference id="2" name="Ingredients"/><Options index="1" show="2"/>
+                  <ObjectList>
+                    <LayoutObject type="Edit Box" name="qty"><UUID>00000000-0000-0000-0000-0000000000a6</UUID><Bounds top="2" left="8.2" bottom="22" right="50.6"/>
+                      <Field><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference><Display Style="0" show="1"/></Field>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>
+            </ObjectList>`))
+	// Rows as short as FileMaker draws them.
+	if c := named["rows"]["portal_config"].(map[string]interface{}); c["row_count"] != 5.0 || c["row_height"] != 20.0 {
+		t.Fatalf("portal rows: %v", c)
+	}
+	// A popover opened from a row is drawn whole over the layout.
+	if b := box(named["pop"]); b != [4]float64{270, 72, 40, 16} || named["pop"]["portal"] != named["rows"]["id"] {
+		t.Fatalf("popover button: %v", named["pop"])
+	}
+	if b := box(named["poppanel"]); b != [4]float64{280, 100, 100, 60} {
+		t.Fatalf("popover panel: %v", named["poppanel"])
+	}
+	if b := box(named["inside"]); b != [4]float64{285, 105, 75, 20} {
+		t.Fatalf("popover object: %v", named["inside"])
+	}
+	// Trimmed to the portal's edge, as a client adds it up.
+	qty, narrow := named["qty"], named["narrow"]
+	if qty["x"] != 8.2 || qty["x"].(float64)+qty["width"].(float64) > narrow["x"].(float64)+narrow["width"].(float64) || qty["width"].(float64) < 41.8 {
+		t.Fatalf("trimmed row object: %v", qty)
 	}
 }

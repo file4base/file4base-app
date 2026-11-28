@@ -262,18 +262,22 @@ class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost, R
   }
 
   @override
-  Future<bool> actionGoToRelatedRecord({
+  Future<int> actionGoToRelatedRecord({
     required String relatedTable,
     String? layoutName,
     bool showOnlyRelated = true,
     bool newWindow = false,
+    bool matchFoundSet = false,
   }) async {
     log.add('gtrr:$relatedTable|layout=$layoutName|only=$showOnlyRelated|newWin=$newWindow');
     if (layoutName != null && layoutName.isNotEmpty) {
-      return actionGoToLayout(layoutName);
+      return await actionGoToLayout(layoutName) ? 0 : 105;
     }
-    return true;
+    return 0;
   }
+
+  @override
+  String? get goToRelatedRecordMessage => null;
 
   @override
   Future<GoToRecordOutcome> actionGoToPortalRow(String target, {bool select = false}) async {
@@ -589,6 +593,26 @@ void main() {
     expect(result.completed, isTrue, reason: result.message);
     expect(host.records[0]['status'], 'not_found');
     expect(host.records[0]['name'], 'captured_105');
+  });
+
+  test('a find the server refuses sets Get(LastError) to 3, not 401 (#149)', () async {
+    final host = _FullExtendedHost()..nextFindCount = -2;
+    final runner = _runner(host, {
+      's1': {
+        'id': 's1',
+        'name': 'RefusedFind',
+        'is_active': true,
+        'steps': [
+          _step(1, 'Set Error Capture', {'state': true}),
+          _step(2, 'Perform Find', {'restore': true, 'find_requests': [{'action': 'find', 'criteria': [{'field': 'status', 'value': '>1'}]}]}),
+          _step(3, 'Set Field', {'field': 'name', 'value': 'Get(LastError)', 'value_is_calculation': true}),
+        ],
+      },
+    });
+
+    final result = await runner.run(const ButtonActionModel.performScript(id: 's1', name: 'RefusedFind'));
+    expect(result.completed, isTrue, reason: result.message);
+    expect(host.records[0]['name'].toString(), '3');
   });
 
   test('Go to Record [Next; Exit after last: On] terminates loop identically in runner and debugger (#133)', () async {

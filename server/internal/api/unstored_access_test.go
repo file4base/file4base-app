@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/file4base/file4base-app/server/internal/api"
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -60,18 +61,22 @@ func TestAPI_UnstoredCalculationRespectsTableAccess(t *testing.T) {
 			}
 		}
 	}
+	var relationship struct {
+		ID string `json:"id"`
+	}
 	rec := h.do(http.MethodPost, "/api/v1/schemas/relationships", owner, map[string]interface{}{
 		"name": "staff_payroll", "operator": "=",
 		"left_occurrence_id": occurrence["staff"], "left_column_id": columns["staff.code"],
 		"right_occurrence_id": occurrence["payroll"], "right_column_id": columns["payroll.code"],
-	}, nil)
+	}, &relationship)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	formula := fmt.Sprintf(`{"formula":"Sum ( %s::salary )","result_type":"Number","stored":false}`, payrollOccurrence)
 	addColumn("staff", "pay", "CALCULATION", &formula)
 
 	var person map[string]interface{}
 	require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/staff", owner, map[string]interface{}{"code": "S-1"}, &person).Code)
-	require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/payroll", owner, map[string]interface{}{"code": "S-1", "salary": 4200}, nil).Code)
+	var slip map[string]interface{}
+	require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/payroll", owner, map[string]interface{}{"code": "S-1", "salary": 4200}, &slip).Code)
 	id := fmt.Sprint(person["id"])
 
 	var row map[string]interface{}
@@ -103,6 +108,50 @@ func TestAPI_UnstoredCalculationRespectsTableAccess(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Nil(t, row["pay"], "no payroll value reaches a user who may not read payroll")
 
+	// A find or a sort on it computes it as the caller too (#149): the
+	// payroll it reads finds nothing for her, and sorts as empty.
+	find := map[string]interface{}{"requests": []map[string]interface{}{
+		{"criteria": []map[string]interface{}{{"field_name": "pay", "value": ">1000"}}},
+	}}
+	var found []map[string]interface{}
+	rec = h.do(http.MethodPost, "/api/v1/data/staff/find", owner, find, &found)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, found, 1)
+	assert.Equal(t, "4200", fmt.Sprint(found[0]["pay"]))
+	found = nil
+	rec = h.do(http.MethodPost, "/api/v1/data/staff/find", carolToken, find, &found)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Empty(t, found, "a find tells no more than the record shows")
+	var listed []map[string]interface{}
+	rec = h.do(http.MethodGet, "/api/v1/data/staff?sort=-pay", carolToken, nil, &listed)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, listed, 1)
+	assert.Nil(t, listed[0]["pay"])
+
+	// An export found by a payroll field reads payroll, as that find would,
+	// so it is refused to her too.
+	rec = h.do(http.MethodPost, "/api/v1/data/staff/export", carolToken, map[string]interface{}{
+		"format": "csv", "sort": []map[string]interface{}{{"field": "pay"}},
+		"requests": []map[string]interface{}{{"criteria": []map[string]interface{}{{
+			"field_name": "salary", "value": ">1000", "relationship_id": relationship.ID, "occurrence": payrollOccurrence,
+		}}}},
+	}, nil)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	// Past the most records it computes, the find is refused, saying so.
+	require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/staff", owner, map[string]interface{}{"code": "S-2"}, nil).Code)
+	data.SetUnstoredFindLimits(data.UnstoredFindLimits{Records: 1})
+	defer data.SetUnstoredFindLimits(data.DefaultUnstoredFindLimits)
+	var problem struct {
+		Title  string `json:"title"`
+		Detail string `json:"detail"`
+	}
+	rec = h.do(http.MethodPost, "/api/v1/data/staff/find", owner, find, &problem)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Equal(t, "Too Many Records to Compute", problem.Title)
+	assert.Contains(t, problem.Detail, "computed for 2 records of staff")
+	data.SetUnstoredFindLimits(data.DefaultUnstoredFindLimits)
+
 	var answer struct {
 		Results []evaluationResult `json:"results"`
 	}
@@ -113,4 +162,23 @@ func TestAPI_UnstoredCalculationRespectsTableAccess(t *testing.T) {
 	require.Len(t, answer.Results, 1)
 	assert.Nil(t, answer.Results[0].Value)
 	assert.Contains(t, answer.Results[0].Error, "<No Access>")
+
+	// A portal's row is evaluated in the layout's record only for a user who
+	// may read both: a staff row on a payroll layout, a payroll row on a
+	// staff layout.
+	slipID := fmt.Sprint(slip["id"])
+	rowOn := func(token, rows, rowID, layout, layoutID string) int {
+		return h.do(http.MethodPost, "/api/v1/occurrences/"+occurrence[rows]+"/records/evaluate", token, map[string]interface{}{
+			"expression": "code", "record_id": rowID,
+			"context": map[string]string{"occurrence": occurrence[layout], "record_id": layoutID},
+		}, nil).Code
+	}
+	assert.Equal(t, http.StatusOK, rowOn(owner, "staff", id, "payroll", slipID))
+	assert.Equal(t, http.StatusForbidden, rowOn(carolToken, "staff", id, "payroll", slipID), "the layout's record")
+	assert.Equal(t, http.StatusForbidden, rowOn(carolToken, "payroll", slipID, "staff", id), "the row")
+	rec = h.do(http.MethodPost, "/api/v1/data/staff/evaluate", carolToken, map[string]interface{}{
+		"expression": "code", "record_id": id, "occurrence": occurrence["staff"],
+		"context": map[string]string{"occurrence": occurrence["payroll"], "record_id": slipID},
+	}, nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 }

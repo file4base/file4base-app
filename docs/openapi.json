@@ -1205,7 +1205,7 @@
           "Solutions & Backup"
         ],
         "summary": "Create a database and its first owner account",
-        "description": "Public while ALLOW_PUBLIC_DATABASE_CREATION=true (default); otherwise requires an owner session. Never modifies an existing database.",
+        "description": "Public while ALLOW_PUBLIC_DATABASE_CREATION=true (default); otherwise requires an owner session. Never modifies an existing database. FILE4BASE_ADMIN_DATABASE and the databases of FILE4BASE_SUPER_OWNER are reserved (#236): only a super-owner session, or a request with the server's setup_code, can create them; the code also lifts the owner-session requirement for them, and a seeded database created with it must get one of its seeded usernames as user.",
         "security": [
           {},
           {
@@ -1230,13 +1230,13 @@
             "description": "A database with that name already exists"
           },
           "422": {
-            "description": "Missing name or owner credentials"
+            "description": "Missing name or owner credentials, or a seeded reserved database created with the setup code for another owner"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "$ref": "#/components/responses/Forbidden"
+            "description": "Only an owner can create databases on this server, or the database is reserved (title Reserved Database, with reserved_database and setup_code_required)"
           }
         }
       }
@@ -4288,8 +4288,11 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
+          "404": {
+            "description": "No such table or record, or no such active portal row; with a context, no such layout record (even with record_ids), an occurrence that is not there, or a portal occurrence of another table."
+          },
           "422": {
-            "description": "Too Many Records: more than 100 record_ids in one request."
+            "description": "Too Many Records: more than 100 record_ids in one request; or a context with an occurrence of another solution's table, whose rows are evaluated through /api/v1/occurrences/{occurrence}/records/evaluate."
           }
         },
         "parameters": [
@@ -4314,6 +4317,9 @@
                   "record_id": { "type": "string" },
                   "record_ids": { "type": "array", "items": { "type": "string" }, "maxItems": 100, "description": "Evaluates every expression against each record, in one request." },
                   "occurrence": { "type": "string", "description": "Occurrence of the table (id or name) the expressions are evaluated from, as a layout on it does; a related field is read through its relationships. Absent: the table's own occurrence." },
+                  "self": { "type": "array", "items": { "type": "object", "nullable": true, "properties": { "field": { "type": "string" }, "occurrence": { "type": "string" }, "repetition": { "type": "integer", "minimum": 1 }, "text": { "type": "string" } } }, "description": "For the expression at the same index, what Self reads, as a layout object's conditions read it: a field of the record (no occurrence) or of an occurrence by name, in the repetition shown (1 by default), or the text a text object or a button shows (text, which wins over field). A null entry, or one with neither, leaves Self unknown." },
+                  "context": { "$ref": "#/components/schemas/EvaluationContext" },
+                  "portal_row": { "$ref": "#/components/schemas/ActivePortalRow" },
                   "result_type": { "type": "string" }
                 }
               }
@@ -4443,7 +4449,7 @@
             }
           }
         },
-        "description": "options.perform_auto_enter (default false) performs the fields' auto-enter options while importing, as FileMaker's Perform auto-enter options while importing."
+        "description": "options.perform_auto_enter (default false) performs the fields' auto-enter options while importing, as FileMaker's Perform auto-enter options while importing. As FileMaker imports, a value its field cannot hold or that breaks a rule checked as it is entered is left out of its record and a record failing not empty or its validation by calculation is skipped; the answer counts them (skipped_errors, fields_skipped) and lists each (problems: row, field, rule, value, message, record_skipped). options.abort_on_error (default false) imports nothing when anything would be skipped (422)."
       }
     },
     "/api/v1/data/{table}/import/preview": {
@@ -6428,6 +6434,65 @@
         }
       }
     },
+    "/api/v1/occurrences/{occurrence}/records/evaluate": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The table occurrence, by id or name: a portal's, whose rows are evaluated."
+        }
+      ],
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Evaluate expressions against records of a table occurrence",
+        "description": "POST /api/v1/data/{table}/evaluate for the records of the occurrence, seen from it (its occurrence field is ignored). Those of another solution's table are read there, as the account the session group holds there, with its access; the formula, which names this solution's occurrences, is evaluated here, in the layout's record given as context, read as the caller. Such records are evaluated only with a context.",
+        "responses": {
+          "200": {
+            "description": "As POST /api/v1/data/{table}/evaluate: {\"results\": [...]}, or {\"records\": {id: [results] or null}} with record_ids."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence, record or context not found"
+          },
+          "422": {
+            "description": "Nothing to evaluate, too many expressions or records, or the records of another solution's table without a context"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expression": { "type": "string" },
+                  "expressions": { "type": "array", "items": { "type": "string" } },
+                  "record_id": { "type": "string" },
+                  "record_ids": { "type": "array", "items": { "type": "string" }, "maxItems": 100 },
+                  "self": { "type": "array", "items": { "type": "object", "nullable": true } },
+                  "context": { "$ref": "#/components/schemas/EvaluationContext" },
+                  "result_type": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/occurrences/{occurrence}/records/{id}": {
       "parameters": [
         {
@@ -8193,6 +8258,11 @@
             "type": "string",
             "format": "password",
             "description": "Password of the first owner account"
+          },
+          "setup_code": {
+            "type": "string",
+            "description": "Setup code printed in the server log (or FILE4BASE_SETUP_CODE). Only read for a reserved database, by a caller who is not a super-owner. Case, spaces and dashes are ignored.",
+            "example": "ABCD-EFGH-IJKL-MNOP"
           }
         }
       },
@@ -8409,6 +8479,24 @@
           "totp_code": {
             "type": "string"
           }
+        }
+      },
+      "EvaluationContext": {
+        "type": "object",
+        "description": "The record of the layout a portal's rows are evaluated in, as FileMaker evaluates a portal row's conditions and the portal's filter: from the layout, with the row as the current record of the portal's occurrence. A field named alone, of the portal's occurrence or of one reached through it reads the row; one of the layout's occurrence reads this record, any other is related to it; an aggregate of the portal's occurrence covers every record related to this one. The caller must be able to read its table; the occurrence must be one of this solution's tables.",
+        "required": ["occurrence"],
+        "properties": {
+          "occurrence": { "type": "string", "description": "The layout's occurrence, by id or name." },
+          "record_id": { "type": "string", "description": "The layout's record." }
+        }
+      },
+      "ActivePortalRow": {
+        "type": "object",
+        "description": "The active portal row a script's formulas are evaluated with on the layout's record (record_id, seen from occurrence), as FileMaker does while a portal row is active: the layout's record stays the current one and the row is the current record of the portal's occurrence. A field of that occurrence reads the row, one through it the records related to the row; an aggregate of the occurrence covers every record related to the layout's record. A row of another solution's table is read there, as the account the session group holds there. It needs record_id; not with context nor record_ids (422). The caller gives a row related to the record; it is read with the caller's own access. A row that is not there is 404.",
+        "required": ["occurrence", "record_id"],
+        "properties": {
+          "occurrence": { "type": "string", "description": "The portal's occurrence, by id or name. The layout's own occurrence pins nothing: its fields are the layout record's." },
+          "record_id": { "type": "string", "description": "The row's record." }
         }
       },
       "RelatedBatchRequest": {
