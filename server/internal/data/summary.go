@@ -159,8 +159,8 @@ func CheckSummarySpec(spec SummarySpec, fields map[string]dbal.AgnosticFieldType
 // aggregateSQL is the expression that works out one summary over a set of
 // rows. A fraction of the total is the group's own total; the dividing is done
 // afterwards, where the grand total is known.
-func aggregateSQL(dialect dbal.Dialect, spec SummarySpec) string {
-	col := dialect.QuoteIdentifier(spec.Field)
+func aggregateSQL(column func(string) string, spec SummarySpec) string {
+	col := column(spec.Field)
 	switch spec.Type {
 	case SummaryTotal, SummaryFractionOfTotal:
 		return fmt.Sprintf("SUM(%s)", col)
@@ -288,24 +288,14 @@ func (s *Service) Summarize(ctx context.Context, tableName string, req SummaryRe
 		}
 	}
 
+	// A report totals the found set, criteria on related fields included,
+	// and computes the unstored calculations it finds, groups or totals by.
 	summarized := slices.Clone(req.GroupBy)
 	for _, spec := range wanted {
 		summarized = append(summarized, spec.Field)
 	}
-	if err := s.refuseUnstored(ctx, tableName, "summarize", summarized...); err != nil {
-		return nil, err
-	}
-
 	dialect := s.driver.Dialect()
-	// A report totals the found set, criteria on related fields included.
-	related, err := s.resolveFindRelations(ctx, tableName, req.Requests)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.refuseUnstoredCriteria(ctx, tableName, req.Requests, related); err != nil {
-		return nil, err
-	}
-	find, err := buildFindClauses(dialect, fields, tableName, req.Requests, related)
+	find, err := s.findClauses(ctx, tableName, fields, req.Requests, summarized, "summary")
 	if err != nil {
 		return nil, err
 	}
@@ -352,11 +342,11 @@ func (s *Service) summaryRow(
 ) (int, map[string]interface{}, error) {
 	selects := []string{"COUNT(*)"}
 	for _, name := range names {
-		selects = append(selects, aggregateSQL(dialect, specs[name]))
+		selects = append(selects, aggregateSQL(find.column, specs[name]))
 	}
 
-	q := fmt.Sprintf("%sSELECT %s FROM %s %s",
-		find.with, strings.Join(selects, ", "), dialect.QuoteIdentifier(tableName), find.where)
+	q := fmt.Sprintf("%sSELECT %s FROM %s%s %s",
+		find.with, strings.Join(selects, ", "), dialect.QuoteIdentifier(tableName), find.join, find.where)
 
 	count := 0
 	cells := make([]sql.NullString, len(names))
@@ -385,19 +375,20 @@ func (s *Service) summaryGroups(
 ) ([]SummaryGroup, error) {
 	groupCols := make([]string, 0, len(groupBy))
 	for _, field := range groupBy {
-		groupCols = append(groupCols, dialect.QuoteIdentifier(field))
+		groupCols = append(groupCols, find.column(field))
 	}
 
 	selects := append([]string{}, groupCols...)
 	selects = append(selects, "COUNT(*)")
 	for _, name := range names {
-		selects = append(selects, aggregateSQL(dialect, specs[name]))
+		selects = append(selects, aggregateSQL(find.column, specs[name]))
 	}
 
-	q := fmt.Sprintf("%sSELECT %s FROM %s %s GROUP BY %s ORDER BY %s",
+	q := fmt.Sprintf("%sSELECT %s FROM %s%s %s GROUP BY %s ORDER BY %s",
 		find.with,
 		strings.Join(selects, ", "),
 		dialect.QuoteIdentifier(tableName),
+		find.join,
 		find.where,
 		strings.Join(groupCols, ", "),
 		strings.Join(groupCols, ", "),

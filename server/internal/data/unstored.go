@@ -27,9 +27,11 @@ import (
 // the occurrence the calculation is evaluated in to the one it names, across
 // as many relationships as the path takes.
 
-// ErrUnstoredField is returned for a find, sort or summary on an unstored
-// calculation: its value exists only once a record is read, so the database
-// cannot search or order by it.
+// ErrUnstoredField is returned for a find on an unstored calculation of
+// related records, and for a sort of the related records a calculation reads
+// by one: its value exists only once a record is read, so the database
+// cannot search or order by it. A find, sort or summary of a table's own
+// records by its unstored calculations computes them (unstored_find.go).
 var ErrUnstoredField = errors.New("unstored calculation")
 
 // maxRelatedDepth bounds how deep unstored calculations may read each other
@@ -410,9 +412,9 @@ func (g *occurrenceGraph) path(from, to occurrence) ([]hop, error) {
 	return nil, fmt.Errorf("no relationship leads from %s to %s", from.name, to.name)
 }
 
-// refuseUnstored refuses to search, sort or summarise tableName by one of
-// its unstored calculations: the column holds nothing, the value exists only
-// once a record is read.
+// refuseUnstored refuses to search or sort tableName by one of its unstored
+// calculations where the value cannot be computed first: the column holds
+// nothing, the value exists only once a record is read.
 func refuseUnstored(calculations []calculation, tableName, what string, fields ...string) error {
 	for _, c := range calculations {
 		if c.unstored && slices.Contains(fields, c.field) {
@@ -438,11 +440,11 @@ func (s *Service) refuseUnstored(ctx context.Context, tableName, what string, fi
 // orderBy is orderByClause for a table that may have unstored calculations,
 // with the records' creation order last: alone when nothing sorts them, as
 // FileMaker lists them, and to keep records that sort alike in that order.
-func (s *Service) orderBy(ctx context.Context, fields fieldSet, tableName string, order []SortField) (string, error) {
-	if err := s.refuseUnstored(ctx, tableName, "sort", sortFields(order)...); err != nil {
-		return "", err
-	}
-	clause, err := orderByClause(s.driver.Dialect(), fields, tableName, order)
+// column says how the statement reads a field (findClauses.column), nil for
+// its own column: an unstored calculation is sorted by the values computed
+// for the statement (unstored_find.go).
+func (s *Service) orderBy(ctx context.Context, fields fieldSet, tableName string, order []SortField, column func(string) string) (string, error) {
+	clause, err := orderByColumns(s.driver.Dialect(), fields, tableName, order, column)
 	if err != nil {
 		return "", err
 	}
@@ -461,26 +463,24 @@ func sortFields(order []SortField) []string {
 	return names
 }
 
-// refuseUnstoredCriteria refuses a find on an unstored calculation of the
-// table searched, or of a related table a criterion reaches through.
+// refuseUnstoredCriteria refuses a find on an unstored calculation of a
+// related table a criterion reaches through: the find computes the unstored
+// calculations of the table searched (unstored_find.go), not those of the
+// related records.
 func (s *Service) refuseUnstoredCriteria(
-	ctx context.Context, tableName string, requests []FindRequest, related map[string]relatedFindTarget,
+	ctx context.Context, requests []FindRequest, related map[string]relatedFindTarget,
 ) error {
 	byTable := map[string][]string{}
 	for _, req := range requests {
 		for _, crit := range req.Criteria {
-			if crit.FieldName == "" {
+			if crit.FieldName == "" || !crit.isRelated() {
 				continue
 			}
-			table := tableName
-			if crit.isRelated() {
-				target := related[relatedFindKey(crit)]
-				if target.External != nil {
-					continue // refused there, where the criterion is run
-				}
-				table = target.TableName
+			target := related[relatedFindKey(crit)]
+			if target.External != nil {
+				continue // refused there, where the criterion is run
 			}
-			byTable[table] = append(byTable[table], crit.FieldName)
+			byTable[target.TableName] = append(byTable[target.TableName], crit.FieldName)
 		}
 	}
 	for table, fields := range byTable {

@@ -244,7 +244,7 @@ abstract class ExtendedLayoutActionHost {
   Future<bool> actionGoToLayoutByNumber(int layoutNumber);
   Future<void> actionEnterFindModeEx({List<Map<String, dynamic>>? requests, bool restore = false});
   /// The number of records found; -1 when OnModeExit kept the window in
-  /// Find mode, and nothing was found.
+  /// Find mode, and nothing was found; -2 when the server refused the find.
   Future<int> actionPerformFindEx({List<Map<String, dynamic>>? requests, bool restore = false});
   Future<void> actionSortRecords({List<Map<String, dynamic>>? sortOrder, bool restore = false, bool dialog = true});
   Future<void> actionUnsortRecords();

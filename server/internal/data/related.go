@@ -840,7 +840,7 @@ func (q *relatedQuery) paged(ctx context.Context, opts QueryOptions) error {
 		}
 		order = nil
 	}
-	if q.order, err = q.dst.orderBy(ctx, q.fields, q.target.TableName, order); err != nil {
+	if q.order, err = q.dst.orderBy(ctx, q.fields, q.target.TableName, order, nil); err != nil {
 		return wrapSide(q.target, err)
 	}
 	if q.creation, err = q.dst.creationOrder(ctx, q.target.TableName); err != nil {
