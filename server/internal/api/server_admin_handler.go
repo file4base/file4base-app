@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -33,7 +32,6 @@ import (
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 // AuditEvent represents a security or administrative event in the server audit log.
@@ -97,7 +95,7 @@ type BackupRecord struct {
 	SizeBytes   int64  `json:"size_bytes"`
 	TablesCount int    `json:"tables_count"`
 	Notes       string `json:"notes"`
-	Type        string `json:"type"` // "manual" | "scheduled"
+	Type        string `json:"type"` // "manual", "pre_update", "pre_restore", "uploaded"
 }
 
 // ScheduledJob represents a recurring server task (backup, script, or maintenance).
@@ -182,6 +180,12 @@ type ServerAdminHandler struct {
 
 	// adminDatabase: owners of this database are server administrators.
 	adminDatabase string
+
+	// restoring holds the databases a restore is running on (lockRestore).
+	// backingUp counts the backups being taken of each (beginBackup).
+	restoreMu sync.Mutex
+	restoring map[string]bool
+	backingUp map[string]int
 }
 
 // ConfigureAccess sets who administers the server (the owners of
@@ -192,6 +196,7 @@ func (h *ServerAdminHandler) ConfigureAccess(adminDatabase, backupsDir string) {
 	if dir := strings.TrimSpace(backupsDir); dir != "" {
 		h.backupsDir = dir
 		_ = os.MkdirAll(dir, 0o755)
+		removePartialBackups(dir)
 	}
 }
 
@@ -247,26 +252,26 @@ func (h *ServerAdminHandler) mayUseBackup(sess auth.Session, database string) bo
 	return h.isServerAdmin(sess) || (database != "" && strings.EqualFold(database, sess.Database))
 }
 
-// backupDatabase returns the database a snapshot file was taken from.
-func backupDatabase(raw []byte) string {
-	var meta struct {
-		Database string `json:"database"`
-	}
-	if json.Unmarshal(raw, &meta) != nil {
-		return ""
-	}
-	return strings.TrimSpace(meta.Database)
-}
-
-// readOwnBackup reads a backup the session may use. A backup of another
-// database is reported as not found, so its existence is not disclosed.
-func (h *ServerAdminHandler) readOwnBackup(w http.ResponseWriter, r *http.Request, filename string) ([]byte, bool) {
-	raw, err := os.ReadFile(filepath.Join(h.backupsDir, filename))
-	if err != nil || !h.mayUseBackup(currentSession(r), backupDatabase(raw)) {
+// ownBackup finds a backup the session may use, reading only its header. A
+// backup of another database is reported as not found, so its existence is
+// not disclosed.
+func (h *ServerAdminHandler) ownBackup(w http.ResponseWriter, r *http.Request, filename string) (string, backupHeader, bool) {
+	path := filepath.Join(h.backupsDir, filename)
+	hdr, err := readBackupHeader(path)
+	if err != nil {
+		// A server administrator may still download or delete a file whose
+		// header cannot be read, a damaged one, which a restore refuses.
+		if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() && h.isServerAdmin(currentSession(r)) {
+			return path, backupHeader{}, true
+		}
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Backup Not Found", "snapshot file does not exist")
-		return nil, false
+		return "", backupHeader{}, false
 	}
-	return raw, true
+	if !h.mayUseBackup(currentSession(r), hdr.Database) {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Backup Not Found", "snapshot file does not exist")
+		return "", backupHeader{}, false
+	}
+	return path, hdr, true
 }
 
 // GetAccess tells the client which Server Tools the session may use.
@@ -288,6 +293,7 @@ func (h *ServerAdminHandler) GetAccess(w http.ResponseWriter, r *http.Request) {
 func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store, controlStore *control.Store, version string) *ServerAdminHandler {
 	backupsDir := "./data/backups"
 	_ = os.MkdirAll(backupsDir, 0o755)
+	removePartialBackups(backupsDir)
 
 	curVer := strings.TrimPrefix(strings.TrimSpace(os.Getenv("FILE4BASE_VERSION")), "v")
 	if curVer == "" {
@@ -957,19 +963,17 @@ func (h *ServerAdminHandler) ApplyContainerUpdate(w http.ResponseWriter, r *http
 	// back to.
 	var preBackupFilename string
 	if dbName != "" {
-		if driver, err := h.dbMgr.DriverFor(r.Context(), dbName); err == nil {
+		if _, err := h.dbMgr.DriverFor(r.Context(), dbName); err == nil {
 			now := time.Now().UTC()
-			bkpID := fmt.Sprintf("bkp_%s_%s", dbName, now.Format("20060102_150405"))
-			preBackupFilename = bkpID + ".f4b.json"
-			payload, _, err := h.backupSnapshot(r.Context(), driver, dbName, bkpID, sess.Username,
+			done, ok := h.beginBackup(dbName)
+			if !ok {
+				telemetry.WriteProblem(w, r, http.StatusConflict, "Restore In Progress",
+					"a restore of "+dbName+" is running; update once it ends")
+				return
+			}
+			rec, err := h.writeSnapshot(r.Context(), dbName, "", sess.Username,
 				fmt.Sprintf("Automatic pre-update snapshot before updating %s", target), "pre_update", now)
-			var encoded []byte
-			if err == nil {
-				encoded, err = json.MarshalIndent(payload, "", "  ")
-			}
-			if err == nil {
-				err = os.WriteFile(filepath.Join(h.backupsDir, preBackupFilename), encoded, 0o600)
-			}
+			done()
 			if err != nil {
 				h.recordAudit("container", "Update Container Stack", sess.Username, dbName, target, "error",
 					"The pre-update snapshot could not be made: "+err.Error())
@@ -977,6 +981,7 @@ func (h *ServerAdminHandler) ApplyContainerUpdate(w http.ResponseWriter, r *http
 					"The pre-update backup could not be made, so nothing was updated: "+err.Error())
 				return
 			}
+			preBackupFilename = rec.Filename
 		}
 	}
 
@@ -1115,33 +1120,21 @@ func (h *ServerAdminHandler) ListBackups(w http.ResponseWriter, r *http.Request)
 			SizeBytes: info.Size(),
 			Type:      "manual",
 		}
-		if raw, err := os.ReadFile(fullPath); err == nil {
-			var meta struct {
-				ID          string          `json:"id"`
-				Database    string          `json:"database"`
-				CreatedAt   string          `json:"created_at"`
-				CreatedBy   string          `json:"created_by"`
-				Notes       string          `json:"notes"`
-				Type        string          `json:"type"`
-				Tables      json.RawMessage `json:"tables"`
-				TablesCount int             `json:"tables_count"`
+		if hdr, err := readBackupHeader(fullPath); err == nil {
+			if hdr.Database != "" {
+				rec.Database = hdr.Database
 			}
-			if json.Unmarshal(raw, &meta) == nil {
-				if meta.Database != "" {
-					rec.Database = meta.Database
-				}
-				if meta.CreatedAt != "" {
-					rec.CreatedAt = meta.CreatedAt
-				}
-				if meta.CreatedBy != "" {
-					rec.CreatedBy = meta.CreatedBy
-				}
-				rec.Notes = meta.Notes
-				if meta.Type != "" {
-					rec.Type = meta.Type
-				}
-				rec.TablesCount = meta.TablesCount
+			if hdr.CreatedAt != "" {
+				rec.CreatedAt = hdr.CreatedAt
 			}
+			if hdr.CreatedBy != "" {
+				rec.CreatedBy = hdr.CreatedBy
+			}
+			rec.Notes = hdr.Notes
+			if hdr.Type != "" {
+				rec.Type = hdr.Type
+			}
+			rec.TablesCount = hdr.TablesCount
 		}
 		// Only the backups of the session's own database (all of them for a
 		// server administrator).
@@ -1169,7 +1162,8 @@ type createBackupRequest struct {
 	Type     string `json:"type"`
 }
 
-// CreateBackup exports a full snapshot of the active (or specified) database into ./data/backups.
+// CreateBackup backs the active (or specified) database up into the backups
+// folder (see writeSnapshot).
 func (h *ServerAdminHandler) CreateBackup(w http.ResponseWriter, r *http.Request) {
 	sess := currentSession(r)
 	var req createBackupRequest
@@ -1179,135 +1173,37 @@ func (h *ServerAdminHandler) CreateBackup(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-
-	driver, err := h.dbMgr.DriverFor(r.Context(), dbName)
-	if err != nil {
+	if _, err := h.dbMgr.DriverFor(r.Context(), dbName); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Backup Failed", err.Error())
 		return
 	}
-
-	now := time.Now().UTC()
-	backupID := fmt.Sprintf("bkp_%s_%s", dbName, now.Format("20060102_150405"))
-	filename := backupID + ".f4b.json"
 	bkpType := req.Type
 	if bkpType == "" {
 		bkpType = "manual"
 	}
-
-	payload, tablesCount, err := h.backupSnapshot(r.Context(), driver, dbName, backupID, sess.Username, req.Notes, bkpType, now)
+	now := time.Now().UTC()
+	// During a restore the database is between two states (on MariaDB, which
+	// cannot restore in one transaction, they can be seen).
+	done, ok := h.beginBackup(dbName)
+	if !ok {
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Restore In Progress",
+			"a restore of "+dbName+" is running; back it up once it ends")
+		return
+	}
+	rec, err := h.writeSnapshot(r.Context(), dbName, "", sess.Username, req.Notes, bkpType, now)
+	done()
 	if err != nil {
-		h.recordAudit("backup", "Create Backup", sess.Username, dbName, filename, "error", err.Error())
+		h.recordAudit("backup", "Create Backup", sess.Username, dbName, "", "error", err.Error())
 		telemetry.WriteProblem(w, r, http.StatusInternalServerError, "Backup Failed",
 			"The backup was not written: "+err.Error())
 		return
 	}
-
-	encoded, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		telemetry.WriteInternalError(w, r, err)
-		return
-	}
-
-	fullPath := filepath.Join(h.backupsDir, filename)
-	if err := os.WriteFile(fullPath, encoded, 0o600); err != nil {
-		telemetry.WriteInternalError(w, r, err)
-		return
-	}
-
-	h.recordAudit("backup", "Create Backup", sess.Username, dbName, filename, "success", fmt.Sprintf("Created snapshot %s (%d bytes, %d tables)", filename, len(encoded), tablesCount))
+	h.recordAudit("backup", "Create Backup", sess.Username, dbName, rec.Filename, "success",
+		fmt.Sprintf("Created snapshot %s (%d bytes, %d tables)", rec.Filename, rec.SizeBytes, rec.TablesCount))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(BackupRecord{
-		ID:          backupID,
-		Filename:    filename,
-		Database:    dbName,
-		CreatedAt:   now.Format(time.RFC3339),
-		CreatedBy:   sess.Username,
-		SizeBytes:   int64(len(encoded)),
-		TablesCount: tablesCount,
-		Notes:       req.Notes,
-		Type:        bkpType,
-	})
-}
-
-// backupSnapshot is the content of a backup file of dbName. The catalog is
-// brought up to date first (see schema.EnsureCatalogCurrent). Any part that
-// cannot be read fails the snapshot, rather than leaving a backup that
-// restores to nothing.
-func (h *ServerAdminHandler) backupSnapshot(
-	ctx context.Context, driver dbal.DatabaseDriver, dbName, backupID, createdBy, notes, bkpType string, now time.Time,
-) (map[string]interface{}, int, error) {
-	svc := schema.NewService(driver)
-	if !svc.HasSystemCatalog(ctx) {
-		return nil, 0, fmt.Errorf("%s has no File4Base catalog", dbName)
-	}
-	if err := svc.EnsureCatalogCurrent(ctx); err != nil {
-		return nil, 0, fmt.Errorf("the catalog could not be brought up to date: %w", err)
-	}
-	tables, err := svc.ListTables(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("the tables could not be read: %w", err)
-	}
-	occurrences, err := svc.ListTableOccurrences(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("the table occurrences could not be read: %w", err)
-	}
-	relationships, err := svc.ListRelationships(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("the relationships could not be read: %w", err)
-	}
-	layouts, err := svc.ListLayouts(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("the layouts could not be read: %w", err)
-	}
-	scripts, err := svc.ListScripts(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("the scripts could not be read: %w", err)
-	}
-	valueLists, err := svc.ListValueLists(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("the value lists could not be read: %w", err)
-	}
-	users, err := svc.ListUsers(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("the accounts could not be read: %w", err)
-	}
-	solutionBytes, err := svc.ExportSolution(ctx, schema.ExportOptions{SolutionName: dbName})
-	if err != nil {
-		return nil, 0, fmt.Errorf("the solution could not be exported: %w", err)
-	}
-	dataBytes, err := svc.ExportDatabaseData(ctx, dbName)
-	if err != nil {
-		return nil, 0, fmt.Errorf("the records could not be exported: %w", err)
-	}
-
-	tableData := make(map[string]interface{}, len(tables))
-	for _, t := range tables {
-		tableData[t.Name] = map[string]interface{}{
-			"metadata": t,
-			"columns":  t.Columns,
-		}
-	}
-	return map[string]interface{}{
-		"id":                  backupID,
-		"database":            dbName,
-		"engine":              string(h.dbMgr.Engine()),
-		"created_at":          now.Format(time.RFC3339),
-		"created_by":          createdBy,
-		"notes":               notes,
-		"type":                bkpType,
-		"tables_count":        len(tables),
-		"tables":              tableData,
-		"table_occurrences":   occurrences,
-		"relationships":       relationships,
-		"layouts":             layouts,
-		"scripts":             scripts,
-		"value_lists":         valueLists,
-		"users":               users,
-		"solution_bundle_b64": base64.StdEncoding.EncodeToString(solutionBytes),
-		"data_bundle_b64":     base64.StdEncoding.EncodeToString(dataBytes),
-	}, len(tables), nil
+	_ = json.NewEncoder(w).Encode(rec)
 }
 
 // maxBackupUploadBytes caps an uploaded backup, decompressed.
@@ -1354,17 +1250,25 @@ func (h *ServerAdminHandler) UploadBackup(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	var snap map[string]interface{}
-	if err := json.Unmarshal(raw, &snap); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Backup",
 			"the file is not a File4Base backup (.f4b.json or .tar.gz)")
 		return
 	}
-	if _, hasTables := snap["tables"]; !hasTables {
+	raw = nil
+	var tables map[string]json.RawMessage
+	if err := json.Unmarshal(fields["tables"], &tables); err != nil || fields["tables"] == nil {
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Backup",
 			"the file does not look like a backup snapshot")
 		return
 	}
+	var fileDB, fileNotes, fileEngine string
+	_ = json.Unmarshal(fields["database"], &fileDB)
+	if err := json.Unmarshal(fields["notes"], &fileNotes); err != nil || fields["notes"] == nil {
+		fileNotes = "Uploaded from a file"
+	}
+	_ = json.Unmarshal(fields["engine"], &fileEngine)
 
 	// Where the upload lands. A non-administrator's upload is always stamped
 	// with their own database, whatever the file claims, so it can only ever
@@ -1373,7 +1277,6 @@ func (h *ServerAdminHandler) UploadBackup(w http.ResponseWriter, r *http.Request
 	// databases on purpose.
 	target := sess.Database
 	if h.isServerAdmin(sess) {
-		fileDB, _ := snap["database"].(string)
 		if requested := strings.TrimSpace(r.URL.Query().Get("database")); requested != "" {
 			target = requested
 		} else if db := strings.TrimSpace(fileDB); db != "" {
@@ -1381,511 +1284,101 @@ func (h *ServerAdminHandler) UploadBackup(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	now := time.Now().UTC()
-	backupID := fmt.Sprintf("bkp_%s_%s_uploaded", target, now.Format("20060102_150405"))
-	filename := backupID + ".f4b.json"
-	snap["id"] = backupID
-	snap["database"] = target
-	snap["type"] = "uploaded"
-	snap["created_at"] = now.Format(time.RFC3339)
-	snap["created_by"] = sess.Username
-	if _, ok := snap["notes"].(string); !ok {
-		snap["notes"] = "Uploaded from a file"
+	if target == "" || strings.ContainsAny(target, `/\`) || strings.Contains(target, "..") {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid Database", "the backup is not of a database name")
+		return
 	}
-
-	encoded, err := json.MarshalIndent(snap, "", "  ")
+	now := time.Now().UTC()
+	id, err := h.newBackupID(target, now, "uploaded")
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
 	}
-	if err := os.WriteFile(filepath.Join(h.backupsDir, filename), encoded, 0o600); err != nil {
+	hdr := backupHeader{
+		ID: id, Database: target, Engine: fileEngine,
+		CreatedAt: now.Format(time.RFC3339), CreatedBy: sess.Username, Notes: fileNotes, Type: "uploaded",
+		TablesCount: len(tables),
+	}
+	filename := hdr.ID + ".f4b.json"
+	size, err := writeBackupFile(filepath.Join(h.backupsDir, filename), hdr, func(bw *backupWriter) error {
+		return writeRemainingFields(bw, fields)
+	})
+	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
 	}
 	h.recordAudit("backup", "Upload Backup", sess.Username, target, filename, "success",
-		fmt.Sprintf("Stored uploaded snapshot %s (%d bytes)", filename, len(encoded)))
+		fmt.Sprintf("Stored uploaded snapshot %s (%d bytes)", filename, size))
 
-	tablesCount := 0
-	if m, ok := snap["tables"].(map[string]interface{}); ok {
-		tablesCount = len(m)
-	}
-	notes, _ := snap["notes"].(string)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(BackupRecord{
-		ID:          backupID,
+		ID:          hdr.ID,
 		Filename:    filename,
 		Database:    target,
-		CreatedAt:   now.Format(time.RFC3339),
+		CreatedAt:   hdr.CreatedAt,
 		CreatedBy:   sess.Username,
-		SizeBytes:   int64(len(encoded)),
-		TablesCount: tablesCount,
-		Notes:       notes,
+		SizeBytes:   size,
+		TablesCount: len(tables),
+		Notes:       fileNotes,
 		Type:        "uploaded",
 	})
 }
 
-// DownloadBackup returns the raw JSON snapshot file for download or inspection.
+// DownloadBackup sends a backup file, as is or (format=targz) in a
+// gzip-compressed tar, streamed from disk.
 func (h *ServerAdminHandler) DownloadBackup(w http.ResponseWriter, r *http.Request) {
 	id := filepath.Base(chi.URLParam(r, "id"))
 	filename := id
 	if !strings.HasSuffix(filename, ".f4b.json") {
 		filename += ".f4b.json"
 	}
-	raw, ok := h.readOwnBackup(w, r, filename)
+	path, _, ok := h.ownBackup(w, r, filename)
 	if !ok {
 		return
 	}
+	f, err := os.Open(path)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Backup Not Found", "snapshot file does not exist")
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
 
-	// format=targz streams a real gzip-compressed tar holding the snapshot
-	// file, for saving to disk; the default serves the raw JSON.
 	if strings.EqualFold(r.URL.Query().Get("format"), "targz") {
-		archive, err := gzipTar(filename, raw)
-		if err != nil {
-			telemetry.WriteInternalError(w, r, errors.New("failed building the archive"))
-			return
-		}
 		base := strings.TrimSuffix(filename, ".f4b.json")
 		w.Header().Set("Content-Type", "application/gzip")
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.tar.gz"`, base))
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(archive)
+		gz := gzip.NewWriter(w)
+		tw := tar.NewWriter(gz)
+		// The archive has no length the client could check: a failure after
+		// the headers were sent breaks the connection, so the download is
+		// seen to fail instead of ending as a shorter archive.
+		if err := tw.WriteHeader(&tar.Header{Name: filename, Mode: 0o600, Size: info.Size(), ModTime: info.ModTime()}); err != nil {
+			panic(http.ErrAbortHandler)
+		}
+		if _, err := io.Copy(tw, f); err != nil {
+			panic(http.ErrAbortHandler)
+		}
+		if err := tw.Close(); err != nil {
+			panic(http.ErrAbortHandler)
+		}
+		if err := gz.Close(); err != nil {
+			panic(http.ErrAbortHandler)
+		}
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.Header().Set("Content-Length", fmt.Sprint(info.Size()))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(raw)
-}
-
-// gzipTar wraps one file in a gzip-compressed tar archive, so a downloaded
-// backup unpacks with `tar xzf` to the snapshot JSON.
-func gzipTar(name string, content []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	hdr := &tar.Header{
-		Name:    name,
-		Mode:    0o600,
-		Size:    int64(len(content)),
-		ModTime: time.Now(),
-	}
-	if err := tw.WriteHeader(hdr); err != nil {
-		return nil, err
-	}
-	if _, err := tw.Write(content); err != nil {
-		return nil, err
-	}
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	if err := gz.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-type backupTableSnapshot struct {
-	Metadata schema.TableMetadata    `json:"metadata"`
-	Columns  []schema.ColumnMetadata `json:"columns"`
-}
-
-// RestoreBackup performs a point-in-time restoration of tables, columns, layouts, scripts, value lists, and records from a snapshot file.
-func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
-	id := filepath.Base(chi.URLParam(r, "id"))
-	sess := currentSession(r)
-	filename := id
-	if !strings.HasSuffix(filename, ".f4b.json") {
-		filename += ".f4b.json"
-	}
-	raw, ok := h.readOwnBackup(w, r, filename)
-	if !ok {
-		return
-	}
-
-	var snap struct {
-		Database          string                         `json:"database"`
-		TablesCount       int                            `json:"tables_count"`
-		Tables            map[string]backupTableSnapshot `json:"tables"`
-		Layouts           []schema.LayoutMetadata        `json:"layouts"`
-		Scripts           []schema.ScriptMetadata        `json:"scripts"`
-		ValueLists        []schema.ValueList             `json:"value_lists"`
-		SolutionBundleB64 string                         `json:"solution_bundle_b64"`
-		DataBundleB64     string                         `json:"data_bundle_b64"`
-	}
-	if err := json.Unmarshal(raw, &snap); err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Corrupt Backup", err.Error())
-		return
-	}
-	// The records are decoded before anything changes, so a damaged backup
-	// is refused rather than half restored.
-	dataBytes, err := base64.StdEncoding.DecodeString(snap.DataBundleB64)
-	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Corrupt Backup", "the records of the backup cannot be read: "+err.Error())
-		return
-	}
-
-	// readOwnBackup already checked the snapshot's database against the session.
-	targetDB := strings.TrimSpace(snap.Database)
-	if targetDB == "" {
-		targetDB = sess.Database
-	}
-	driver, err := h.dbMgr.DriverFor(r.Context(), targetDB)
-	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Restore Failed", err.Error())
-		return
-	}
-
-	ctx := r.Context()
-	svc := schema.NewService(driver)
-	if err := svc.EnsureSystemTables(ctx); err != nil {
-		telemetry.WriteInternalError(w, r, err)
-		return
-	}
-
-	tablesDropped := 0
-	tablesCreated := 0
-	columnsDropped := 0
-	columnsCreated := 0
-	layoutsRestored := 0
-	scriptsRestored := 0
-
-	// 1. Reconcile tables and columns against the snapshot (point-in-time DDL restoration)
-	if len(snap.Tables) > 0 {
-		snapTables := make(map[string]backupTableSnapshot, len(snap.Tables))
-		for rawName, entry := range snap.Tables {
-			normName := dbal.NormalizeIdentifier(rawName)
-			if normName == "" {
-				normName = dbal.NormalizeIdentifier(entry.Metadata.Name)
-			}
-			if normName != "" {
-				snapTables[normName] = entry
-			}
-		}
-
-		currentTables, err := svc.ListTables(ctx)
-		if err == nil {
-			for _, curTbl := range currentTables {
-				normCur := dbal.NormalizeIdentifier(curTbl.Name)
-				if _, existsInSnap := snapTables[normCur]; !existsInSnap {
-					if delErr := svc.DeleteTable(ctx, curTbl.ID); delErr == nil {
-						tablesDropped++
-					}
-				}
-			}
-		}
-
-		currentTables, _ = svc.ListTables(ctx)
-		curTableByName := make(map[string]schema.TableMetadata, len(currentTables))
-		for _, ct := range currentTables {
-			curTableByName[dbal.NormalizeIdentifier(ct.Name)] = ct
-		}
-
-		for normName, snapEntry := range snapTables {
-			curTbl, exists := curTableByName[normName]
-			if !exists {
-				disp := snapEntry.Metadata.DisplayName
-				if disp == "" {
-					disp = normName
-				}
-				created, createErr := svc.CreateTable(ctx, disp, normName)
-				if createErr != nil {
-					continue
-				}
-				curTbl = *created
-				tablesCreated++
-			}
-
-			cols := snapEntry.Columns
-			if len(cols) == 0 {
-				cols = snapEntry.Metadata.Columns
-			}
-			snapColsByName := make(map[string]schema.ColumnMetadata, len(cols))
-			for _, sc := range cols {
-				snapColsByName[dbal.NormalizeIdentifier(sc.Name)] = sc
-			}
-
-			curColsByName := make(map[string]schema.ColumnMetadata, len(curTbl.Columns))
-			for _, cc := range curTbl.Columns {
-				normCol := dbal.NormalizeIdentifier(cc.Name)
-				curColsByName[normCol] = cc
-				if !cc.IsPrimaryKey {
-					if _, keep := snapColsByName[normCol]; !keep {
-						if delErr := svc.DeleteColumn(ctx, curTbl.ID, cc.ID); delErr == nil {
-							columnsDropped++
-							delete(curColsByName, normCol)
-						}
-					}
-				}
-			}
-
-			// Add missing columns (non-calculations first, then calculations) and update existing columns
-			for _, calcPass := range []bool{false, true} {
-				for _, sc := range cols {
-					isCalc := strings.EqualFold(string(sc.FieldType), string(dbal.FieldTypeCalculation))
-					if isCalc != calcPass {
-						continue
-					}
-					normCol := dbal.NormalizeIdentifier(sc.Name)
-					if existingCol, found := curColsByName[normCol]; found {
-						if !sc.IsPrimaryKey && !calcPass {
-							_, _ = svc.UpdateColumn(ctx, curTbl.ID, existingCol.ID, schema.UpdateColumnOptions{
-								DisplayName:        sc.DisplayName,
-								DefaultValue:       sc.DefaultValue,
-								UpdateDefaultValue: true,
-								CalculationFormula: sc.CalculationFormula,
-								UpdateCalculation:  sc.CalculationFormula != nil,
-								ValidationRules:    sc.ValidationRules,
-								UpdateValidation:   sc.ValidationRules != nil,
-								MaxRepetitions:     sc.MaxRepetitions,
-								UpdateRepetitions:  sc.MaxRepetitions > 0,
-							})
-						} else if !sc.IsPrimaryKey && sc.MaxRepetitions > 0 && sc.MaxRepetitions != existingCol.MaxRepetitions {
-							// An existing calculation keeps its formula, but its
-							// maximum is restored like any field's: the records
-							// restored below carry that many repetitions.
-							display := sc.DisplayName
-							if display == "" {
-								display = existingCol.DisplayName
-							}
-							_, _ = svc.UpdateColumn(ctx, curTbl.ID, existingCol.ID, schema.UpdateColumnOptions{
-								DisplayName:       display,
-								MaxRepetitions:    sc.MaxRepetitions,
-								UpdateRepetitions: true,
-							})
-						}
-						continue
-					}
-					if sc.IsPrimaryKey {
-						continue
-					}
-					added, addErr := svc.AddColumn(ctx, curTbl.ID, schema.ColumnMetadata{
-						Name:               normCol,
-						DisplayName:        sc.DisplayName,
-						FieldType:          sc.FieldType,
-						IsNullable:         sc.IsNullable,
-						DefaultValue:       sc.DefaultValue,
-						CalculationFormula: sc.CalculationFormula,
-						ValidationRules:    sc.ValidationRules,
-						MaxRepetitions:     sc.MaxRepetitions,
-						SourceFieldID:      sc.SourceFieldID,
-						SourceType:         sc.SourceType,
-					})
-					if addErr == nil && added != nil {
-						columnsCreated++
-						curColsByName[normCol] = *added
-					}
-				}
-			}
-		}
-	}
-
-	// 2. If a binary solution bundle is embedded, import occurrences, relationships, menu sets, saved finds
-	// and the layout and script menus.
-	menusPlaced := false
-	if snap.SolutionBundleB64 != "" {
-		if solBytes, decErr := base64.StdEncoding.DecodeString(snap.SolutionBundleB64); decErr == nil && len(solBytes) > 0 {
-			_, importErr := svc.ImportSolution(ctx, solBytes)
-			menusPlaced = importErr == nil
-		}
-	}
-
-	// 3. Reconcile scripts to match the snapshot exactly
-	if snap.Scripts != nil {
-		snapScriptIDs := make(map[string]bool, len(snap.Scripts))
-		snapScriptNames := make(map[string]bool, len(snap.Scripts))
-		for _, sc := range snap.Scripts {
-			snapScriptIDs[sc.ID] = true
-			snapScriptNames[sc.Name] = true
-		}
-
-		currentScripts, _ := svc.ListScripts(ctx)
-		curScriptByID := make(map[string]schema.ScriptMetadata, len(currentScripts))
-		curScriptByName := make(map[string]schema.ScriptMetadata, len(currentScripts))
-		for _, cs := range currentScripts {
-			if len(snap.Scripts) > 0 && !snapScriptIDs[cs.ID] && !snapScriptNames[cs.Name] {
-				_ = svc.DeleteScript(ctx, cs.ID)
-				continue
-			}
-			curScriptByID[cs.ID] = cs
-			curScriptByName[cs.Name] = cs
-		}
-
-		for _, sc := range snap.Scripts {
-			remappedSteps := make([]schema.ScriptStepMetadata, 0, len(sc.Steps))
-			stepIDMap := make(map[string]string, len(sc.Steps))
-			for _, st := range sc.Steps {
-				if st.ID != "" {
-					stepIDMap[st.ID] = uuid.NewString()
-				}
-			}
-			for i, st := range sc.Steps {
-				newID := stepIDMap[st.ID]
-				if newID == "" {
-					newID = uuid.NewString()
-				}
-				seq := st.SequenceIdx
-				if seq <= 0 {
-					seq = i + 1
-				}
-				var parentID *string
-				if st.ParentStepID != nil && *st.ParentStepID != "" {
-					if mapped, ok := stepIDMap[*st.ParentStepID]; ok {
-						parentID = &mapped
-					}
-				}
-				params := st.Params
-				if len(params) == 0 {
-					params = json.RawMessage(`{}`)
-				}
-				remappedSteps = append(remappedSteps, schema.ScriptStepMetadata{
-					ID:           newID,
-					SequenceIdx:  seq,
-					StepType:     st.StepType,
-					Params:       params,
-					IsEnabled:    st.IsEnabled,
-					ParentStepID: parentID,
-				})
-			}
-
-			// The solution bundle placed the scripts in the menu's folders, under
-			// ids of their own: the snapshot's folder ids name the backed-up
-			// database's, so they are read only when no bundle placed them.
-			folderOf := func(current *string) *string {
-				if menusPlaced {
-					return current
-				}
-				return sc.FolderID
-			}
-			if existing, ok := curScriptByID[sc.ID]; ok {
-				if _, err := svc.UpdateScript(ctx, existing.ID, sc.Name, sc.ContextTable, folderOf(existing.FolderID), sc.IsActive, remappedSteps); err == nil {
-					scriptsRestored++
-				}
-			} else if existing, ok := curScriptByName[sc.Name]; ok {
-				if _, err := svc.UpdateScript(ctx, existing.ID, sc.Name, sc.ContextTable, folderOf(existing.FolderID), sc.IsActive, remappedSteps); err == nil {
-					scriptsRestored++
-				}
-			} else {
-				if _, err := svc.CreateScript(ctx, sc.Name, sc.ContextTable, folderOf(nil), sc.IsActive, remappedSteps); err == nil {
-					scriptsRestored++
-				}
-			}
-		}
-	}
-
-	// 4. Reconcile layouts to match the snapshot exactly (removing extra layouts or fields added after the backup)
-	if len(snap.Layouts) > 0 {
-		snapLayoutIDs := make(map[string]bool, len(snap.Layouts))
-		snapLayoutNames := make(map[string]bool, len(snap.Layouts))
-		for _, sl := range snap.Layouts {
-			snapLayoutIDs[sl.ID] = true
-			snapLayoutNames[sl.Name] = true
-		}
-
-		currentLayouts, _ := svc.ListLayouts(ctx)
-		curLayoutByID := make(map[string]schema.LayoutMetadata, len(currentLayouts))
-		curLayoutByName := make(map[string]schema.LayoutMetadata, len(currentLayouts))
-		for _, cl := range currentLayouts {
-			if !snapLayoutIDs[cl.ID] && !snapLayoutNames[cl.Name] {
-				_ = svc.DeleteLayout(ctx, cl.ID)
-				continue
-			}
-			curLayoutByID[cl.ID] = cl
-			curLayoutByName[cl.Name] = cl
-		}
-
-		currentOccs, _ := svc.ListTableOccurrences(ctx)
-		occByID := make(map[string]string, len(currentOccs))
-		occByName := make(map[string]string, len(currentOccs))
-		var defaultOccID string
-		for _, o := range currentOccs {
-			occByID[o.ID] = o.ID
-			occByName[strings.ToLower(o.Name)] = o.ID
-			if defaultOccID == "" {
-				defaultOccID = o.ID
-			}
-		}
-
-		for _, sl := range snap.Layouts {
-			if existing, ok := curLayoutByID[sl.ID]; ok {
-				if _, err := svc.UpdateLayout(ctx, existing.ID, sl.Name, sl.Definition); err == nil {
-					layoutsRestored++
-				}
-				continue
-			}
-			if existing, ok := curLayoutByName[sl.Name]; ok {
-				if _, err := svc.UpdateLayout(ctx, existing.ID, sl.Name, sl.Definition); err == nil {
-					layoutsRestored++
-				}
-				continue
-			}
-
-			targetOccID := occByID[sl.TableOccurrenceID]
-			if targetOccID == "" {
-				var defObj map[string]interface{}
-				if json.Unmarshal(sl.Definition, &defObj) == nil {
-					if occName, ok := defObj["table_occurrence"].(string); ok && occName != "" {
-						targetOccID = occByName[strings.ToLower(occName)]
-					}
-				}
-			}
-			if targetOccID == "" {
-				targetOccID = defaultOccID
-			}
-			if targetOccID != "" {
-				if _, err := svc.CreateLayout(ctx, sl.Name, targetOccID, sl.Definition); err == nil {
-					layoutsRestored++
-				}
-			}
-		}
-	}
-
-	// 5. Reconcile table row data if present in the snapshot. A restore whose
-	// records cannot be put back fails: reporting it restored would leave the
-	// tables emptied without saying so.
-	recordsRestored := 0
-	if len(dataBytes) > 0 {
-		currentTables, err := svc.ListTables(ctx)
-		if err != nil {
-			h.failRestore(w, r, sess.Username, targetDB, id, fmt.Errorf("the tables could not be listed: %w", err))
-			return
-		}
-		for _, ct := range currentTables {
-			if err := svc.TruncateTable(ctx, ct.ID); err != nil {
-				h.failRestore(w, r, sess.Username, targetDB, id, fmt.Errorf("table %s could not be emptied: %w", ct.Name, err))
-				return
-			}
-		}
-		dataReport, err := svc.ImportDatabaseData(ctx, dataBytes)
-		if err != nil {
-			h.failRestore(w, r, sess.Username, targetDB, id, fmt.Errorf("the records could not be restored and the tables are now empty: %w", err))
-			return
-		}
-		recordsRestored = dataReport.RecordsInserted
-	}
-
-	details := fmt.Sprintf(
-		"Restored snapshot %s on %s (%d layouts, %d cols dropped, %d cols added, %d tables dropped, %d rows restored)",
-		id, targetDB, layoutsRestored, columnsDropped, columnsCreated, tablesDropped, recordsRestored,
-	)
-	h.recordAudit("backup", "Restore Backup", sess.Username, targetDB, id, "success", details)
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":               id,
-		"database":         targetDB,
-		"tables_count":     snap.TablesCount,
-		"tables_dropped":   tablesDropped,
-		"tables_created":   tablesCreated,
-		"columns_dropped":  columnsDropped,
-		"columns_created":  columnsCreated,
-		"layouts_restored": layoutsRestored,
-		"scripts_restored": scriptsRestored,
-		"records_restored": recordsRestored,
-		"status":           "restored",
-		"restored_at":      time.Now().UTC().Format(time.RFC3339),
-	})
+	_, _ = io.Copy(w, f)
 }
 
 // failRestore reports a restore that could not be completed.
@@ -1902,10 +1395,17 @@ func (h *ServerAdminHandler) DeleteBackup(w http.ResponseWriter, r *http.Request
 	if !strings.HasSuffix(filename, ".f4b.json") {
 		filename += ".f4b.json"
 	}
-	if _, ok := h.readOwnBackup(w, r, filename); !ok {
+	path, hdr, ok := h.ownBackup(w, r, filename)
+	if !ok {
 		return
 	}
-	if err := os.Remove(filepath.Join(h.backupsDir, filename)); err != nil {
+	// A restore running on its database may need this backup to undo it.
+	if hdr.Database != "" && h.isRestoring(hdr.Database) {
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Restore In Progress",
+			"a restore of "+hdr.Database+" is running; delete the backup once it ends")
+		return
+	}
+	if err := os.Remove(path); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Backup Not Found", "snapshot file does not exist")
 		return
 	}

@@ -2,6 +2,7 @@ package schema
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -782,4 +783,11 @@ func (s *Service) ExternalDependencies(ctx context.Context) ([]ExternalDependenc
 	}
 	slices.SortFunc(deps, func(a, b ExternalDependency) int { return strings.Compare(a.Database, b.Database) })
 	return deps, nil
+}
+
+// ForgetPool drops what is kept for a connection pool that is closed for
+// good (a dbal.TxDriver's), here and in the data package.
+func ForgetPool(db *sql.DB) {
+	upgradedCatalogs.Delete(db)
+	data.ForgetPool(db)
 }

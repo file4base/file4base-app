@@ -931,6 +931,15 @@ func (s *Service) syncUniqueIndex(ctx context.Context, db interface {
 			_, _ = db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", qTable, index))
 			return nil
 		}
+		// Already unique: adding the column and index again would fail.
+		var present int
+		if err := s.driver.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.statistics
+			WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`, table, name).Scan(&present); err != nil {
+			return fmt.Errorf("the unique index of %s could not be looked up: %w", field, err)
+		}
+		if present > 0 {
+			return nil
+		}
 		value := fmt.Sprintf("CAST(%s AS CHAR)", qField)
 		if blankIsEmpty {
 			value = fmt.Sprintf("NULLIF(%s, '')", value)
