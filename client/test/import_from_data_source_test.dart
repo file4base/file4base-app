@@ -146,7 +146,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(api.importedWith?.table, 'orders');
       // The report names the source it read from, not a file.
-      expect(find.text('2 row(s) read from Legacy members · orders'), findsOneWidget);
+      expect(find.text('From Legacy members · orders'), findsOneWidget);
     });
 
     testWidgets('a SQL source is not asked whether its first row is a header', (tester) async {

@@ -936,8 +936,8 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
         const Padding(
           padding: EdgeInsets.only(top: 6),
           child: Text(
-            'An import is one go: if a row cannot be read, nothing is imported and the '
-            'row is named.',
+            'As in FileMaker, a record that fails validation is skipped and a value its '
+            'field cannot hold is left out; the import summary lists them.',
             style: TextStyle(fontSize: 10.5, color: Colors.grey),
           ),
         ),
@@ -946,24 +946,28 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
   }
 
   Widget _reportView(ImportReportModel report) {
+    final problems = report.skippedErrors > 0 || report.fieldsSkipped > 0;
     return Center(
       key: const ValueKey('import-report'),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.check_circle_outline, size: 44, color: Color(0xFF2E7D32)),
+          Icon(problems ? Icons.warning_amber_rounded : Icons.check_circle_outline,
+              size: 44, color: problems ? Colors.orange.shade800 : const Color(0xFF2E7D32)),
           const SizedBox(height: 12),
-          Text('${report.rows} row(s) read from $_sourceLabel',
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+          const Text('Import Summary', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+          Text('From $_sourceLabel', style: const TextStyle(fontSize: 11, color: Colors.grey)),
           const SizedBox(height: 10),
-          for (final line in [
-            if (report.added > 0) '${report.added} record(s) added',
-            if (report.updated > 0) '${report.updated} record(s) updated',
-            if (report.skipped > 0) '${report.skipped} row(s) passed over',
-          ])
-            Text(line, style: const TextStyle(fontSize: 12)),
+          ImportSummaryCounts(report: report),
+          if (report.problems.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            ImportProblemList(problems: report.problems),
+          ],
           if (report.added == 0 && report.updated == 0)
-            const Text('Nothing was written.', style: TextStyle(fontSize: 12)),
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text('Nothing was written.', style: TextStyle(fontSize: 12)),
+            ),
           if (report.truncated)
             Padding(
               padding: const EdgeInsets.only(top: 10),
@@ -981,6 +985,86 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 10.5, color: Colors.grey)),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The counts of FileMaker's Import Summary: records imported, records and
+/// fields skipped due to errors, and the rows the source held (#231).
+class ImportSummaryCounts extends StatelessWidget {
+  const ImportSummaryCounts({required this.report, super.key});
+
+  final ImportReportModel report;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = <(String, int)>[
+      ('Records added / updated', report.added + report.updated),
+      ('Records skipped due to errors', report.skippedErrors),
+      if (report.fieldsSkipped > 0) ('Fields skipped due to errors', report.fieldsSkipped),
+      if (report.skipped > 0) ('Rows passed over (no match)', report.skipped),
+      ('Total records in the source', report.rows),
+    ];
+    return Table(
+      key: const ValueKey('import-summary-counts'),
+      defaultColumnWidth: const IntrinsicColumnWidth(),
+      children: [
+        for (final (label, count) in lines)
+          TableRow(children: [
+            Padding(
+              padding: const EdgeInsets.only(right: 16, bottom: 3),
+              child: Text(label, style: const TextStyle(fontSize: 12)),
+            ),
+            Text('$count',
+                textAlign: TextAlign.right,
+                style: const TextStyle(fontSize: 12, fontFeatures: [FontFeature.tabularFigures()])),
+          ]),
+      ],
+    );
+  }
+}
+
+/// The records an import skipped and the values it left out, one line each
+/// with its row, field and rule, in a short scrolling list.
+class ImportProblemList extends StatelessWidget {
+  const ImportProblemList({required this.problems, super.key, this.limit = 200});
+
+  final List<ImportProblemModel> problems;
+
+  /// How many are listed; the rest are counted.
+  final int limit;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = problems.take(limit).toList();
+    final more = problems.length - shown.length;
+    return Container(
+      key: const ValueKey('import-problems'),
+      constraints: const BoxConstraints(maxHeight: 150, maxWidth: 520),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        children: [
+          for (final p in shown)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Text(
+                'Row ${p.row} · ${p.field} · ${p.ruleLabel} — '
+                '${p.recordSkipped ? 'record skipped' : 'value left out'}'
+                '${p.value.isEmpty ? '' : ': "${p.value}"'}',
+                style: const TextStyle(fontSize: 11),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          if (more > 0)
+            Text('and $more more', style: const TextStyle(fontSize: 11, color: Colors.grey)),
         ],
       ),
     );

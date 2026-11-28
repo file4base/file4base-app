@@ -65,7 +65,9 @@ class _Api extends ApiClient {
       String resultType = 'Text',
       Map<String, String>? variables,
       Map<String, Object?>? get,
-      Map<String, Object?>? values}) async {
+      Map<String, Object?>? values,
+      String? occurrence,
+      Map<String, String>? portalRow}) async {
     evaluated.add((recordId: recordId, values: values));
     final code = values?['code'] ?? stored[recordId]?['code'];
     return [

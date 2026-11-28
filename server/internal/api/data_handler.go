@@ -271,6 +271,16 @@ type EvaluateExpressionBody struct {
 	// (or through it) reads the row (see data.ContextRecord). The caller
 	// must be able to read the layout's table too.
 	Context *data.ContextRecord `json:"context,omitempty"`
+
+	// PortalRow is, for a layout's record (RecordID, seen from Occurrence),
+	// the active portal row, as a script running from a portal row's
+	// button sees it: the portal's occurrence, by name or id, and the row's
+	// record id. A reference to a field of the portal's occurrence then
+	// reads the row, one through it the records related to the row, while
+	// the layout's record stays the current one (see data.PortalRow). A row
+	// of another solution's table is read there, as the portal reads it.
+	// It needs RecordID; not with Context, nor with RecordIDs.
+	PortalRow *data.PortalRow `json:"portal_row,omitempty"`
 }
 
 // EvaluateExpression computes expressions against a record with the engine
@@ -334,6 +344,17 @@ func (h *DataHandler) evaluate(w http.ResponseWriter, r *http.Request, svc *data
 		return
 	}
 
+	if body.PortalRow != nil && (body.Context != nil || len(body.RecordIDs) > 0) {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Portal Row Not Allowed",
+			"an active portal row is given for one layout record: not with a context nor with several records")
+		return
+	}
+	if body.PortalRow != nil && strings.TrimSpace(body.RecordID) == "" {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Record Required",
+			"an active portal row is a row of a portal on a layout's record: give the record's id")
+		return
+	}
+
 	expressions := body.Expressions
 	if len(expressions) == 0 && strings.TrimSpace(body.Expression) != "" {
 		expressions = []string{body.Expression}
@@ -358,7 +379,7 @@ func (h *DataHandler) evaluate(w http.ResponseWriter, r *http.Request, svc *data
 	// another solution's table with the same name is read through its
 	// occurrence's route (data.ErrOccurrenceElsewhere).
 	env := data.EvaluationEnv{Variables: body.Variables, Get: body.Get, Values: body.Values, Self: body.Self,
-		Context: body.Context, External: external}
+		Context: body.Context, External: external, PortalRow: body.PortalRow}
 	if len(body.RecordIDs) > 0 {
 		// Evaluated in one context, resolved once for every record.
 		evaluations, err := svc.EvaluateExpressionsForRecords(r.Context(), table, body.Occurrence, body.RecordIDs,
@@ -448,7 +469,8 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 		writeForbidden(w, r, err.Error())
 	case errors.Is(err, data.ErrTableNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Table Not Found", err.Error())
-	case errors.Is(err, data.ErrRecordNotFound), errors.Is(err, data.ErrContextNotFound):
+	case errors.Is(err, data.ErrRecordNotFound), errors.Is(err, data.ErrContextNotFound),
+		errors.Is(err, data.ErrPortalRowNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Record Not Found", err.Error())
 	case errors.Is(err, data.ErrOccurrenceNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Table Occurrence Not Found", err.Error())
@@ -482,6 +504,8 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Too Many Related Records", err.Error())
 	case errors.Is(err, data.ErrFindTooBroad):
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Find Too Broad", err.Error())
+	case errors.Is(err, data.ErrTooManyToCompute):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Too Many Records to Compute", err.Error())
 	case errors.Is(err, validation.ErrValidation):
 		var ve *validation.Error
 		errors.As(err, &ve)
@@ -847,7 +871,11 @@ func (h *DataHandler) PreviewImport(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /api/v1/data/{table}/import
 //
-// It is one transaction: the first row that cannot be read or stored takes the
+// It is one transaction. As FileMaker imports, a value its field cannot hold
+// or that breaks a rule checked as it is entered is left out of its record,
+// and a record failing not empty or its validation by calculation is skipped;
+// the answer counts and lists them (#231). With abort_on_error, any of them
+// imports nothing. A row that cannot be stored for another reason takes the
 // whole file with it, and the answer says which row it was.
 func (h *DataHandler) ImportRows(w http.ResponseWriter, r *http.Request) {
 	table := requestTable(r)
@@ -882,6 +910,10 @@ func (h *DataHandler) ImportRows(w http.ResponseWriter, r *http.Request) {
 		"skipped":   report.Skipped,
 		"fields":    report.Fields,
 		"truncated": source.Truncated,
+
+		"skipped_errors": report.SkippedErrors,
+		"fields_skipped": report.FieldsSkipped,
+		"problems":       report.Problems,
 	}
 	if body.Options.ReturnRecordIDs {
 		ids := report.RecordIDs
@@ -934,6 +966,10 @@ func (h *DataHandler) ExportRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The found set exported may be found by a related field, as by a find.
+	if !h.authorizeFindRelations(w, r, svc, table, body.ExportOptions.Requests) {
+		return
+	}
 	source, err := svc.ExportRecords(r.Context(), table, body.ExportOptions)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Export Failed", err)

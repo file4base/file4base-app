@@ -851,17 +851,30 @@ class LayoutActionRunner {
         final showOnly = boolParam('show_only_related', defaultValue: true);
         final newWin = boolParam('new_window');
         if (newWin) {
-          final winName = p('window_name').trim().isNotEmpty ? p('window_name').trim() : (layoutName.isNotEmpty ? layoutName : relatedTable);
-          session.windows.add(ScriptWindowEntry(name: winName, layoutName: layoutName.isNotEmpty ? layoutName : currentLayoutName()));
+          // The window would go to the related records in place, and the
+          // steps after it (Close Window, Set Field) act on the window
+          // left: refused rather than run in the wrong window (#237).
+          return failOrCapture(3,
+              'Go to Related Record in a new window does not run yet: this window shows one layout at a time.');
         }
         if (ext != null) {
-          final ok = await ext.actionGoToRelatedRecord(
+          final code = await ext.actionGoToRelatedRecord(
             relatedTable: relatedTable,
             layoutName: layoutName.isEmpty ? null : layoutName,
             showOnlyRelated: showOnly,
             newWindow: newWin,
+            matchFoundSet: boolParam('match_found_set'),
           );
-          if (!ok) return failOrCapture(101, 'No related records found for "$relatedTable".');
+          switch (code) {
+            case 0:
+              break;
+            case 105:
+              return failOrCapture(105, 'Layout "$layoutName" not found.');
+            case 101:
+              return failOrCapture(101, 'No related records found for "$relatedTable".');
+            default:
+              return failOrCapture(code, ext.goToRelatedRecordMessage ?? 'Go to Related Record could not run.');
+          }
         } else if (layoutName.isNotEmpty) {
           if (!await host.actionGoToLayout(layoutName)) {
             return failOrCapture(105, 'Layout "$layoutName" not found.');
@@ -888,8 +901,9 @@ class LayoutActionRunner {
         final findReqs = mapListParam('find_requests');
         if (ext != null) {
           final found = await ext.actionPerformFindEx(requests: findReqs, restore: restore);
-          // A negative count: OnModeExit kept the window in Find mode.
-          session.lastError = found < 0 ? 20 : (found == 0 ? 401 : 0);
+          // -1: OnModeExit kept the window in Find mode; -2: the server
+          // refused the find.
+          session.lastError = found == -2 ? 3 : (found < 0 ? 20 : (found == 0 ? 401 : 0));
         } else {
           session.lastError = 0;
           await host.actionPerformFind();
@@ -2292,6 +2306,13 @@ class LayoutActionRunner {
   /// "update_matching" transfer updates. The records it added or updated are
   /// then the window's found set, as in FileMaker (#191). With dialog, it
   /// asks first; cancelling sets error 1 and the script goes on.
+  ///
+  /// A record the destination's validation skipped does not undo the others,
+  /// and the script goes on, as after FileMaker's Import Records: it sets
+  /// error 729, "Errors occurred during import; records could not be
+  /// imported" (FileMaker error codes), and without Set Error Capture the
+  /// user is shown the import summary (#231). Values left out of records
+  /// that were imported set no error.
   Future<LayoutActionResult> _execTransfer(
     String norm,
     Map<String, dynamic> params,
@@ -2466,10 +2487,17 @@ class LayoutActionRunner {
       return LayoutActionResult.stopped('$label "$name" wrote ${report.added + report.updated} record(s), '
           'which could not be shown as the found set.');
     }
-    if (report.unpaired.isNotEmpty && host is DocumentActionHost) {
+    final problems = report.skippedErrors > 0 || report.fieldsSkipped > 0;
+    if ((report.unpaired.isNotEmpty || problems && !session.errorCapture) && host is DocumentActionHost) {
       // FileMaker imports the fields whose names match and goes on; the
-      // user is told which ones were left out.
-      await (host as DocumentActionHost).actionNotify('$label "$name": ${report.describeCounts()}.');
+      // user is told which ones were left out, and what was skipped.
+      // Set Error Capture keeps what was skipped to the script.
+      final first = session.errorCapture ? const <String>[] : report.rejected.take(3).map((r) => r.describe());
+      await (host as DocumentActionHost)
+          .actionNotify('${['$label "$name": ${report.describeCounts()}', ...first].join('; ')}.');
+    }
+    if (report.skippedErrors > 0) {
+      session.lastError = 729; // set last: notifying the user is not a step
     }
     return const LayoutActionResult.ok();
   }
@@ -2598,7 +2626,10 @@ class LayoutActionRunner {
     'LayoutName',
     'WindowName',
     'ActiveFieldName',
+    'ActiveFieldTableName',
     'ActiveLayoutObjectName',
+    'ActivePortalRowNumber',
+    'LayoutTableName',
     'FoundCount',
     'RecordNumber',
     'TotalRecordCount',
@@ -2787,6 +2818,8 @@ class LayoutActionRunner {
           return host is PortalRowHost ? (host as PortalRowHost).actionActivePortalRowNumber.toString() : '0';
         case 'activefieldtablename':
           return host is PortalRowHost ? (host as PortalRowHost).actionActiveFieldTableName : '';
+        case 'layouttablename':
+          return host is PortalRowHost ? (host as PortalRowHost).actionLayoutTableName : '';
         case 'foundcount':
           return (ext?.actionFoundCount ?? 0).toString();
         case 'recordnumber':

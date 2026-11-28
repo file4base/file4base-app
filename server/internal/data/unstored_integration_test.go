@@ -107,13 +107,20 @@ func TestUnstoredRelatedCalculation(t *testing.T) {
 		require.Equal(t, "125.5", fmt.Sprint(found[0]["total_fees"]))
 	})
 
-	t.Run("finding or sorting by it is refused", func(t *testing.T) {
-		_, err := f.dataSvc.ListRows(ctx, f.companies, data.QueryOptions{SortBy: "total_fees"})
-		require.ErrorIs(t, err, data.ErrUnstoredField)
-		_, err = f.dataSvc.ExecuteFind(ctx, f.companies, []data.FindRequest{
+	t.Run("finding or sorting by it computes it (#149)", func(t *testing.T) {
+		rows, err := f.dataSvc.ListRows(ctx, f.companies, data.QueryOptions{SortBy: "total_fees"})
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		found, err := f.dataSvc.ExecuteFind(ctx, f.companies, []data.FindRequest{
 			{Criteria: []data.FindCriterion{{FieldName: "total_fees", Value: ">100"}}},
 		}, data.QueryOptions{})
-		require.ErrorIs(t, err, data.ErrUnstoredField)
+		require.NoError(t, err)
+		require.Len(t, found, 1)
+		found, err = f.dataSvc.ExecuteFind(ctx, f.companies, []data.FindRequest{
+			{Criteria: []data.FindCriterion{{FieldName: "total_fees", Value: ">200"}}},
+		}, data.QueryOptions{})
+		require.NoError(t, err)
+		require.Empty(t, found)
 	})
 }
 

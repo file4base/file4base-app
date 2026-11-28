@@ -257,6 +257,108 @@ Allowing creation in Portal Setup is not enough on its own: the relationship
 must also allow creation of records on the side the portal shows, or the server
 refuses with `403`. Portal Setup says so when that side does not.
 
+## Buttons in a portal row
+
+A button, a grouped button or a popover button drawn inside a portal is drawn on
+every row and runs with **its row active** (#237), as in FileMaker, where a click
+in a row outside its fields selects that row
+([Selecting the current record](https://help.claris.com/en/pro-help/content/selecting-current-record.html):
+"click inside the row but outside any fields in the row"):
+
+- The row becomes the active portal row of the window and its related record the
+  current record of the portal's occurrence. The layout's record stays the
+  current record: `Get ( ActivePortalRowNumber )` answers the row
+  ([Get(ActivePortalRowNumber)](https://help.claris.com/en/pro-help/content/get-activeportalrownumber.html)),
+  `Get ( LayoutTableName )` the layout's occurrence
+  ([Get(LayoutTableName)](https://help.claris.com/en/pro-help/content/get-layouttablename.html)).
+  In a list, the record whose portal it is becomes the current record first.
+- A formula the button's script evaluates, its parameter included, starts a
+  reference to the portal's occurrence, or to one reached through it, at the
+  row, and any other reference at the layout's record, as FileMaker does "when
+  scripted calculations refer to fields while a portal is active"
+  ([Placing related fields](https://help.claris.com/en/pro-help/content/related-field-placement.html)).
+  The server is given the row with the layout's record and occurrence
+  (`portal_row` in `POST /api/v1/data/{table}/evaluate`); an aggregate of the
+  portal's occurrence (`Count`, `Sum`, `List`…) still covers every related
+  record. A row of another solution's table is read in that solution, as the
+  account held there, as the portal reads it.
+- Its steps act on the row: Set Field on a field of the portal's occurrence
+  writes it, Delete Portal Row deletes it
+  ([Delete Portal Row](https://help.claris.com/en/pro-help/content/delete-portal-row.html)),
+  and so does Delete Record/Request, never the layout's record
+  ([Delete Record/Request](https://help.claris.com/en/pro-help/content/delete-record-request.html):
+  "Performing Delete Record/Request in an active portal row will delete the
+  related record", even when the relationship does not allow deleting; with no
+  row active, the step deletes the record in hand). Go to Related Record makes
+  its record current (below).
+- A button without an action does nothing, as FileMaker's *Do Nothing*: its
+  label is never read as a command.
+- What was typed in the rows is written first, so the script reads what the rows
+  show: a cell its triggers validate and save is left with them, a save waiting
+  or in flight ends, and what was typed in the empty last row creates its
+  related record. The record is not committed: FileMaker's
+  commit events do not include a click on a button
+  ([Committing data](https://help.claris.com/en/pro-help/content/committing-data.html)),
+  and a button has no option about committing
+  ([Defining buttons](https://help.claris.com/en/pro-help/content/defining-changing-button.html)),
+  so a migration has none to carry.
+- A popover button opens its popover in that row: a field of the portal's
+  occurrence on the popover shows that row's record. Clicking it again on the
+  same row closes it; on another row it shows that row. It closes once another
+  row, or the record outside the portal, is clicked, and when its row is
+  deleted. The popover opens where the layout places it, not next to the row,
+  and such a field one relationship away is shown, not typed into, as related
+  fields are.
+
+**Go to Related Record**
+([Go to Related Record](https://help.claris.com/en/pro-help/content/go-to-related-record.html)),
+run from an active row of the occurrence it names, makes that row's related
+record current ("If this script step is used from an active portal row, and the
+portal's table is the related table, then the related record in that table is
+made current"); otherwise the first related record is. The record in hand is
+committed first, with its triggers, as leaving it commits it; a commit refused
+keeps the window where it is (error 3).
+
+- With *Show only related records*, the found set is the records related to the
+  record in hand ("creates a new found set in the related table"; *Match all
+  records in the current found set*: to any record of the found set), in the
+  relationship's order. From a row of a filtered portal it is only the records
+  the portal shows ("only the filtered records are in the new found set"); from
+  outside the row, every related record.
+- Without it, Claris says only that the step "makes the first record in the
+  table's unsorted order the current record". File4Base keeps the found set of
+  the layout gone to, and shows every record when the related record is not in
+  it; the record made current is the row's, or the first related record in the
+  relationship's order.
+- The layout must be on the related table; none named is the current one.
+  Without related records the window stays where it is with error 101; a layout
+  not found is error 105.
+- Refused with a message (error 3), rather than run otherwise than FileMaker:
+  another solution's table; *Show in new window* ("shows the related records in
+  a new window"), as the window shows one layout at a time and the steps after
+  it would act on the window left; *Match all records in the current found set*
+  from a row of a filtered portal, the other records' portals not being read;
+  more than 1,000 related records for a record, or a filtered portal with more
+  rows than that.
+
+A portal row created or deleted reads the layout's record again in place, with
+its hide conditions, the layout's other portals and its related fields: the found
+set and the current record stay, as after FileMaker's Delete Portal Row. A field
+typed into and not saved yet keeps what was typed.
+
+Not yet as in FileMaker:
+
+- A script reads the window's active row as it runs: a click on another row
+  while it runs makes that one active for the rest of the script.
+- Go to Related Record changes layout before it knows the layout is on the
+  related table: a layout on another table is refused once it is shown.
+- The found set it makes is not passed on to the views that read the found
+  set from the window (Preview, Export) until the next find.
+- A popover field two relationships or more away from the layout shows the
+  layout's record's related record, not the row's.
+- A row button on a layout of another solution's table runs without the row
+  pinned for its formulas.
+
 ## Creation order
 
 Records nothing sorts are listed in the order they were created, as FileMaker
@@ -354,9 +456,12 @@ more are refused (`422`, "more than 10000 related records") rather than cut
 short. A batched read sorts the related records of all its rows the same way,
 within the same 10,000 in all.
 
-A found set is still never sorted by an unstored calculation (`422 Unstored
-Calculation`), since it may hold any number of records, nor are the records a
-calculation reads through a relationship.
+A found set is sorted by an unstored calculation another way: the
+calculation is computed for its records and the database sorts them by those
+values, up to 50,000 records (see
+[calculation_formulas.md](calculation_formulas.md#unstored-calculations-and-related-fields)).
+The records a calculation reads through a relationship are still never sorted
+by one.
 
 ## An empty match field relates to nothing
 
