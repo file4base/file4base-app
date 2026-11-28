@@ -456,9 +456,12 @@ more are refused (`422`, "more than 10000 related records") rather than cut
 short. A batched read sorts the related records of all its rows the same way,
 within the same 10,000 in all.
 
-A found set is still never sorted by an unstored calculation (`422 Unstored
-Calculation`), since it may hold any number of records, nor are the records a
-calculation reads through a relationship.
+A found set is sorted by an unstored calculation another way: the
+calculation is computed for its records and the database sorts them by those
+values, up to 50,000 records (see
+[calculation_formulas.md](calculation_formulas.md#unstored-calculations-and-related-fields)).
+The records a calculation reads through a relationship are still never sorted
+by one.
 
 ## An empty match field relates to nothing
 

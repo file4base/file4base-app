@@ -504,6 +504,8 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Too Many Related Records", err.Error())
 	case errors.Is(err, data.ErrFindTooBroad):
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Find Too Broad", err.Error())
+	case errors.Is(err, data.ErrTooManyToCompute):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Too Many Records to Compute", err.Error())
 	case errors.Is(err, validation.ErrValidation):
 		var ve *validation.Error
 		errors.As(err, &ve)
@@ -964,6 +966,10 @@ func (h *DataHandler) ExportRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The found set exported may be found by a related field, as by a find.
+	if !h.authorizeFindRelations(w, r, svc, table, body.ExportOptions.Requests) {
+		return
+	}
 	source, err := svc.ExportRecords(r.Context(), table, body.ExportOptions)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Export Failed", err)

@@ -2756,9 +2756,31 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         );
       }
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
+      if (!mounted) return;
+      setState(() { _isLoading = false; });
+      // Find mode shows no error banner, so the server's reason, such as a
+      // find on an unstored calculation over too many records (#149), is
+      // shown in a dialog and the criteria stay to be narrowed.
+      final problem = e is ApiException ? e : null;
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(problem?.title ?? 'Find Failed', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          content: Text(_findFailure(e), style: const TextStyle(fontSize: 13)),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Modify Criteria'),
+            ),
+          ],
+        ),
+      );
     }
   }
+
+  /// Why the server refused a find, in the words of its problem detail.
+  static String _findFailure(Object error) =>
+      error is ApiException && error.detail.isNotEmpty ? error.detail : error.toString();
 
   @override
   Widget build(BuildContext context) {
@@ -5799,8 +5821,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       _applyMode(OperationalMode.browse);
       _recordChanged();
       return results.length;
-    } catch (_) {
-      return 0;
+    } catch (e) {
+      // A refused find, such as one on an unstored calculation over too
+      // many records (#149), is an error, not an empty found set.
+      _notify('Perform Find: ${_findFailure(e)}', error: true);
+      return -2;
     }
   }
 

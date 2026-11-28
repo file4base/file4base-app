@@ -901,8 +901,9 @@ class LayoutActionRunner {
         final findReqs = mapListParam('find_requests');
         if (ext != null) {
           final found = await ext.actionPerformFindEx(requests: findReqs, restore: restore);
-          // A negative count: OnModeExit kept the window in Find mode.
-          session.lastError = found < 0 ? 20 : (found == 0 ? 401 : 0);
+          // -1: OnModeExit kept the window in Find mode; -2: the server
+          // refused the find.
+          session.lastError = found == -2 ? 3 : (found < 0 ? 20 : (found == 0 ? 401 : 0));
         } else {
           session.lastError = 0;
           await host.actionPerformFind();

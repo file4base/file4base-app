@@ -98,6 +98,17 @@ func (o QueryOptions) SortOrder() []SortField {
 // against the table's registered fields so a caller cannot name a column that
 // is not there (or inject one).
 func orderByClause(dialect dbal.Dialect, fields fieldSet, tableName string, order []SortField) (string, error) {
+	return orderByColumns(dialect, fields, tableName, order, nil)
+}
+
+// orderByColumns is orderByClause in a statement that reads some fields
+// other than by their own column: column says how it reads a field, and is
+// nil when every field is read by its column. A find on an unstored
+// calculation reads its values bound for the statement (unstored_find.go).
+func orderByColumns(dialect dbal.Dialect, fields fieldSet, tableName string, order []SortField, column func(string) string) (string, error) {
+	if column == nil {
+		column = dialect.QuoteIdentifier
+	}
 	if len(order) == 0 {
 		return "", nil
 	}
@@ -116,7 +127,7 @@ func orderByClause(dialect dbal.Dialect, fields fieldSet, tableName string, orde
 		if level.Descending {
 			dir = "DESC"
 		}
-		parts = append(parts, fmt.Sprintf("%s %s", dialect.QuoteIdentifier(level.Field), dir))
+		parts = append(parts, fmt.Sprintf("%s %s", column(level.Field), dir))
 	}
 	if len(parts) == 0 {
 		return "", nil
@@ -632,44 +643,7 @@ func (s *Service) AttachContainerMeta(ctx context.Context, tableName string, row
 
 // ListRows retrieves rows with optional sorting and pagination
 func (s *Service) ListRows(ctx context.Context, tableName string, opts QueryOptions) ([]map[string]interface{}, error) {
-	fields, err := s.tableFields(ctx, tableName)
-	if err != nil {
-		return nil, err
-	}
-	if opts.Offset < 0 {
-		opts.Offset = 0
-	}
-	dialect := s.driver.Dialect()
-	orderClause, err := s.orderBy(ctx, fields, tableName, opts.SortOrder())
-	if err != nil {
-		return nil, err
-	}
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
-	} else if limit > MaxPageSize {
-		// Clamp, do not fall back to the default: a caller asking for more
-		// than the maximum must still get a full page and keep paging.
-		limit = MaxPageSize
-	}
-
-	sqlQuery := fmt.Sprintf(
-		"SELECT %s FROM %s %s LIMIT %d OFFSET %d",
-		selectList(dialect, fields),
-		dialect.QuoteIdentifier(tableName),
-		orderClause,
-		limit,
-		opts.Offset,
-	)
-
-	db := s.driver.DB()
-	rows, err := db.QueryContext(ctx, sqlQuery)
-	if err != nil {
-		return nil, fmt.Errorf("query failed for table %s: %w", tableName, err)
-	}
-	defer rows.Close()
-
-	return s.readRows(ctx, tableName, rows, fields)
+	return s.findRows(ctx, tableName, nil, opts, 100)
 }
 
 // ParseFile4BaseFindCriteria translates File4Base operators (*, ..., =, ==, !, !=, <, >, <=, >=, //, @) to SQL AST
@@ -753,13 +727,17 @@ func ParseFile4BaseFindCriteria(fieldName, rawCriteria string) FindCriterion {
 // including request, minus the records that match any omitting request. With
 // only omitting requests the starting point is every record, so a lone
 // "omit city = New York" finds everyone who does not live there.
+//
+// A record an omitting request does not match stays, even when its field is
+// empty and the comparison is unknown (NULL) to the engine: "omit city = New
+// York" keeps the records with no city, as in FileMaker.
 func buildFindWhere(include, omit []string) string {
 	var parts []string
 	if len(include) > 0 {
 		parts = append(parts, "("+strings.Join(include, " OR ")+")")
 	}
 	if len(omit) > 0 {
-		parts = append(parts, "NOT ("+strings.Join(omit, " OR ")+")")
+		parts = append(parts, "("+strings.Join(omit, " OR ")+") IS NOT TRUE")
 	}
 	if len(parts) == 0 {
 		return ""
@@ -888,6 +866,12 @@ func textCriterionClause(
 type findClauses struct {
 	with, where string
 	values      []interface{}
+	// join is what the table searched is joined with: the values of its
+	// unstored calculations computed for the statement (unstored_find.go),
+	// empty when it reads none. column says how the statement reads a field
+	// of the table searched: by its column, or by the value bound for it.
+	join   string
+	column func(field string) string
 }
 
 // buildFindClauses turns the find requests into the WHERE clause that defines
@@ -904,17 +888,44 @@ func buildFindClauses(
 	dialect dbal.Dialect, fields fieldSet, tableName string, requests []FindRequest,
 	related map[string]relatedFindTarget,
 ) (findClauses, error) {
+	return buildBoundFindClauses(dialect, fields, tableName, requests, related, nil)
+}
+
+// buildBoundFindClauses is buildFindClauses for a statement that reads the
+// values bound of the unstored calculations of the table searched, nil when
+// it reads none: they are its first common table expression, and its first
+// value.
+func buildBoundFindClauses(
+	dialect dbal.Dialect, fields fieldSet, tableName string, requests []FindRequest,
+	related map[string]relatedFindTarget, bound *unstoredBinding,
+) (findClauses, error) {
 	// Requests that match are unioned; requests marked Omit subtract from what
 	// they found. (OR-ing an omitting request in, as this used to do, made
 	// "2011 except March" mean "2011 OR not March", which is almost every
 	// record.)
 	var includeClauses, omitClauses []string
-	var out findClauses
+	out := findClauses{column: dialect.QuoteIdentifier}
 	idx := 1
+	if bound != nil {
+		out.column, out.join = bound.column, bound.join
+		out.values = append(out.values, bound.value)
+		idx++
+	}
 
 	// What other solutions found comes first, bound once however many
-	// requests read it.
+	// requests read it, in each statement built.
+	for _, target := range related {
+		if target.External != nil {
+			clear(target.External.sets)
+		}
+	}
 	out.with = externalKeySets(dialect, fields, requests, related, &idx, &out.values)
+	switch {
+	case bound != nil && out.with == "":
+		out.with = "WITH " + bound.cte + " "
+	case bound != nil:
+		out.with = "WITH " + bound.cte + ", " + strings.TrimPrefix(out.with, "WITH ")
+	}
 
 	// The included requests are written before the omitted ones, whatever
 	// their order, and their values are taken in that order: a placeholder
@@ -943,7 +954,7 @@ func buildFindClauses(
 				if err := checkField(fields, tableName, crit.FieldName); err != nil {
 					return findClauses{}, err
 				}
-				clause, err := criterionClause(dialect, dialect.QuoteIdentifier(crit.FieldName),
+				clause, err := criterionClause(dialect, out.column(crit.FieldName),
 					fields[crit.FieldName], crit, &idx, &out.values)
 				if err != nil {
 					return findClauses{}, err
@@ -992,7 +1003,15 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	if len(requests) == 0 {
 		return s.ListRows(ctx, tableName, opts)
 	}
+	return s.findRows(ctx, tableName, requests, opts, 500)
+}
 
+// findRows reads a page of the records the requests find, every record
+// without any, in the order opts sorts them. A find or a sort on an
+// unstored calculation reads the values computed for it (unstored_find.go).
+func (s *Service) findRows(
+	ctx context.Context, tableName string, requests []FindRequest, opts QueryOptions, defaultLimit int,
+) ([]map[string]interface{}, error) {
 	fields, err := s.tableFields(ctx, tableName)
 	if err != nil {
 		return nil, err
@@ -1000,37 +1019,37 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	if opts.Offset < 0 {
 		opts.Offset = 0
 	}
-
-	dialect := s.driver.Dialect()
-	related, err := s.resolveFindRelations(ctx, tableName, requests)
+	order := opts.SortOrder()
+	for _, level := range order {
+		if err := checkField(fields, tableName, level.Field); err != nil {
+			return nil, err
+		}
+	}
+	find, err := s.findClauses(ctx, tableName, fields, requests, sortFields(order), "sort")
 	if err != nil {
 		return nil, err
 	}
-	if err := s.refuseUnstoredCriteria(ctx, tableName, requests, related); err != nil {
-		return nil, err
-	}
-	find, err := buildFindClauses(dialect, fields, tableName, requests, related)
-	if err != nil {
-		return nil, err
-	}
-
-	orderClause, err := s.orderBy(ctx, fields, tableName, opts.SortOrder())
+	orderClause, err := s.orderBy(ctx, fields, tableName, order, find.column)
 	if err != nil {
 		return nil, err
 	}
 
 	limit := opts.Limit
 	if limit <= 0 {
-		limit = 500
+		limit = defaultLimit
 	} else if limit > MaxPageSize {
+		// Clamp, do not fall back to the default: a caller asking for more
+		// than the maximum must still get a full page and keep paging.
 		limit = MaxPageSize
 	}
 
+	dialect := s.driver.Dialect()
 	sqlQuery := fmt.Sprintf(
-		"%sSELECT %s FROM %s %s %s LIMIT %d OFFSET %d",
+		"%sSELECT %s FROM %s%s %s %s LIMIT %d OFFSET %d",
 		find.with,
 		selectList(dialect, fields),
 		dialect.QuoteIdentifier(tableName),
+		find.join,
 		find.where,
 		orderClause,
 		limit,
@@ -1040,6 +1059,9 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	db := s.driver.DB()
 	rows, err := db.QueryContext(ctx, sqlQuery, find.values...)
 	if err != nil {
+		if len(requests) == 0 {
+			return nil, fmt.Errorf("query failed for table %s: %w", tableName, err)
+		}
 		return nil, fmt.Errorf("find query failed: %w", err)
 	}
 	defer rows.Close()
